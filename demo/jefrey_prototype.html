@@ -1,0 +1,1163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>JEFREY — CTP Core parts identification</title>
+<style>
+:root{
+  --bg:#07090b; --panel:#0d1114; --panel2:#11161a; --line:#1c242a; --line2:#28333b;
+  --txt:#d5dde4; --dim:#71818e; --dimmer:#4a5762;
+  --amber:#ffa62e; --amber-d:#c97d16;
+  --green:#2ee6a8; --green-d:#149c70;
+  --red:#ff4d5e; --blue:#4aa8ff; --violet:#a68bff;
+  --mono:ui-monospace,"JetBrains Mono","SF Mono",Menlo,Consolas,monospace;
+  --sans:"Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{
+  background:var(--bg); color:var(--txt); font-family:var(--sans);
+  font-size:13px; line-height:1.45; overflow:hidden;
+  background-image:
+    radial-gradient(ellipse 80% 50% at 20% -10%, rgba(255,166,46,.06), transparent 60%),
+    radial-gradient(ellipse 60% 40% at 100% 0%, rgba(74,168,255,.04), transparent 60%);
+}
+::selection{background:rgba(255,166,46,.28)}
+::-webkit-scrollbar{width:9px;height:9px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--line2);border-radius:5px}
+::-webkit-scrollbar-thumb:hover{background:#3a4750}
+
+/* ---------- chrome ---------- */
+.top{
+  height:44px;display:flex;align-items:center;gap:14px;padding:0 16px;
+  border-bottom:1px solid var(--line); background:linear-gradient(180deg,#0f1418,#0a0e11);
+  position:relative;z-index:20;
+}
+.brand{font-weight:700;letter-spacing:.14em;font-size:12px}
+.brand b{color:var(--amber)}
+.crumb{color:var(--dimmer);font-size:11px;letter-spacing:.1em}
+.crumb .cur{color:var(--txt)}
+.top .sp{flex:1}
+.pill{
+  display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 10px;
+  border:1px solid var(--line2); border-radius:3px; background:var(--panel2);
+  font-family:var(--mono);font-size:10.5px;letter-spacing:.06em;color:var(--dim);
+  cursor:pointer;user-select:none;transition:.15s;
+}
+.pill:hover{border-color:#3b4a55;color:var(--txt)}
+.pill .dot{width:6px;height:6px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green)}
+.pill.off .dot{background:var(--red);box-shadow:0 0 8px var(--red)}
+.pill.mem{color:var(--violet);border-color:#2e2a45}
+
+.wrap{display:grid;grid-template-columns:352px 1fr;height:calc(100% - 44px)}
+
+/* ---------- left rail ---------- */
+.rail{
+  border-right:1px solid var(--line); background:var(--panel);
+  display:flex;flex-direction:column;overflow:hidden;
+}
+.jbox{
+  padding:16px 16px 12px; border-bottom:1px solid var(--line);
+  background:
+    linear-gradient(180deg,rgba(255,166,46,.05),transparent 70%),
+    repeating-linear-gradient(0deg,transparent 0 3px,rgba(255,255,255,.012) 3px 4px);
+  position:relative;
+}
+.jrow{display:flex;gap:14px;align-items:flex-start}
+.jsvg{width:104px;flex:0 0 104px}
+.jmeta{flex:1;min-width:0;padding-top:6px}
+.jname{font-family:var(--mono);font-size:12px;letter-spacing:.18em;color:var(--amber);font-weight:600}
+.jrole{font-size:10px;color:var(--dimmer);letter-spacing:.08em;text-transform:uppercase;margin-top:2px}
+.jsay{
+  margin-top:9px;font-size:11.5px;color:var(--txt);min-height:44px;
+  border-left:2px solid var(--line2);padding-left:9px;
+}
+.jsay .k{color:var(--amber);font-family:var(--mono)}
+.jsay .g{color:var(--green);font-family:var(--mono)}
+.jstate{
+  margin-top:8px;font-family:var(--mono);font-size:9.5px;letter-spacing:.12em;
+  color:var(--dimmer);text-transform:uppercase;
+}
+
+/* ---------- input ---------- */
+.inbox{padding:14px 16px;border-bottom:1px solid var(--line)}
+.lbl{font-family:var(--mono);font-size:9.5px;letter-spacing:.14em;color:var(--dimmer);text-transform:uppercase;margin-bottom:7px;display:flex;justify-content:space-between}
+textarea{
+  width:100%;height:132px;resize:none;background:#080b0d;color:var(--txt);
+  border:1px solid var(--line2);border-radius:3px;padding:10px;
+  font-family:var(--mono);font-size:11.5px;line-height:1.6;outline:none;transition:.15s;
+}
+textarea:focus{border-color:var(--amber-d);box-shadow:0 0 0 1px rgba(255,166,46,.12)}
+textarea::placeholder{color:#3d4850}
+.btns{display:flex;gap:7px;margin-top:9px}
+button{font-family:var(--sans);cursor:pointer;border:none;transition:.15s}
+.go{
+  flex:1;height:32px;background:var(--amber);color:#140d02;font-weight:700;
+  font-size:11.5px;letter-spacing:.1em;border-radius:3px;text-transform:uppercase;
+}
+.go:hover{background:#ffb85a}
+.go:disabled{background:#2a2f33;color:#57626b;cursor:not-allowed}
+.ghost{
+  height:32px;padding:0 12px;background:transparent;border:1px solid var(--line2);
+  color:var(--dim);border-radius:3px;font-size:11px;
+}
+.ghost:hover{border-color:#3b4a55;color:var(--txt)}
+.kbd{font-family:var(--mono);font-size:9px;color:var(--dimmer);border:1px solid var(--line2);border-radius:2px;padding:1px 4px}
+
+/* ---------- samples + photo ---------- */
+.scroller{flex:1;overflow-y:auto}
+.sect{padding:13px 16px;border-bottom:1px solid var(--line)}
+.samp{
+  display:block;width:100%;text-align:left;background:var(--panel2);border:1px solid var(--line);
+  color:var(--dim);border-radius:3px;padding:7px 9px;font-size:11px;margin-bottom:6px;
+}
+.samp:hover{border-color:var(--amber-d);color:var(--txt)}
+.samp b{color:var(--txt);display:block;font-size:11px;margin-bottom:1px}
+.samp span{font-family:var(--mono);font-size:9.5px;color:var(--dimmer)}
+
+.drop{
+  border:1px dashed var(--line2);border-radius:4px;padding:16px 12px;text-align:center;
+  color:var(--dimmer);font-size:11px;cursor:pointer;transition:.15s;
+}
+.drop:hover,.drop.over{border-color:var(--amber-d);color:var(--txt);background:rgba(255,166,46,.03)}
+.drop svg{opacity:.5;margin-bottom:6px}
+.qitem{
+  display:flex;gap:9px;align-items:center;background:var(--panel2);border:1px solid var(--line);
+  border-left:2px solid var(--amber);border-radius:3px;padding:8px 9px;margin-top:8px;
+}
+.qthumb{width:34px;height:34px;border-radius:2px;object-fit:cover;background:#000;flex:0 0 34px;border:1px solid var(--line2)}
+.qtxt{flex:1;min-width:0}
+.qtxt b{display:block;font-size:11px;color:var(--txt);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.qtxt span{font-family:var(--mono);font-size:9.5px;color:var(--amber);letter-spacing:.05em}
+.qitem.done{border-left-color:var(--green)}
+.qitem.done .qtxt span{color:var(--green)}
+
+/* ---------- results ---------- */
+.main{display:flex;flex-direction:column;overflow:hidden;background:var(--bg)}
+.strip{
+  height:38px;display:flex;align-items:center;gap:8px;padding:0 16px;
+  border-bottom:1px solid var(--line);background:var(--panel);flex:0 0 38px;
+}
+.stat{font-family:var(--mono);font-size:10px;letter-spacing:.08em;color:var(--dim);display:flex;align-items:center;gap:5px}
+.stat b{color:var(--txt);font-size:11px}
+.sep{width:1px;height:16px;background:var(--line2)}
+.strip .sp{flex:1}
+
+.tblwrap{flex:1;overflow:auto}
+table{width:100%;border-collapse:collapse;font-size:12px}
+thead th{
+  position:sticky;top:0;z-index:5;background:#0b0f12;text-align:left;
+  font-family:var(--mono);font-size:9.5px;letter-spacing:.13em;color:var(--dimmer);
+  text-transform:uppercase;font-weight:500;padding:9px 10px;border-bottom:1px solid var(--line2);
+  white-space:nowrap;
+}
+tbody td{padding:9px 10px;border-bottom:1px solid #131a1f;vertical-align:top}
+tbody tr{cursor:pointer}
+tbody tr:hover{background:rgba(255,255,255,.017)}
+tbody tr.open{background:rgba(255,166,46,.045)}
+.c-qty{font-family:var(--mono);font-size:14px;font-weight:700;color:var(--txt);width:44px;text-align:right}
+.c-req{color:var(--dim);font-size:11.5px;max-width:210px}
+.c-req .side{font-family:var(--mono);font-size:9px;color:var(--blue);border:1px solid #1d3purple;margin-left:5px}
+.sidetag{font-family:var(--mono);font-size:9px;letter-spacing:.06em;color:var(--blue);border:1px solid #1c3550;border-radius:2px;padding:0 3px;margin-left:5px;background:rgba(74,168,255,.07)}
+.pname{color:var(--txt);font-size:12px}
+.pname.gap{color:var(--red);font-style:italic}
+.psub{font-family:var(--mono);font-size:9.5px;color:var(--dimmer);margin-top:2px;letter-spacing:.03em}
+.pn{font-family:var(--mono);font-size:11px;color:var(--amber);letter-spacing:.02em;white-space:nowrap}
+.pn small{color:var(--dimmer);display:block;font-size:9.5px;letter-spacing:.02em}
+.loc{font-family:var(--mono);font-size:11px;color:var(--violet)}
+.stk{font-family:var(--mono);font-size:12px;text-align:right;width:52px}
+.stk.ok{color:var(--green)} .stk.low{color:var(--amber)} .stk.no{color:var(--red)}
+.zar{font-family:var(--mono);font-size:11px;color:var(--dim);text-align:right;white-space:nowrap}
+
+.chip{
+  display:inline-flex;align-items:center;gap:5px;font-family:var(--mono);font-size:9.5px;
+  letter-spacing:.09em;padding:2px 7px;border-radius:2px;border:1px solid;white-space:nowrap;
+}
+.chip .n{font-size:10.5px;font-weight:700}
+.c-confirmed{color:var(--green);border-color:#14503c;background:rgba(46,230,168,.07)}
+.c-probable{color:var(--amber);border-color:#5a3f13;background:rgba(255,166,46,.07)}
+.c-contested{color:#ffd24a;border-color:#5c4a12;background:rgba(255,210,74,.07)}
+.c-uncertain{color:#ff8a4a;border-color:#5c3418;background:rgba(255,138,74,.07)}
+.c-unmatched{color:var(--red);border-color:#5a1b23;background:rgba(255,77,94,.07)}
+
+/* ---------- trace / correction drawer ---------- */
+tr.drawer td{padding:0;border-bottom:1px solid var(--line2);background:#080c0f}
+.dr{padding:13px 16px 15px;display:grid;grid-template-columns:1fr 1fr;gap:18px}
+.dr h4{font-family:var(--mono);font-size:9.5px;letter-spacing:.14em;color:var(--dimmer);text-transform:uppercase;font-weight:500;margin-bottom:8px}
+.tr{display:flex;gap:9px;margin-bottom:6px;font-size:11px}
+.tr .s{font-family:var(--mono);font-size:9.5px;color:var(--blue);flex:0 0 82px;letter-spacing:.06em;text-align:right;padding-top:1px}
+.tr .d{color:var(--dim);flex:1}
+.alt{
+  display:flex;align-items:center;gap:9px;padding:6px 8px;border:1px solid var(--line);
+  border-radius:3px;margin-bottom:5px;background:var(--panel2);
+}
+.alt:hover{border-color:var(--amber-d)}
+.alt.sel{border-color:var(--green-d);background:rgba(46,230,168,.05)}
+.alt .sc{font-family:var(--mono);font-size:11px;color:var(--dim);flex:0 0 34px}
+.alt .nm{flex:1;font-size:11.5px;min-width:0}
+.alt .nm small{display:block;font-family:var(--mono);font-size:9.5px;color:var(--dimmer)}
+.alt button{
+  background:transparent;border:1px solid var(--line2);color:var(--dim);border-radius:2px;
+  font-family:var(--mono);font-size:9px;letter-spacing:.08em;padding:3px 7px;
+}
+.alt button:hover{border-color:var(--green-d);color:var(--green)}
+.teach{display:flex;gap:6px;margin-top:9px}
+.teach input{
+  flex:1;background:#080b0d;border:1px solid var(--line2);color:var(--txt);border-radius:3px;
+  padding:6px 8px;font-family:var(--mono);font-size:11px;outline:none;
+}
+.teach input:focus{border-color:var(--violet)}
+.teach button{background:var(--violet);color:#0d0820;font-weight:700;font-size:10px;letter-spacing:.08em;border-radius:3px;padding:0 11px}
+
+/* ---------- empty / toast ---------- */
+.empty{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:10px;color:var(--dimmer)}
+.empty .big{font-family:var(--mono);font-size:11px;letter-spacing:.2em;color:#39454e}
+.toast{
+  position:fixed;bottom:20px;left:50%;transform:translateX(-50%) translateY(20px);
+  background:var(--panel2);border:1px solid var(--violet);border-radius:3px;padding:9px 16px;
+  font-size:11.5px;color:var(--txt);opacity:0;transition:.25s;pointer-events:none;z-index:99;
+  box-shadow:0 8px 30px rgba(0,0,0,.6);
+}
+.toast.on{opacity:1;transform:translateX(-50%) translateY(0)}
+.toast b{color:var(--violet);font-family:var(--mono)}
+
+/* ================= JEFREY ANIMATION ================= */
+.jf{transform-origin:50% 90%;animation:bob 4.2s ease-in-out infinite}
+@keyframes bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-2.5px)}}
+.jf .eye{transform-origin:center;transition:fill .3s, filter .3s}
+.jf .visor-glow{opacity:.5;transition:opacity .3s}
+.jf .ant-led{transition:fill .3s}
+.jf .scanline{opacity:0}
+
+/* scanning */
+.j-scanning .jf{animation:bob 1.1s ease-in-out infinite}
+.j-scanning .eye{animation:sweep .78s cubic-bezier(.65,0,.35,1) infinite alternate}
+.j-scanning .visor-glow{opacity:1;animation:flick .4s steps(2) infinite}
+.j-scanning .scanline{opacity:.85;animation:scan 1.05s linear infinite}
+@keyframes sweep{from{transform:translateX(-15px) scaleX(.82)}to{transform:translateX(15px) scaleX(.82)}}
+@keyframes flick{0%{opacity:.55}100%{opacity:1}}
+@keyframes scan{0%{transform:translateY(0);opacity:0}10%{opacity:.9}90%{opacity:.9}100%{transform:translateY(52px);opacity:0}}
+
+/* idle blink */
+.j-idle .eye{animation:blink 5.4s ease-in-out infinite}
+@keyframes blink{0%,92%,100%{transform:scaleY(1)}95%{transform:scaleY(.08)}}
+
+/* confident */
+.j-confident .eye{fill:var(--green)!important;filter:drop-shadow(0 0 7px var(--green));animation:pop .5s ease-out}
+.j-confident .visor-glow{opacity:1;fill:var(--green)}
+.j-confident .ant-led{fill:var(--green)}
+@keyframes pop{0%{transform:scale(.55)}55%{transform:scale(1.22)}100%{transform:scale(1)}}
+
+/* ambiguous — head tilts, unconvinced */
+.j-ambiguous .jf{animation:tilt 2.1s ease-in-out infinite}
+.j-ambiguous .eye{fill:#ffd24a!important;filter:drop-shadow(0 0 6px #ffd24a)}
+@keyframes tilt{0%,100%{transform:rotate(-3.5deg)}50%{transform:rotate(3.5deg)}}
+
+/* offline */
+.j-offline .jf{filter:grayscale(.75) brightness(.62);animation:bob 6s ease-in-out infinite}
+.j-offline .ant-led{fill:var(--red)}
+.j-offline .eye{fill:#6b7885!important;filter:none}
+
+/* nothing found */
+.j-void .eye{fill:var(--red)!important;filter:drop-shadow(0 0 6px var(--red))}
+.j-void .ant-led{fill:var(--red)}
+</style>
+</head>
+<body>
+
+<div class="top">
+  <div class="brand">CTP <b>CORE</b></div>
+  <div class="crumb">/ ASSISTANT / <span class="cur">JEFREY</span></div>
+  <div class="sp"></div>
+  <div class="pill mem" id="memPill">◈ ALIASES LEARNED <b id="memN">0</b></div>
+  <div class="pill" id="netPill"><span class="dot"></span><span id="netTxt">LOCAL · OFFLINE-CAPABLE</span></div>
+</div>
+
+<div class="wrap">
+  <!-- ============ LEFT RAIL ============ -->
+  <div class="rail">
+    <div class="jbox" id="jbox">
+      <div class="jrow">
+        <div class="jsvg">
+          <svg viewBox="0 0 120 132" xmlns="http://www.w3.org/2000/svg">
+            <defs>
+              <linearGradient id="steel" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0" stop-color="#39444d"/><stop offset=".45" stop-color="#242d34"/>
+                <stop offset="1" stop-color="#161d22"/>
+              </linearGradient>
+              <linearGradient id="steel2" x1="0" y1="0" x2="1" y2="0">
+                <stop offset="0" stop-color="#1b2228"/><stop offset=".5" stop-color="#2c363e"/>
+                <stop offset="1" stop-color="#1b2228"/>
+              </linearGradient>
+              <clipPath id="visorClip"><rect x="26" y="46" width="68" height="20" rx="4"/></clipPath>
+            </defs>
+            <g class="jf">
+              <!-- antenna -->
+              <rect x="58.2" y="6" width="3.6" height="14" fill="#2b353d"/>
+              <circle class="ant-led" cx="60" cy="5" r="3.4" fill="#ffa62e"/>
+              <circle cx="60" cy="5" r="6.5" fill="#ffa62e" opacity=".14"/>
+              <!-- neck -->
+              <rect x="48" y="98" width="24" height="10" fill="#1a2126"/>
+              <rect x="38" y="106" width="44" height="7" rx="2" fill="#232c33"/>
+              <!-- head plate -->
+              <rect x="14" y="19" width="92" height="82" rx="9" fill="url(#steel)" stroke="#4a5761" stroke-width="1.2"/>
+              <!-- top weld seam -->
+              <rect x="20" y="25" width="80" height="2" rx="1" fill="#4d5b66" opacity=".55"/>
+              <!-- rivets -->
+              <circle cx="23" cy="28" r="2.6" fill="#151b20" stroke="#525f6a" stroke-width=".9"/>
+              <circle cx="97" cy="28" r="2.6" fill="#151b20" stroke="#525f6a" stroke-width=".9"/>
+              <circle cx="23" cy="92" r="2.6" fill="#151b20" stroke="#525f6a" stroke-width=".9"/>
+              <circle cx="97" cy="92" r="2.6" fill="#151b20" stroke="#525f6a" stroke-width=".9"/>
+              <!-- side ear plates -->
+              <rect x="6" y="50" width="9" height="26" rx="3" fill="url(#steel2)" stroke="#3d4952" stroke-width="1"/>
+              <rect x="105" y="50" width="9" height="26" rx="3" fill="url(#steel2)" stroke="#3d4952" stroke-width="1"/>
+              <!-- visor recess -->
+              <rect x="24" y="44" width="72" height="24" rx="5" fill="#080b0d" stroke="#3d4952" stroke-width="1.1"/>
+              <g clip-path="url(#visorClip)">
+                <rect class="visor-glow" x="26" y="46" width="68" height="20" fill="#ffa62e" opacity=".5" style="filter:blur(9px)"/>
+                <rect class="eye" x="52" y="49" width="16" height="14" rx="3" fill="#ffa62e" style="filter:drop-shadow(0 0 6px #ffa62e)"/>
+                <rect class="scanline" x="26" y="42" width="68" height="1.6" fill="#ffd9a0"/>
+              </g>
+              <!-- vent grille / jaw -->
+              <rect x="34" y="76" width="52" height="16" rx="3" fill="#12181c" stroke="#333f47" stroke-width=".9"/>
+              <rect x="38" y="79.5" width="44" height="1.7" rx=".8" fill="#3b4750"/>
+              <rect x="38" y="83.2" width="44" height="1.7" rx=".8" fill="#3b4750"/>
+              <rect x="38" y="86.9" width="44" height="1.7" rx=".8" fill="#3b4750"/>
+              <!-- stencil -->
+              <text x="60" y="38" text-anchor="middle" font-family="ui-monospace,monospace" font-size="7.5"
+                    letter-spacing="2.2" fill="#5b6a75">JFY-01</text>
+            </g>
+          </svg>
+        </div>
+        <div class="jmeta">
+          <div class="jname">JEFREY</div>
+          <div class="jrole">Parts identification unit</div>
+          <div class="jsay" id="jsay">Paste a customer request. I read it here on this machine — no connection needed.</div>
+          <div class="jstate" id="jstate">● STANDBY</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="inbox">
+      <div class="lbl"><span>Customer request</span><span class="kbd">Ctrl ↵</span></div>
+      <textarea id="ta" spellcheck="false" placeholder="Paste WhatsApp message, email, or type the order…"></textarea>
+      <div class="btns">
+        <button class="go" id="go">Identify parts</button>
+        <button class="ghost" id="clr">Clear</button>
+      </div>
+    </div>
+
+    <div class="scroller">
+      <div class="sect">
+        <div class="lbl">Try one</div>
+        <div id="samples"></div>
+      </div>
+      <div class="sect">
+        <div class="lbl">Handwritten page</div>
+        <div class="drop" id="drop">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#71818e" stroke-width="1.4">
+            <rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/>
+            <path d="M21 15l-5-5L5 21"/>
+          </svg>
+          <div>Drop an order-book photo</div>
+          <div style="font-family:var(--mono);font-size:9.5px;margin-top:3px">queued locally · transcribed when online</div>
+        </div>
+        <div id="queue"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ RESULTS ============ -->
+  <div class="main">
+    <div class="strip" id="strip">
+      <div class="stat">READY</div>
+      <div class="sp"></div>
+      <button class="ghost" id="csv" disabled>Copy CSV</button>
+      <button class="ghost" id="push" disabled>Push to order →</button>
+    </div>
+    <div class="tblwrap" id="out">
+      <div class="empty">
+        <div class="big">NO REQUEST LOADED</div>
+        <div style="font-size:11.5px">Paste a customer request on the left, or pick a sample.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const CATALOGUE = [{"id": 1, "sku": "JH6-FB-001-LH", "name": "Front Bumper L/H Assembly", "side": "L/H", "inv_pn": "2803035B1063-DQ", "cat_pn": "2803035B1063", "section": "Front Bumper", "loc": "A1-a", "qty": 10, "cost": 1015.24, "list": 6834.42, "dwg": "101", "flag": null}, {"id": 2, "sku": "JH6-FB-002-RH", "name": "Front Bumper R/H Assembly", "side": "R/H", "inv_pn": "2803040B1063-DQ", "cat_pn": "2803040B1063", "section": "Front Bumper", "loc": "A1-a", "qty": 5, "cost": 1015.24, "list": 3759.29, "dwg": "101", "flag": null}, {"id": 3, "sku": "JH6-FB-003-LH", "name": "Front Bumper L/H Bracket Assembly", "side": "L/H", "inv_pn": "2803645B1063", "cat_pn": "2803645B1063", "section": "Front Bumper", "loc": "A1-a", "qty": 10, "cost": 869.72, "list": 4642.52, "dwg": "101", "flag": null}, {"id": 4, "sku": "JH6-FB-004-RH", "name": "Front Bumper R/H Bracket Assembly", "side": "R/H", "inv_pn": "2803650B1063", "cat_pn": "2803650B1063", "section": "Front Bumper", "loc": "A1-a", "qty": 5, "cost": 869.72, "list": 4647.05, "dwg": "101", "flag": null}, {"id": 5, "sku": "JH6-FB-005-LH", "name": "Front Bumper L/H Decorative Panel", "side": "L/H", "inv_pn": "2803031B1063-G", "cat_pn": "2803031B1063", "section": "Front Bumper", "loc": "A1-b", "qty": 10, "cost": 52.87, "list": 303.98, "dwg": "101", "flag": null}, {"id": 6, "sku": "JH6-FB-006-RH", "name": "Front Bumper R/H Decorative Panel", "side": "R/H", "inv_pn": "2803032B1063-G", "cat_pn": "2803032B1063", "section": "Front Bumper", "loc": "A1-b", "qty": 5, "cost": 52.87, "list": 919.06, "dwg": "101", "flag": null}, {"id": 7, "sku": "JH6-FB-007-LH", "name": "Front Bumper L/H Spoiler", "side": "L/H", "inv_pn": "2803721B1063-G", "cat_pn": "2803721B1063", "section": "Front Bumper", "loc": "A1-b", "qty": 10, "cost": 64.09, "list": 452.81, "dwg": "101", "flag": null}, {"id": 8, "sku": "JH6-FB-008-RH", "name": "Front Bumper R/H Spoiler", "side": "R/H", "inv_pn": "2803722B1063-G", "cat_pn": "2803722B1063", "section": "Front Bumper", "loc": "A1-b", "qty": 5, "cost": 64.09, "list": 6360.62, "dwg": "101", "flag": null}, {"id": 9, "sku": "JH6-FB-009-CN", "name": "Front Bumper Centre Assembly", "side": "CENTRE", "inv_pn": "2803010B1063-DQ", "cat_pn": "2803010B1063", "section": "Front Bumper", "loc": "A1-a", "qty": 10, "cost": 1264.29, "list": 9225.07, "dwg": "101", "flag": null}, {"id": 10, "sku": "JH6-FB-010-CN", "name": "Front Bumper Centre Spoiler", "side": "CENTRE", "inv_pn": "2803731B1063-G", "cat_pn": "2803731B1063", "section": "Front Bumper", "loc": "A1-b", "qty": 10, "cost": 121.55, "list": 107.57, "dwg": "101", "flag": null}, {"id": 11, "sku": "JH6-FB-011-CN", "name": "Front Bumper Centre Mesh Screen", "side": "CENTRE", "inv_pn": "2803821B1063", "cat_pn": "2803821B1063", "section": "Front Bumper", "loc": "A1-c", "qty": 10, "cost": 60.69, "list": 496.49, "dwg": "101", "flag": null}, {"id": 12, "sku": "JH6-FB-012-CN", "name": "Front Bumper Upper Mesh Screen", "side": "CENTRE", "inv_pn": "2803831B1063", "cat_pn": "2803831B1063", "section": "Front Bumper", "loc": "A1-c", "qty": 10, "cost": 132.77, "list": 14.36, "dwg": "101", "flag": null}, {"id": 13, "sku": "JH6-FB-013-CN", "name": "Front Bumper Lower Tow Hook Cover", "side": "CENTRE", "inv_pn": "2803091B1063-G", "cat_pn": "2803091B1063", "section": "Front Bumper", "loc": "A1-d", "qty": 10, "cost": 4.76, "list": 14.36, "dwg": "101", "flag": null}, {"id": 14, "sku": "JH6-FB-014-LH", "name": "Spoiler L/H Connecting Bracket", "side": "L/H", "inv_pn": "2803761B1063", "cat_pn": "2803761B1063", "section": "Front Bumper", "loc": "A1-d", "qty": 3, "cost": 17.0, "list": 78.2, "dwg": "101", "flag": null}, {"id": 15, "sku": "JH6-FB-015-RH", "name": "Spoiler R/H Connecting Bracket", "side": "R/H", "inv_pn": "2803762B1063", "cat_pn": "2803762B1063", "section": "Front Bumper", "loc": "A1-d", "qty": 3, "cost": 17.0, "list": 78.2, "dwg": "101", "flag": null}, {"id": 16, "sku": "JH6-FB-016-CN", "name": "Spoiler Centre Connecting Bracket", "side": "CENTRE", "inv_pn": "2803763B1063", "cat_pn": "2803763B1063", "section": "Front Bumper", "loc": "A1-d", "qty": 3, "cost": 8.5, "list": 1014.67, "dwg": "101", "flag": null}, {"id": 17, "sku": "JH6-FB-017-CN", "name": "Front Bumper Intake Grille Assembly", "side": "CENTRE", "inv_pn": "2803015B1063-G", "cat_pn": "2803015B1063", "section": "Front Bumper", "loc": "A1-c", "qty": 10, "cost": 188.36, "list": 738.61, "dwg": "101", "flag": null}, {"id": 18, "sku": "JH6-FB-018-CN", "name": "Front Bumper Bug Shield", "side": "CENTRE", "inv_pn": "2803018B1063", "cat_pn": "2803018B1063", "section": "Front Bumper", "loc": "A1-c", "qty": 10, "cost": 61.2, "list": 887.33, "dwg": "101", "flag": null}, {"id": 19, "sku": "JH6-FB-019-CN", "name": "Front Bumper Primary Step", "side": "CENTRE", "inv_pn": "2803052B1063", "cat_pn": "2803052B1063", "section": "Front Bumper", "loc": "A1-c", "qty": 10, "cost": 33.66, "list": 207.62, "dwg": "101", "flag": null}, {"id": 20, "sku": "JH6-FB-020-LH", "name": "Front Bumper Centre Lower L/H Decorative Panel", "side": "L/H", "inv_pn": "2803381B1063", "cat_pn": "2803381B1063", "section": "Front Bumper", "loc": "A1-d", "qty": 10, "cost": 7.14, "list": 896.16, "dwg": "101", "flag": null}, {"id": 21, "sku": "JH6-FB-021-RH", "name": "Front Bumper Centre Lower R/H Decorative Panel", "side": "R/H", "inv_pn": "2803382B1063", "cat_pn": "2803382B1063", "section": "Front Bumper", "loc": "A1-d", "qty": 10, "cost": 7.14, "list": 32.84, "dwg": "101", "flag": null}, {"id": 22, "sku": "JH6-CH-022-CN", "name": "Front Crossmember Assembly", "side": "CENTRE", "inv_pn": "2801070-1063", "cat_pn": "2801070-1063", "section": "Chassis", "loc": "A3-a", "qty": 3, "cost": 858.5, "list": 3949.1, "dwg": "102", "flag": null}, {"id": 23, "sku": "JH6-CH-023-CN", "name": "Front Spring Front Bracket Crossmember Welding Assembly", "side": "CENTRE", "inv_pn": "2801090-1066", "cat_pn": "2801090-1066", "section": "Chassis", "loc": "A3-a", "qty": 3, "cost": 246.5, "list": 365.43, "dwg": "102", "flag": null}, {"id": 24, "sku": "JH6-LT-024-LH", "name": "Front Combination Lamp L/H Assembly", "side": "L/H", "inv_pn": "3711015-1544", "cat_pn": "3711015-1063", "section": "Lighting", "loc": "D2-a", "qty": 10, "cost": 949.62, "list": 14167.44, "dwg": "103", "flag": null}, {"id": 25, "sku": "JH6-LT-025-RH", "name": "Front Combination Lamp R/H Assembly", "side": "R/H", "inv_pn": "3711020-1544", "cat_pn": "3711020-1063", "section": "Lighting", "loc": "D2-a", "qty": 5, "cost": 949.62, "list": 1541.98, "dwg": "103", "flag": null}, {"id": 26, "sku": "JH6-LT-026-LH", "name": "Front Fog Lamp L/H Assembly", "side": "L/H", "inv_pn": "3732015-1063-C00", "cat_pn": "3732015-1063", "section": "Lighting", "loc": "D2-a", "qty": 10, "cost": 363.8, "list": 1401.8, "dwg": "103", "flag": null}, {"id": 27, "sku": "JH6-LT-027-RH", "name": "Front Fog Lamp R/H Assembly", "side": "R/H", "inv_pn": "3732020-1063-C00", "cat_pn": "3732020-1063", "section": "Lighting", "loc": "D2-a", "qty": 5, "cost": 363.8, "list": 657.05, "dwg": "103", "flag": null}, {"id": 28, "sku": "JH6-CS-028-LH", "name": "Cab Hydraulic Lock Assembly L/H", "side": "L/H", "inv_pn": "5004055-79H-C00", "cat_pn": "5004055-1063-C00", "section": "Cab Suspension", "loc": "A3-b", "qty": 6, "cost": 387.94, "list": 40.82, "dwg": "104", "flag": null}, {"id": 29, "sku": "JH6-CS-029-RH", "name": "Cab Hydraulic Lock Assembly R/H", "side": "R/H", "inv_pn": "5004055-1063-C00", "cat_pn": "5004055-1063-C00", "section": "Cab Suspension", "loc": "A3-b", "qty": 3, "cost": 448.12, "list": 9.6, "dwg": "104", "flag": null}, {"id": 30, "sku": "JH6-CS-030-LH", "name": "Rear Suspension Air Spring & Shock Absorber Assembly L/H", "side": "L/H", "inv_pn": "5001315B1063-C00", "cat_pn": "5001315A1063-C00", "section": "Cab Suspension", "loc": "A3-b", "qty": 6, "cost": 1018.47, "list": 3615.08, "dwg": "104", "flag": null}, {"id": 31, "sku": "JH6-CS-031-RH", "name": "Rear Suspension Air Spring & Shock Absorber Assembly R/H", "side": "R/H", "inv_pn": "5001315-1063A-C00", "cat_pn": "5001315A1063-C00", "section": "Cab Suspension", "loc": "A3-b", "qty": 3, "cost": 1117.41, "list": 2865.33, "dwg": "104", "flag": null}, {"id": 32, "sku": "JH6-CS-032-CN", "name": "Cab Front Suspension Assembly", "side": "CENTRE", "inv_pn": "5001010CB45", "cat_pn": "5001010-B45", "section": "Cab Suspension", "loc": "A3-b", "qty": 2, "cost": 3290.18, "list": 1987.16, "dwg": "104", "flag": null}, {"id": 33, "sku": "JH6-FD-033-LH", "name": "Front Fender L/H", "side": "L/H", "inv_pn": "5103121-H02-G", "cat_pn": "5103121-B45", "section": "Fender", "loc": "B1-a", "qty": 10, "cost": 1413.21, "list": 278.16, "dwg": "105", "flag": null}, {"id": 34, "sku": "JH6-FD-034-RH", "name": "Front Fender R/H", "side": "R/H", "inv_pn": "5103122-B45-G", "cat_pn": "5103122-B45", "section": "Fender", "loc": "B1-a", "qty": 5, "cost": 561.68, "list": 919.86, "dwg": "105", "flag": null}, {"id": 35, "sku": "JH6-FD-035-CN", "name": "Second Step", "side": "-", "inv_pn": "5103181-B45", "cat_pn": "5103181-B45", "section": "Fender", "loc": "B1-d", "qty": 10, "cost": 200.6, "list": 679.3, "dwg": "105", "flag": null}, {"id": 36, "sku": "JH6-FD-036-CN", "name": "Third Step", "side": "-", "inv_pn": "5103191-B45", "cat_pn": "5103191-B45", "section": "Fender", "loc": "B1-d", "qty": 10, "cost": 247.86, "list": 658.52, "dwg": "105", "flag": null}, {"id": 37, "sku": "JH6-FD-037-BH", "name": "Front Fender Support Bracket Assembly", "side": "BOTH", "inv_pn": "5103135-B45", "cat_pn": "5103135-B45", "section": "Fender", "loc": "B1-c", "qty": 10, "cost": 84.66, "list": 1258.76, "dwg": "105", "flag": null}, {"id": 38, "sku": "JH6-FD-038-LH", "name": "Rear Fender L/H", "side": "L/H", "inv_pn": "5103131-B45-G", "cat_pn": "5103125-B45", "section": "Fender", "loc": "B1-b", "qty": 10, "cost": 109.99, "list": 32.58, "dwg": "105", "flag": null}, {"id": 39, "sku": "JH6-FD-039-RH", "name": "Rear Fender R/H", "side": "R/H", "inv_pn": "5103132-B45-G", "cat_pn": "5103130-B45", "section": "Fender", "loc": "B1-b", "qty": 5, "cost": 109.99, "list": 975.43, "dwg": "105", "flag": null}, {"id": 40, "sku": "JH6-FD-040-LH", "name": "Front Wheel Upper Splash Shield L/H", "side": "L/H", "inv_pn": "5103161-H02", "cat_pn": "5103161-B45", "section": "Fender", "loc": "B1-c", "qty": 10, "cost": 214.03, "list": 830.42, "dwg": "105", "flag": null}, {"id": 41, "sku": "JH6-FD-041-RH", "name": "Front Wheel Upper Splash Shield R/H", "side": "R/H", "inv_pn": "5103162AB83", "cat_pn": "5103162AB83", "section": "Fender", "loc": "B1-c", "qty": 5, "cost": 177.48, "list": 265.22, "dwg": "105", "flag": null}, {"id": 42, "sku": "JH6-FD-042-CN", "name": "Upper Splash Shield Small Door", "side": "CENTRE", "inv_pn": "5103211-B45", "cat_pn": "5103211-B45", "section": "Fender", "loc": "B1-c", "qty": 10, "cost": 7.14, "list": 838.35, "dwg": "105", "flag": null}, {"id": 43, "sku": "JH6-FD-043-LH", "name": "L/H Engine Side Shield", "side": "L/H", "inv_pn": "5103611-1063", "cat_pn": "5103611-1063", "section": "Fender", "loc": "B1-d", "qty": 3, "cost": 110.5, "list": 74.0, "dwg": "105", "flag": null}, {"id": 44, "sku": "JH6-FD-044-RH", "name": "R/H Engine Side Shield", "side": "R/H", "inv_pn": "5103612-1600", "cat_pn": "5103612-1600", "section": "Fender", "loc": "B1-d", "qty": 3, "cost": 110.5, "list": 61.83, "dwg": "105", "flag": null}, {"id": 45, "sku": "JH6-FD-045-LH", "name": "L/H Door Sill Scuff Plate", "side": "L/H", "inv_pn": "5109111-H02", "cat_pn": "5109111-H02", "section": "Fender", "loc": "B1-d", "qty": 3, "cost": 42.5, "list": 524.22, "dwg": "105", "flag": null}, {"id": 46, "sku": "JH6-FD-046-RH", "name": "R/H Door Sill Scuff Plate", "side": "R/H", "inv_pn": "5109112-B45", "cat_pn": "5109112-B45", "section": "Fender", "loc": "B1-d", "qty": 3, "cost": 25.5, "list": 615.78, "dwg": "105", "flag": null}, {"id": 47, "sku": "JH6-TB-048-RH", "name": "Side Toolbox Cover Assembly L/H", "side": "L/H", "inv_pn": "5407025-B45", "cat_pn": "5407020-B45", "section": "Side Toolbox", "loc": "C2-a", "qty": 10, "cost": 801.89, "list": 8709.53, "dwg": "106", "flag": null}, {"id": 48, "sku": "JH6-TB-048-RH", "name": "Side Toolbox Cover Assembly R/H", "side": "R/H", "inv_pn": "5407025-B45", "cat_pn": "5407020-B45", "section": "Side Toolbox", "loc": "C2-a", "qty": 5, "cost": 801.89, "list": 344.14, "dwg": "106", "flag": null}, {"id": 49, "sku": "JH6-TB-050-RH", "name": "Side Toolbox Sealing Strip L/H", "side": "L/H", "inv_pn": "5407086-B45-C00", "cat_pn": "5407086-B45-C00", "section": "Side Toolbox", "loc": "C2-b", "qty": 10, "cost": 55.59, "list": 286.7, "dwg": "106", "flag": null}, {"id": 50, "sku": "JH6-TB-050-RH", "name": "Side Toolbox Sealing Strip R/H", "side": "R/H", "inv_pn": "5407086-B45-C00", "cat_pn": "5407086-B45-C00", "section": "Side Toolbox", "loc": "C2-b", "qty": 5, "cost": 55.59, "list": 399.23, "dwg": "106", "flag": null}, {"id": 51, "sku": "JH6-CI-051-LH", "name": "Left A-pillar upper decorative panel assembly", "side": "L/H", "inv_pn": "5302715-H02", "cat_pn": "5302715-B45", "section": "Cab Exterior", "loc": "C2-d", "qty": 5, "cost": 138.04, "list": 819.45, "dwg": "107", "flag": null}, {"id": 52, "sku": "JH6-CI-052-RH", "name": "Right A-pillar upper decorative panel assembly", "side": "R/H", "inv_pn": "5302720-H02", "cat_pn": "5302720-B45", "section": "Cab Exterior", "loc": "C2-d", "qty": 5, "cost": 138.04, "list": 819.45, "dwg": "107", "flag": null}, {"id": 53, "sku": "JH6-CI-053-LH", "name": "Left A-pillar lower decorative plate", "side": "L/H", "inv_pn": "5302841-B45-G", "cat_pn": "5302841-B45", "section": "Cab Exterior", "loc": "C2-d", "qty": 5, "cost": 110.5, "list": 205.61, "dwg": "107", "flag": null}, {"id": 54, "sku": "JH6-CI-054-RH", "name": "Right A-pillar lower decorative plate", "side": "R/H", "inv_pn": "5302842-B45-G", "cat_pn": "5302842-B45", "section": "Cab Exterior", "loc": "C2-d", "qty": 5, "cost": 110.5, "list": 315.83, "dwg": "107", "flag": null}, {"id": 55, "sku": "JH6-CI-055-LH", "name": "L/H Handrail Assembly", "side": "L/H", "inv_pn": "5302125-B90", "cat_pn": "5302135-B45", "section": "Cab Exterior", "loc": "C2-d", "qty": 6, "cost": 46.92, "list": 87.75, "dwg": "107", "flag": null}, {"id": 56, "sku": "JH6-CI-056-RH", "name": "R/H Handrail Assembly", "side": "R/H", "inv_pn": "5302130-B90", "cat_pn": "5302140-B45", "section": "Cab Exterior", "loc": "C2-d", "qty": 6, "cost": 46.92, "list": 288.27, "dwg": "107", "flag": null}, {"id": 57, "sku": "JH6-CI-057-LH", "name": "L/H Handrail Cover A", "side": "L/H", "inv_pn": "5302171-B45", "cat_pn": "5302171-B45", "section": "Cab Exterior", "loc": "C2-e", "qty": 3, "cost": 8.5, "list": 47.84, "dwg": "107", "flag": null}, {"id": 58, "sku": "JH6-CI-058-RH", "name": "R/H Handrail Cover A", "side": "R/H", "inv_pn": "5302172-B45", "cat_pn": "5302172-B45", "section": "Cab Exterior", "loc": "C2-e", "qty": 3, "cost": 8.5, "list": 1765.23, "dwg": "107", "flag": null}, {"id": 59, "sku": "JH6-CI-059-CN", "name": "Windshield Lower Trim Panel Assembly", "side": "CENTRE", "inv_pn": "5302350-H02", "cat_pn": "5302350-B45", "section": "Cab Exterior", "loc": "C2-e", "qty": 5, "cost": 290.02, "list": 74.8, "dwg": "107", "flag": null}, {"id": 60, "sku": "JH6-FW-060-CN", "name": "Front Wall Outer Panel Assembly", "side": "CENTRE", "inv_pn": "5302021-B45-G", "cat_pn": "5302010-B45", "section": "Front Wall", "loc": "B2-a", "qty": 10, "cost": 1217.54, "list": 2274.82, "dwg": "108", "flag": null}, {"id": 61, "sku": "JH6-FW-061-CN", "name": "Gas Spring Assembly \u2014 Front Wall", "side": "CENTRE", "inv_pn": "5302410-B45-C00", "cat_pn": "5302410-B45-C00", "section": "Front Wall", "loc": "B2-b", "qty": 10, "cost": 55.25, "list": 706.39, "dwg": "108", "flag": null}, {"id": 62, "sku": "JH6-062", "name": "Release Handle Assembly", "side": "CENTRE", "inv_pn": "5302530-A01", "cat_pn": "5302530-A01", "section": "Front Wall", "loc": "B2-d", "qty": 3, "cost": 17.0, "list": 593.83, "dwg": "108", "flag": null}, {"id": 63, "sku": "JH6-FW-063-CN", "name": "Gas Spring Lower Mount Bracket Link Assembly", "side": "CENTRE", "inv_pn": "5302300-H02", "cat_pn": "5302300-B45", "section": "Front Wall", "loc": "B2-b", "qty": 3, "cost": 115.6, "list": 531.72, "dwg": "108", "flag": null}, {"id": 64, "sku": "JH6-FW-064-CN", "name": "Gas Spring Lower Mount Bracket Link Base", "side": "CENTRE", "inv_pn": "5302311-B45", "cat_pn": "5302311-B45", "section": "Front Wall", "loc": "B2-b", "qty": 3, "cost": 25.5, "list": 62.1, "dwg": "108", "flag": null}, {"id": 65, "sku": "JH6-FW-065-LH", "name": "L/H Handrail Bracket Assembly", "side": "L/H", "inv_pn": "5302415-B45", "cat_pn": "5302415-B45", "section": "Front Wall", "loc": "B2-a", "qty": 3, "cost": 187.0, "list": 42.69, "dwg": "108", "flag": null}, {"id": 66, "sku": "JH6-FW-066-RH", "name": "R/H Handrail Bracket Assembly", "side": "R/H", "inv_pn": "5302420-B45", "cat_pn": "5302420-B45", "section": "Front Wall", "loc": "B2-a", "qty": 3, "cost": 187.0, "list": 1561.56, "dwg": "108", "flag": null}, {"id": 67, "sku": "JH6-FW-067-CN", "name": "Front Wall Lock Strap Cable Assembly", "side": "CENTRE", "inv_pn": "5302500-H02-C00", "cat_pn": "5302500-B45-C00", "section": "Front Wall", "loc": "B2-b", "qty": 3, "cost": 136.0, "list": 1511.56, "dwg": "108", "flag": null}, {"id": 68, "sku": "JH6-CB-126-CN", "name": "Front Wall Welding Assembly", "side": "CENTRE", "inv_pn": "5300010-H02-DQ", "cat_pn": "5300010-B45", "section": "Front Wall", "loc": "B2-a", "qty": 3, "cost": 5695.0, "list": 501.59, "dwg": "108", "flag": null}, {"id": 69, "sku": "JH6-FW-069-CN", "name": "Front Wall Bug Screen A", "side": "CENTRE", "inv_pn": "5302051-B45", "cat_pn": "5302051-B45", "section": "Front Wall", "loc": "B2-c", "qty": 3, "cost": 64.6, "list": 601.59, "dwg": "108", "flag": null}, {"id": 70, "sku": "JH6-FW-070-CN", "name": "Front Wall Bug Screen B", "side": "CENTRE", "inv_pn": "5302053-B45", "cat_pn": "5302053-B45", "section": "Front Wall", "loc": "B2-c", "qty": 3, "cost": 59.5, "list": 943.9, "dwg": "108", "flag": null}, {"id": 71, "sku": "JH6-FW-071-CN", "name": "Front Wall Bug Screen C", "side": "CENTRE", "inv_pn": "5302056-B45", "cat_pn": "5302056-B45", "section": "Front Wall", "loc": "B2-c", "qty": 3, "cost": 59.5, "list": 454.84, "dwg": "108", "flag": null}, {"id": 72, "sku": "JH6-FW-072-CN", "name": "Radiator Grille", "side": "CENTRE", "inv_pn": "5302071-B45-G", "cat_pn": "5302071-B45", "section": "Front Wall", "loc": "B2-d", "qty": 3, "cost": 229.5, "list": 454.84, "dwg": "108", "flag": null}, {"id": 73, "sku": "JH6-FW-073-LH", "name": "L/H Front Wall Outer Panel Hinge Assembly", "side": "L/H", "inv_pn": "5302155-B45", "cat_pn": "5302155-B45", "section": "Front Wall", "loc": "B2-c", "qty": 3, "cost": 42.5, "list": 2274.41, "dwg": "108", "flag": null}, {"id": 74, "sku": "JH6-FW-074-RH", "name": "R/H Front Wall Outer Panel Hinge Assembly", "side": "R/H", "inv_pn": "5302160-B45", "cat_pn": "5302160-B45", "section": "Front Wall", "loc": "B2-c", "qty": 3, "cost": 42.5, "list": 53.44, "dwg": "108", "flag": null}, {"id": 75, "sku": "JH6-FW-075-CN", "name": "Gas Spring Fixing Base \u2014 Front Wall", "side": "CENTRE", "inv_pn": "5302221-A01", "cat_pn": "5302221-A01", "section": "Front Wall", "loc": "B2-b", "qty": 3, "cost": 13.6, "list": 113.85, "dwg": "108", "flag": null}, {"id": 76, "sku": "JH6-FW-076-CN", "name": "Buffer Block A \u2014 Front Wall", "side": "CENTRE", "inv_pn": "5302591-B45", "cat_pn": "5302591-B45", "section": "Front Wall", "loc": "B2-e", "qty": 3, "cost": 8.5, "list": 552.69, "dwg": "108", "flag": null}, {"id": 77, "sku": "JH6-FW-077-LH", "name": "L/H Deflector", "side": "L/H", "inv_pn": "5302621-B45-G", "cat_pn": "5302621-B45", "section": "Front Wall", "loc": "B2-d", "qty": 3, "cost": 119.0, "list": 552.69, "dwg": "108", "flag": null}, {"id": 78, "sku": "JH6-FW-078-RH", "name": "R/H Deflector", "side": "R/H", "inv_pn": "5302622-B45-G", "cat_pn": "5302622-B45", "section": "Front Wall", "loc": "B2-d", "qty": 3, "cost": 119.0, "list": 4371.15, "dwg": "108", "flag": null}, {"id": 79, "sku": "JH6-FW-079-CN", "name": "Front Emblem", "side": "CENTRE", "inv_pn": "5302801-B45", "cat_pn": "5302801-B45", "section": "Front Wall", "loc": "B2-e", "qty": 3, "cost": 170.0, "list": 365.16, "dwg": "108", "flag": null}, {"id": 80, "sku": "JH6-DR-080-LH", "name": "Front Door Assembly L/H", "side": "L/H", "inv_pn": "6100005-H02", "cat_pn": "6100015-B83", "section": "Front Door", "loc": "A2-a", "qty": 10, "cost": 9397.6, "list": 521.21, "dwg": "109", "flag": null}, {"id": 81, "sku": "JH6-DR-081-RH", "name": "Front Door Assembly R/H", "side": "R/H", "inv_pn": "6100010-H02", "cat_pn": "6100020-B83", "section": "Front Door", "loc": "A2-a", "qty": 5, "cost": 9397.6, "list": 527.23, "dwg": "109", "flag": null}, {"id": 82, "sku": "JH6-DR-082-LH", "name": "Front Door Rear Frame Trim Cover L/H", "side": "L/H", "inv_pn": "6100031-B45", "cat_pn": "6100031-B45", "section": "Front Door", "loc": "A2-d", "qty": 10, "cost": 19.21, "list": 681.55, "dwg": "109", "flag": null}, {"id": 83, "sku": "JH6-DR-083-RH", "name": "Front Door Rear Frame Trim Cover R/H", "side": "R/H", "inv_pn": "6100032-B45", "cat_pn": "6100032-B45", "section": "Front Door", "loc": "A2-d", "qty": 5, "cost": 19.21, "list": 259.92, "dwg": "109", "flag": null}, {"id": 84, "sku": "JH6-DR-084-LH", "name": "Front Door Lower Trim Panel Assembly L/H", "side": "L/H", "inv_pn": "6101585-B83", "cat_pn": "6101585-B83", "section": "Front Door", "loc": "A2-d", "qty": 10, "cost": 423.3, "list": 285.06, "dwg": "109", "flag": null}, {"id": 85, "sku": "JH6-DR-085-RH", "name": "Front Door Lower Trim Panel Assembly R/H", "side": "R/H", "inv_pn": "6101590-B83", "cat_pn": "6101590-B83", "section": "Front Door", "loc": "A2-d", "qty": 5, "cost": 423.3, "list": 1156.96, "dwg": "109", "flag": null}, {"id": 86, "sku": "JH6-DR-086-LH", "name": "Front Door Window Frame Upper Protective Panel L/H", "side": "L/H", "inv_pn": "6102151-B45-C00", "cat_pn": "6102151-B45-C00", "section": "Front Door", "loc": "A2-d", "qty": 5, "cost": 68.34, "list": 1149.35, "dwg": "109", "flag": null}, {"id": 87, "sku": "JH6-DR-087-RH", "name": "Front Door Window Frame Upper Protective Panel R/H", "side": "R/H", "inv_pn": "6102152-B45-C00", "cat_pn": "6102152-B45-C00", "section": "Front Door", "loc": "A2-d", "qty": 3, "cost": 68.34, "list": 3136.39, "dwg": "109", "flag": null}, {"id": 88, "sku": "JH6-DR-088-LH", "name": "Front Door Interior Trim Panel Assembly L/H", "side": "L/H", "inv_pn": "6102015-H02-C00", "cat_pn": "6102015-H02-C00", "section": "Front Door", "loc": "A2-d", "qty": 5, "cost": 544.68, "list": 2038.4, "dwg": "109", "flag": null}, {"id": 89, "sku": "JH6-DR-089-RH", "name": "Front Door Interior Trim Panel Assembly R/H", "side": "R/H", "inv_pn": "6102020-H02-C00", "cat_pn": "6102020-H02-C00", "section": "Front Door", "loc": "A2-d", "qty": 3, "cost": 544.68, "list": 78.66, "dwg": "109", "flag": null}, {"id": 90, "sku": "JH6-DR-090-LH", "name": "Front Door Electric Window Lift Module Assembly L/H", "side": "L/H", "inv_pn": "6104015AB45-C00", "cat_pn": "6104015AB45-C00", "section": "Front Door", "loc": "A2-b", "qty": 5, "cost": 839.97, "list": 78.66, "dwg": "109", "flag": null}, {"id": 91, "sku": "JH6-DR-091-RH", "name": "Front Door Electric Window Lift Module Assembly R/H", "side": "R/H", "inv_pn": "6104020AB45-C00", "cat_pn": "6104020AB45-C00", "section": "Front Door", "loc": "A2-b", "qty": 3, "cost": 839.97, "list": 64.59, "dwg": "109", "flag": null}, {"id": 92, "sku": "JH6-DR-092-LH", "name": "Front Door Electric Lock Assembly L/H", "side": "L/H", "inv_pn": "6105025AB45-C00", "cat_pn": "6105025AB45-C00", "section": "Front Door", "loc": "A2-b", "qty": 5, "cost": 207.74, "list": 79.47, "dwg": "109", "flag": null}, {"id": 93, "sku": "JH6-DR-093-RH", "name": "Front Door Electric Lock Assembly R/H", "side": "R/H", "inv_pn": "6105030AB45-C00", "cat_pn": "6105030AB45-C00", "section": "Front Door", "loc": "A2-b", "qty": 3, "cost": 207.74, "list": 78.88, "dwg": "109", "flag": null}, {"id": 94, "sku": "JH6-DR-094-LH", "name": "Front Door Handle Assembly L/H", "side": "L/H", "inv_pn": "6105045-B45-C00", "cat_pn": "6105045-B45-C00", "section": "Front Door", "loc": "A2-c", "qty": 10, "cost": 160.99, "list": 207.24, "dwg": "109", "flag": null}, {"id": 95, "sku": "JH6-DR-095-RH", "name": "Front Door Handle Assembly R/H", "side": "R/H", "inv_pn": "6105050-B45-C00", "cat_pn": "6105050-B45-C00", "section": "Front Door", "loc": "A2-c", "qty": 5, "cost": 160.99, "list": 148.6, "dwg": "109", "flag": null}, {"id": 96, "sku": "JH6-DR-096-LH", "name": "Front Door Upper Hinge Assembly L/H", "side": "L/H", "inv_pn": "6106015-B45-C00", "cat_pn": "6106015-B45-C00", "section": "Front Door", "loc": "A2-c", "qty": 5, "cost": 203.49, "list": 93.8, "dwg": "109", "flag": null}, {"id": 97, "sku": "JH6-DR-097-RH", "name": "Front Door Upper Hinge Assembly R/H", "side": "R/H", "inv_pn": "6106020-B45-C00", "cat_pn": "6106020-B45-C00", "section": "Front Door", "loc": "A2-c", "qty": 5, "cost": 203.49, "list": 89.33, "dwg": "109", "flag": null}, {"id": 98, "sku": "JH6-DR-098-LH", "name": "Front Door Lower Hinge Assembly L/H", "side": "L/H", "inv_pn": "6106055-B45-C00", "cat_pn": "6106055-B45-C00", "section": "Front Door", "loc": "A2-c", "qty": 5, "cost": 141.1, "list": 3207.21, "dwg": "109", "flag": null}, {"id": 99, "sku": "JH6-DR-099-RH", "name": "Front Door Lower Hinge Assembly R/H", "side": "R/H", "inv_pn": "6106060-B45-C00", "cat_pn": "6106060-B45-C00", "section": "Front Door", "loc": "A2-c", "qty": 5, "cost": 141.1, "list": 4518.53, "dwg": "109", "flag": null}, {"id": 100, "sku": "JH6-DR-101-RH", "name": "Front Door Limiter Assembly L/H", "side": "L/H", "inv_pn": "6109015-B45-C00", "cat_pn": "6109015-B45-C00", "section": "Front Door", "loc": "A2-c", "qty": 5, "cost": 64.09, "list": 1450.0, "dwg": "109", "flag": null}, {"id": 101, "sku": "JH6-DR-101-RH", "name": "Front Door Limiter Assembly R/H", "side": "R/H", "inv_pn": "6109015-B45-C00", "cat_pn": "6109015-B45-C00", "section": "Front Door", "loc": "A2-c", "qty": 5, "cost": 64.09, "list": 1450.0, "dwg": "109", "flag": null}, {"id": 102, "sku": "JH6-MR-102-LH", "name": "Outer Rearview Mirror Assembly L/H \u2014 Electric", "side": "L/H", "inv_pn": "8202015-H02-C00", "cat_pn": "8202015CB45-C00", "section": "Mirror", "loc": "C2-c", "qty": 10, "cost": 967.64, "list": 2983.39, "dwg": "110", "flag": null}, {"id": 103, "sku": "JH6-MR-103-RH", "name": "Outer Rearview Mirror Assembly R/H \u2014 Electric", "side": "R/H", "inv_pn": "8202020-H02-C00", "cat_pn": "8202020CB45-C00", "section": "Mirror", "loc": "C2-c", "qty": 5, "cost": 967.64, "list": 296.69, "dwg": "110", "flag": null}, {"id": 104, "sku": "JH6-MR-104-LH", "name": "Outer Rearview Mirror L/H Lower Fixed Base Cover", "side": "L/H", "inv_pn": "8202061-B45-C00-G", "cat_pn": "8202061-B45-C00", "section": "Mirror", "loc": "C2-c", "qty": 3, "cost": 20.4, "list": 232.88, "dwg": "110", "flag": null}, {"id": 105, "sku": "JH6-MR-105-RH", "name": "Outer Rearview Mirror R/H Lower Fixed Base Cover", "side": "R/H", "inv_pn": "8202062-B45-C00-G", "cat_pn": "8202062-B45-C00", "section": "Mirror", "loc": "C2-c", "qty": 3, "cost": 20.4, "list": 545.96, "dwg": "110", "flag": null}, {"id": 106, "sku": "JH6-MR-106-CN", "name": "Top View Mirror Assembly", "side": "CENTRE", "inv_pn": "8219010-H02-C00", "cat_pn": "8219010-B45-C00", "section": "Mirror", "loc": "C2-c", "qty": 10, "cost": 123.42, "list": 750.38, "dwg": "110", "flag": null}, {"id": 107, "sku": "JH6-MR-107-CN", "name": "Front Lower View Mirror Assembly", "side": "CENTRE", "inv_pn": "8219020AH02-C00", "cat_pn": "8219020AB45-C00", "section": "Mirror", "loc": "C2-c", "qty": 10, "cost": 277.1, "list": 1274.66, "dwg": "110", "flag": null}, {"id": 108, "sku": "JH6-ST-112-RH", "name": "Primary Step", "side": "BOTH", "inv_pn": "5103031-1063", "cat_pn": "5103031-1063", "section": "Steps & Trim", "loc": "C2-b", "qty": 10, "cost": 74.46, "list": 342.52, "dwg": "111", "flag": null}, {"id": 109, "sku": "JH6-ST-109-LH", "name": "Step Decorative Cover L/H", "side": "L/H", "inv_pn": "5103021-1544-G", "cat_pn": "5103021-1063", "section": "Steps & Trim", "loc": "C2-b", "qty": 10, "cost": 248.54, "list": 1143.28, "dwg": "111", "flag": null}, {"id": 110, "sku": "JH6-ST-110-CN", "name": "Front Lower Protection & Step Bracket Assembly", "side": "CENTRE", "inv_pn": "5103010-1544", "cat_pn": "5103010-1544", "section": "Steps & Trim", "loc": "C2-a", "qty": 5, "cost": 2120.75, "list": 9755.45, "dwg": "111", "flag": null}, {"id": 111, "sku": "JH6-ST-111-RH", "name": "Step Decorative Cover R/H", "side": "R/H", "inv_pn": "5103022-1544-G", "cat_pn": "5103022-1063", "section": "Steps & Trim", "loc": "C2-b", "qty": 5, "cost": 247.52, "list": 1138.59, "dwg": "111", "flag": null}, {"id": 112, "sku": "JH6-ST-112-RH", "name": "Primary Step R/H", "side": "R/H", "inv_pn": "5103031-1063", "cat_pn": "5103031-1063", "section": "Steps & Trim", "loc": "C2-b", "qty": 5, "cost": 74.46, "list": 342.52, "dwg": "111", "flag": null}, {"id": 113, "sku": "JH6-ST-113-CN", "name": "Step Decorative Cover Small Door Limit Clip", "side": "CENTRE", "inv_pn": "5103061-1063", "cat_pn": "5103061-1063", "section": "Steps & Trim", "loc": "C2-b", "qty": 5, "cost": 2.55, "list": 11.73, "dwg": "111", "flag": null}, {"id": 114, "sku": "JH6-ST-114-CN", "name": "Step Decorative Cover Small Door", "side": "CENTRE", "inv_pn": "5103052-1063-G", "cat_pn": "5103052-1063", "section": "Steps & Trim", "loc": "C2-b", "qty": 5, "cost": 5.27, "list": 24.24, "dwg": "111", "flag": null}, {"id": 115, "sku": "JH6-ST-115-CN", "name": "Step Decorative Cover Small Door Fixing Bracket", "side": "CENTRE", "inv_pn": "5103053-1063", "cat_pn": "5103053-1063", "section": "Steps & Trim", "loc": "C2-b", "qty": 5, "cost": 8.33, "list": 38.32, "dwg": "111", "flag": null}, {"id": 116, "sku": "JH6-MG-116-LH", "name": "Rear Mudguard L/H", "side": "L/H", "inv_pn": "5103361A1600", "cat_pn": "5103361-1063", "section": "Mudguard", "loc": "B1-e", "qty": 10, "cost": 148.92, "list": 685.03, "dwg": "112", "flag": null}, {"id": 117, "sku": "JH6-MG-117-RH", "name": "Rear Mudguard R/H", "side": "R/H", "inv_pn": "5103362A1600", "cat_pn": "5103362-1600", "section": "Mudguard", "loc": "B1-e", "qty": 5, "cost": 156.4, "list": 719.44, "dwg": "112", "flag": null}, {"id": 118, "sku": "JH6-MG-118-BH", "name": "Rear Mudguard Bracket Assembly", "side": "BOTH", "inv_pn": "5103385-1600", "cat_pn": "5103385-1600", "section": "Mudguard", "loc": "B1-e", "qty": 10, "cost": 289.0, "list": 1329.4, "dwg": "112", "flag": null}, {"id": 119, "sku": "JH6-MG-119-LH", "name": "L/H Rear Mudguard Bracket Fixing Seat", "side": "L/H", "inv_pn": "5103373-1546", "cat_pn": "5103373-1546", "section": "Mudguard", "loc": "B1-e", "qty": 5, "cost": 122.4, "list": 563.04, "dwg": "112", "flag": null}, {"id": 120, "sku": "JH6-MG-120-RH", "name": "R/H Rear Mudguard Bracket Fixing Seat", "side": "R/H", "inv_pn": "5103374-1546", "cat_pn": "5103374-1546", "section": "Mudguard", "loc": "B1-e", "qty": 5, "cost": 122.4, "list": 563.04, "dwg": "112", "flag": null}, {"id": 121, "sku": "JH6-MG-121-BH", "name": "Front Wheel Rear Mudguard Fixing Bracket Assembly", "side": "BOTH", "inv_pn": "5103510-1600", "cat_pn": "5103510-1600", "section": "Mudguard", "loc": "B1-e", "qty": 10, "cost": 135.15, "list": 621.69, "dwg": "112", "flag": null}, {"id": 122, "sku": "JH6-MG-122-BH", "name": "Rear Mudguard Fixing Bracket", "side": "BOTH", "inv_pn": "5103511-1509", "cat_pn": "5103510-1509", "section": "Mudguard", "loc": "B1-e", "qty": 10, "cost": 131.07, "list": 602.92, "dwg": "112", "flag": null}, {"id": 123, "sku": "JH6-WP-123-CN", "name": "Windscreen Wiper Assembly", "side": "CENTRE", "inv_pn": "5205010-H02-C00", "cat_pn": "5205010-B45-C00", "section": "Wiper", "loc": "D2-b", "qty": 3, "cost": 790.5, "list": 3636.3, "dwg": "113", "flag": null}, {"id": 124, "sku": "JH6-WP-124-CN", "name": "Windscreen Washer Assembly", "side": "CENTRE", "inv_pn": "5207010-H02-C00", "cat_pn": "5207010-H02-C00", "section": "Wiper", "loc": "D2-b", "qty": 3, "cost": 144.5, "list": 664.7, "dwg": "113", "flag": null}, {"id": 125, "sku": "JH6-CB-125-CN", "name": "Cab Weld Assembly", "side": "CENTRE", "inv_pn": "5000020-H02-001", "cat_pn": "5000040EB45", "section": "Cab Body Panels", "loc": "D1-FL", "qty": 1, "cost": 98221.75, "list": 451820.05, "dwg": "114", "flag": null}, {"id": 126, "sku": "JH6-CB-126-CN", "name": "Front Wall Welding Assembly \u2014 Inner Board", "side": "CENTRE", "inv_pn": "5300010-H02-DQ", "cat_pn": "5300010-B45", "section": "Cab Body Panels", "loc": "D1-b", "qty": 2, "cost": 5602.69, "list": 25772.37, "dwg": "114", "flag": null}, {"id": 127, "sku": "JH6-CB-127-CN", "name": "Windshield Upper Crossbeam Assembly", "side": "CENTRE", "inv_pn": "5201010-B45", "cat_pn": "5201010-B45", "section": "Cab Body Panels", "loc": "D1-b", "qty": 1, "cost": 600.95, "list": 2764.37, "dwg": "114", "flag": null}, {"id": 128, "sku": "JH6-CB-128-CN", "name": "Floor Assembly", "side": "CENTRE", "inv_pn": "5100010-H02", "cat_pn": "5100010-H02", "section": "Cab Body Panels", "loc": "D1-FL", "qty": 0, "cost": 8380.32, "list": 38549.47, "dwg": "114", "flag": null}, {"id": 129, "sku": "JH6-CB-129-CN", "name": "Rear Panel Assembly", "side": "CENTRE", "inv_pn": "5600010-B45", "cat_pn": "5600010-B45", "section": "Cab Body Panels", "loc": "D1-a", "qty": 4, "cost": 4070.48, "list": 18724.21, "dwg": "114", "flag": null}, {"id": 130, "sku": "JH6-CB-130-CN", "name": "Top Cover Welding Assembly", "side": "CENTRE", "inv_pn": "5700010-B45", "cat_pn": "5700010-B45", "section": "Cab Body Panels", "loc": "D1-a", "qty": 2, "cost": 5746.51, "list": 26433.95, "dwg": "114", "flag": null}, {"id": 131, "sku": "JH6-CB-131-LH", "name": "L/H Side Outer Panel Assembly", "side": "L/H", "inv_pn": "5400015-H02", "cat_pn": "5400015-H02", "section": "Cab Body Panels", "loc": "D1-FL", "qty": 5, "cost": 4022.54, "list": 18503.68, "dwg": "114", "flag": null}, {"id": 132, "sku": "JH6-CB-132-RH", "name": "R/H Side Outer Panel Assembly", "side": "R/H", "inv_pn": "5400020-H02", "cat_pn": "5400020-H02", "section": "Cab Body Panels", "loc": "D1-FL", "qty": 3, "cost": 4022.54, "list": 18503.68, "dwg": "114", "flag": null}, {"id": 133, "sku": "JH6-CB-133-LH", "name": "L/H Side Inner Panel Assembly", "side": "L/H", "inv_pn": "5401085-H02", "cat_pn": "5401085-H02", "section": "Cab Body Panels", "loc": "D1-a", "qty": 3, "cost": 1316.82, "list": 6057.37, "dwg": "114", "flag": null}, {"id": 134, "sku": "JH6-CB-134-RH", "name": "R/H Side Inner Panel Assembly", "side": "R/H", "inv_pn": "5401090-H02", "cat_pn": "5401090-H02", "section": "Cab Body Panels", "loc": "D1-a", "qty": 2, "cost": 1316.82, "list": 6057.37, "dwg": "114", "flag": null}, {"id": 135, "sku": "JH6-RD-135-CN", "name": "Roof Sun Visor", "side": "CENTRE", "inv_pn": "5704011-B45", "cat_pn": "5704011-B45", "section": "Roof Deflector", "loc": "C1-d", "qty": 3, "cost": 561.0, "list": 2580.6, "dwg": "115", "flag": null}, {"id": 136, "sku": "JH6-RD-136-CN", "name": "Roof Sun Visor Bracket 1", "side": "CENTRE", "inv_pn": "5704021-B45", "cat_pn": "5704021-B45", "section": "Roof Deflector", "loc": "C1-d", "qty": 3, "cost": 17.0, "list": 78.2, "dwg": "115", "flag": null}, {"id": 137, "sku": "JH6-RD-137-CN", "name": "Roof Sun Visor Bracket 2", "side": "CENTRE", "inv_pn": "5704031-B45", "cat_pn": "5704031-B45", "section": "Roof Deflector", "loc": "C1-d", "qty": 3, "cost": 17.0, "list": 78.2, "dwg": "115", "flag": null}, {"id": 138, "sku": "JH6-RD-138-LH", "name": "Roof Trim Strip L/H", "side": "L/H", "inv_pn": "5704081-B45", "cat_pn": "5704081-B45", "section": "Roof Deflector", "loc": "C1-d", "qty": 3, "cost": 115.6, "list": 531.76, "dwg": "115", "flag": null}, {"id": 139, "sku": "JH6-RD-139-RH", "name": "Roof Trim Strip R/H", "side": "R/H", "inv_pn": "5704082-B45", "cat_pn": "5704082-B45", "section": "Roof Deflector", "loc": "C1-d", "qty": 3, "cost": 115.6, "list": 531.76, "dwg": "115", "flag": null}, {"id": 140, "sku": "JH6-RD-140-CN", "name": "Roof Deflector Assembly", "side": "CENTRE", "inv_pn": "5704111CB45-G", "cat_pn": "5704111CB45", "section": "Roof Deflector", "loc": "C1-a", "qty": 3, "cost": 1207.0, "list": 5552.2, "dwg": "115", "flag": null}, {"id": 141, "sku": "JH6-RD-141-CN", "name": "Roof Deflector Adjustment Bracket", "side": "CENTRE", "inv_pn": "5704116CB45", "cat_pn": "5704116CB45", "section": "Roof Deflector", "loc": "C1-c", "qty": 3, "cost": 178.5, "list": 821.1, "dwg": "115", "flag": null}, {"id": 142, "sku": "JH6-RD-142-CN", "name": "Deflector Front Hinge Assembly", "side": "CENTRE", "inv_pn": "5704130CB45", "cat_pn": "5704130CB45", "section": "Roof Deflector", "loc": "C1-c", "qty": 3, "cost": 51.0, "list": 234.6, "dwg": "115", "flag": null}, {"id": 143, "sku": "JH6-RD-143-LH", "name": "Roof Deflector L/H Adjustment Support Assembly", "side": "L/H", "inv_pn": "5704145CB45", "cat_pn": "5704145CB45", "section": "Roof Deflector", "loc": "C1-b", "qty": 3, "cost": 212.5, "list": 977.5, "dwg": "115", "flag": null}, {"id": 144, "sku": "JH6-RD-144-RH", "name": "Roof Deflector R/H Adjustment Support Assembly", "side": "R/H", "inv_pn": "5704150CB45", "cat_pn": "5704150CB45", "section": "Roof Deflector", "loc": "C1-b", "qty": 3, "cost": 212.5, "list": 977.5, "dwg": "115", "flag": null}, {"id": 145, "sku": "JH6-145", "name": "Roof Deflector L/H Support Tube Assembly", "side": "L/H", "inv_pn": "", "cat_pn": "", "section": "Roof Deflector", "loc": "C1-b", "qty": 3, "cost": 112.2, "list": 516.12, "dwg": "115", "flag": null}, {"id": 146, "sku": "JH6-RD-146-RH", "name": "Roof Deflector R/H Support Tube Assembly", "side": "R/H", "inv_pn": "5704180CB45", "cat_pn": "5704180CB45", "section": "Roof Deflector", "loc": "C1-b", "qty": 3, "cost": 112.2, "list": 516.12, "dwg": "115", "flag": null}, {"id": 147, "sku": "JH6-RD-147-RH", "name": "R/H Lower Deflector Bracket Welding Assembly", "side": "R/H", "inv_pn": "5704190-H40", "cat_pn": "5704190-H40", "section": "Roof Deflector", "loc": "C1-c", "qty": 3, "cost": 79.9, "list": 367.54, "dwg": "115", "flag": null}, {"id": 148, "sku": "JH6-RD-148-LH", "name": "Upper Deflector L/H", "side": "L/H", "inv_pn": "5704211CB45-G", "cat_pn": "5704211CB45", "section": "Roof Deflector", "loc": "C1-a", "qty": 3, "cost": 263.5, "list": 1212.1, "dwg": "115", "flag": null}, {"id": 149, "sku": "JH6-RD-149-RH", "name": "Upper Deflector R/H", "side": "R/H", "inv_pn": "5704212CB45-G", "cat_pn": "5704212CB45", "section": "Roof Deflector", "loc": "C1-a", "qty": 3, "cost": 263.5, "list": 1212.1, "dwg": "115", "flag": null}, {"id": 150, "sku": "JH6-RD-150-LH", "name": "Lower Deflector L/H", "side": "L/H", "inv_pn": "5704221CB45-G", "cat_pn": "5704221CB45", "section": "Roof Deflector", "loc": "C1-a", "qty": 3, "cost": 408.0, "list": 1876.8, "dwg": "115", "flag": null}, {"id": 151, "sku": "JH6-RD-151-RH", "name": "Lower Deflector R/H", "side": "R/H", "inv_pn": "5704222CB45-G", "cat_pn": "5704222CB45", "section": "Roof Deflector", "loc": "C1-a", "qty": 3, "cost": 391.0, "list": 1798.6, "dwg": "115", "flag": null}, {"id": 152, "sku": "JH6-RD-152-LH", "name": "Upper Deflector Bracket L/H", "side": "L/H", "inv_pn": "5704231-H40", "cat_pn": "5704231-H40", "section": "Roof Deflector", "loc": "C1-c", "qty": 3, "cost": 37.4, "list": 172.04, "dwg": "115", "flag": null}, {"id": 153, "sku": "JH6-RD-153-RH", "name": "Upper Deflector Bracket R/H", "side": "R/H", "inv_pn": "5704232-H40", "cat_pn": "5704232-H40", "section": "Roof Deflector", "loc": "C1-c", "qty": 3, "cost": 37.4, "list": 172.04, "dwg": "115", "flag": null}, {"id": 154, "sku": "JH6-RD-154-LH", "name": "Lower Deflector Upper Bracket L/H", "side": "L/H", "inv_pn": "5704241-H40", "cat_pn": "5704241-H40", "section": "Roof Deflector", "loc": "C1-c", "qty": 3, "cost": 34.0, "list": 156.4, "dwg": "115", "flag": null}, {"id": 155, "sku": "JH6-RD-155-RH", "name": "Lower Deflector Upper Bracket R/H", "side": "R/H", "inv_pn": "5704242-H40", "cat_pn": "5704242-H40", "section": "Roof Deflector", "loc": "C1-c", "qty": 3, "cost": 37.4, "list": 172.04, "dwg": "115", "flag": null}, {"id": 156, "sku": "JH6-RD-156-LH", "name": "(unnamed \u2014 gap in master data)", "side": "L/H", "inv_pn": "5704251-H40", "cat_pn": "5704251-H40", "section": "Roof Deflector", "loc": "C1-c", "qty": 3, "cost": 37.4, "list": 172.04, "dwg": "115", "flag": "no_name"}, {"id": 157, "sku": "JH6-RD-157-RH", "name": "Lower Deflector Lower Bracket R/H", "side": "R/H", "inv_pn": "5704262-H40", "cat_pn": "5704262-H40", "section": "Roof Deflector", "loc": "C1-c", "qty": 3, "cost": 51.0, "list": 234.6, "dwg": "115", "flag": null}, {"id": 158, "sku": "JH6-RD-158-LH", "name": "Lower Reinforcement Tube L/H", "side": "L/H", "inv_pn": "5704281DB45", "cat_pn": "5704281DB45", "section": "Roof Deflector", "loc": "C1-d", "qty": 3, "cost": 59.5, "list": 273.7, "dwg": "115", "flag": null}, {"id": 159, "sku": "JH6-RD-159-RH", "name": "R/H Deflector Support Tube", "side": "R/H", "inv_pn": "5704282-H40", "cat_pn": "5704282-H40", "section": "Roof Deflector", "loc": "C1-b", "qty": 3, "cost": 39.1, "list": 179.86, "dwg": "115", "flag": null}, {"id": 160, "sku": "JH6-RD-160-CN", "name": "Reinforcement Tube Fixing Bracket", "side": "CENTRE", "inv_pn": "5704283CB45", "cat_pn": "5704283CB45", "section": "Roof Deflector", "loc": "C1-d", "qty": 3, "cost": 39.1, "list": 179.86, "dwg": "115", "flag": null}, {"id": 161, "sku": "JH6-AC-161-CN", "name": "Condenser Assembly", "side": "CENTRE", "inv_pn": "8105010-1600-C00", "cat_pn": "8105010-1600-C00", "section": "Air Conditioning", "loc": "D2-b", "qty": 5, "cost": 786.59, "list": 3618.31, "dwg": "116", "flag": null}];
+</script>
+<script>
+/* ==========================================================================
+   JEFREY — offline part-identification engine
+   --------------------------------------------------------------------------
+   Zero models. Zero network. Pure deterministic text -> catalogue resolution.
+   Every stage here maps 1:1 onto something SQLite/Rust already does, so this
+   ports into src-tauri without a rewrite:
+
+     normalise()      -> Rust fn, pure string work
+     PN canonicalise  -> Rust fn, pure string work
+     ALIASES          -> seed rows in a `part_alias` table
+     trigram dice     -> your existing FTS5 `tokenize = 'trigram'` index
+     learned aliases  -> INSERT INTO part_alias (phrase, part_id, weight)
+
+   The whole bet: a counter's vocabulary is small and repetitive. Learn it once
+   and you never pay for it again.
+   ========================================================================== */
+
+/* ---------- 1. NORMALISATION ------------------------------------------- */
+
+const normalise = (s) =>
+  (s || "")
+    .toLowerCase()
+    .replace(/[’'`]/g, "")
+    .replace(/[^a-z0-9\/\-\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+/* Part numbers: strip everything that isn't alphanumeric, uppercase.
+   FAW numbers arrive as 2803035B1063-DQ / 2803035 B1063 / 2803035b1063dq. */
+const canonPN = (s) => (s || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+
+/* The base number is the PN minus its grade/finish suffix. Ian's own data is
+   full of these: "-DQ suffix not in catalogue; base PN matches." */
+const basePN = (s) => {
+  const c = canonPN(s);
+  const m = c.match(/^(\d{6,8}[A-Z]\d{3,4})/);
+  return m ? m[1] : c;
+};
+
+/* Anything that looks like it could be a part number in free text. */
+const PN_RE = /\b[0-9]{4,}[A-Z0-9]*(?:[-\s]?[A-Z0-9]{1,6})?\b/gi;
+
+/* ---------- 2. VERNACULAR ---------------------------------------------- */
+/* What the customer says -> what the catalogue calls it. Seeded from the
+   language that actually turns up in WhatsApp messages and order books. */
+
+const ALIASES = [
+  // side
+  [["lh", "l/h", "left", "left hand", "lefthand", "driver side", "drivers side", "near side", "ns"], "l/h", "side"],
+  [["rh", "r/h", "right", "right hand", "righthand", "passenger side", "off side", "os"], "r/h", "side"],
+  // panels & body
+  [["bull bar", "bullbar", "nudge bar", "front bar", "bumper bar"], "front bumper", "term"],
+  [["wing", "guard", "wheel arch", "quarter panel"], "fender", "term"],
+  [["spoiler", "wind deflector", "air deflector", "sun visor", "sunvisor", "roof spoiler", "cab spoiler"], "roof deflector", "term"],
+  [["mud flap", "mudflap", "flap", "spray guard", "splash guard"], "mudguard", "term"],
+  [["grille", "grill", "front grill", "radiator grill", "front panel", "front mask"], "front wall", "term"],
+  [["door skin", "door shell", "cab door", "drivers door"], "front door", "term"],
+  [["wing mirror", "side mirror", "rear view mirror", "mirror arm", "mirror bracket"], "mirror", "term"],
+  [["foot step", "footstep", "entry step", "cab step", "side step"], "steps", "term"],
+  [["tool box", "toolbox", "side box", "battery box"], "side toolbox", "term"],
+  [["cab shock", "cab airbag", "air bag", "cab mount", "cab bush"], "cab suspension", "term"],
+  [["headlamp", "headlight", "head light", "indicator", "blinker", "fog lamp", "fog light", "marker light"], "lamp", "term"],
+  [["windscreen wiper", "wiper blade", "wiper arm", "screen wiper"], "wiper", "term"],
+  [["aircon", "a/c", "ac", "air con", "climate"], "air conditioning", "term"],
+  [["chassis rail", "frame rail", "cross member"], "chassis", "term"],
+  // shop shorthand
+  [["assy", "assey", "ass y", "asm", "asy", "ass"], "assembly", "abbrev"],
+  [["brkt", "brac", "brckt", "bkt"], "bracket", "abbrev"],
+  [["lwr", "lo"], "lower", "abbrev"],
+  [["upr", "up"], "upper", "abbrev"],
+  [["ctr", "cent", "mid", "middle"], "center", "abbrev"],
+  [["cvr", "cov"], "cover", "abbrev"],
+  [["hsg", "housing"], "housing", "abbrev"],
+  [["assy.", "cpl", "complete", "comp"], "assembly", "abbrev"],
+  [["o/s", "outer"], "outer", "abbrev"],
+  [["i/s", "inner"], "inner", "abbrev"],
+  // vehicle
+  [["jh6", "j6", "faw jh6", "faw j6", "faw"], "jh6", "vehicle"],
+];
+
+/* Flattened lookup, longest phrase first so "left hand" beats "left". */
+const ALIAS_INDEX = ALIASES.flatMap(([phrases, canon, kind]) =>
+  phrases.map((p) => ({ p, canon, kind, len: p.length }))
+).sort((a, b) => b.len - a.len);
+
+/* ---------- 3. LEARNED MEMORY ------------------------------------------ */
+/* Every correction Ian makes lands here. In the app this is a table:
+     part_alias(id, phrase_norm, part_id, weight, source, created_at)
+   Negative memory matters just as much — a rejected pairing must not
+   resurface on the next identical request. */
+
+const memory = {
+  positive: new Map(), // normalised phrase -> {partId, hits}
+  negative: new Set(), // "phrase::partId"
+  learn(phrase, partId) {
+    const k = normalise(phrase);
+    if (!k) return;
+    const prev = this.positive.get(k);
+    this.positive.set(k, { partId, hits: (prev?.hits || 0) + 1 });
+    this.negative.delete(`${k}::${partId}`);
+  },
+  reject(phrase, partId) {
+    this.negative.add(`${normalise(phrase)}::${partId}`);
+  },
+  recall(phrase) {
+    return this.positive.get(normalise(phrase)) || null;
+  },
+  isRejected(phrase, partId) {
+    return this.negative.has(`${normalise(phrase)}::${partId}`);
+  },
+  size() {
+    return this.positive.size;
+  },
+};
+
+/* ---------- 4. TRIGRAM SIMILARITY -------------------------------------- */
+/* Same maths as pg_trgm / FTS5 trigram. Dice coefficient on 3-char shingles.
+   Robust to the two things that actually break naive matching: typos and
+   word order. */
+
+const trigrams = (s) => {
+  const t = `  ${normalise(s)} `;
+  const out = new Set();
+  for (let i = 0; i < t.length - 2; i++) out.add(t.slice(i, i + 3));
+  return out;
+};
+
+const dice = (a, b) => {
+  if (!a.size || !b.size) return 0;
+  let hit = 0;
+  for (const g of a) if (b.has(g)) hit++;
+  return (2 * hit) / (a.size + b.size);
+};
+
+/* ---------- 5. SEGMENTATION -------------------------------------------- */
+/* One blob of customer text -> discrete line items. Customers write lists in
+   every shape imaginable; this handles the common ones without being clever. */
+
+const WORD_NUM = {
+  one: 1, two: 2, three: 3, four: 4, five: 5, six: 6,
+  seven: 7, eight: 8, nine: 9, ten: 10, twelve: 12, a: 1, an: 1,
+};
+
+/* Salutations, sign-offs and "here's my list:" headers are not line items.
+   Anything ending in a colon is a header; anything opening with a greeting and
+   carrying no digits is chatter. */
+const CHATTER =
+  /^(hi|hii|hello|hey|dear|thanks|thank you|regards|kind regards|cheers|morning|good (morning|day|afternoon|evening)|please|pls|urgent|asap|see below|as discussed|quote|quotation)\b/i;
+
+function isChatter(line) {
+  const t = line.trim();
+  if (/[:：]\s*$/.test(t)) return true;              // "need the following:"
+  if (CHATTER.test(t) && !/\d/.test(t)) return true; // "Hi Ian"
+  if (CHATTER.test(t) && /^[a-z\s,.!'-]+$/i.test(t)) return true;
+  if (/^[\W_]+$/.test(t)) return true;
+  return false;
+}
+
+function segment(raw) {
+  return raw
+    .split(/\r?\n|(?:^|\s)[•·▪]\s*|;\s*/g)
+    .map((l) => l.replace(/^\s*(?:[-*–—]|\d{1,2}[.)])\s*/, "").trim())
+    .filter((l) => l.length > 1)
+    .filter((l) => !isChatter(l));
+}
+
+/* Pull a quantity out of a line and hand back the line without it. */
+function extractQty(line) {
+  const pats = [
+    /^\s*(\d{1,4})\s*(?:x|×|\*|pcs?|pieces?|off|nos?)\b\s*/i, // "10x ", "2 pcs "
+    /^\s*(?:qty|quantity)\s*[:=]?\s*(\d{1,4})\b\s*/i,          // "qty: 4 "
+    /^\s*(\d{1,4})\s+(?=[a-z])/i,                              // "3 front bumper"
+  ];
+  for (const re of pats) {
+    const m = line.match(re);
+    if (m) return { qty: parseInt(m[1], 10), rest: line.replace(re, "").trim() };
+  }
+  // trailing forms: "... - 5 pcs", "... x4", "... (2)", "... qty 6"
+  let m = line.match(/[\s\-–(]\s*(?:x\s*)?(\d{1,4})\s*(?:x|pcs?|pieces?|off|nos?|units?)\s*\)?\s*$/i);
+  if (m) return { qty: parseInt(m[1], 10), rest: line.slice(0, m.index).trim() };
+  m = line.match(/\s+[x×*]\s*(\d{1,4})\s*$/i);
+  if (m) return { qty: parseInt(m[1], 10), rest: line.slice(0, m.index).trim() };
+  m = line.match(/\s+(?:qty|quantity)\s*[:=]?\s*(\d{1,4})\s*$/i);
+  if (m) return { qty: parseInt(m[1], 10), rest: line.slice(0, m.index).trim() };
+  m = line.match(/\s*\(\s*(\d{1,4})\s*\)\s*$/);
+  if (m) return { qty: parseInt(m[1], 10), rest: line.slice(0, m.index).trim() };
+  m = line.match(/^\s*(one|two|three|four|five|six|seven|eight|nine|ten|twelve)\s+(?=[a-z])/i);
+  if (m) return { qty: WORD_NUM[m[1].toLowerCase()], rest: line.replace(m[0], "").trim() };
+  return { qty: 1, rest: line.trim() };
+}
+
+/* Side is the single most expensive thing to get wrong: an L/H bumper on an
+   R/H order is a return, freight both ways, and a lost customer. So it is
+   detected explicitly and enforced as a hard gate, never left to fuzzy text. */
+function detectSide(text) {
+  const t = ` ${normalise(text)} `;
+  const L = /\b(lh|l\/h|left|left hand|drivers? side|near ?side|ns)\b/.test(t);
+  const R = /\b(rh|r\/h|right|right hand|passenger side|off ?side|os)\b/.test(t);
+  const C = /\b(cn|c\/n|centre|center|central|middle|mid)\b/.test(t);
+  if (L && !R) return "L/H";
+  if (R && !L) return "R/H";
+  if (C && !L && !R) return "CENTRE";
+  return null;
+}
+
+/* Ian's catalogue uses L/H, R/H, CENTRE, BOTH and '-'. Only L/H-vs-R/H is a
+   true contradiction; everything else is a soft signal. */
+function sideConflict(want, have) {
+  if (!want || !have || have === "-" || have === "BOTH") return 0;
+  if (want === have) return 10;
+  const opposed = (a, b) => (a === "L/H" && b === "R/H") || (a === "R/H" && b === "L/H");
+  return opposed(want, have) ? -45 : -8;
+}
+
+/* Expand shop vernacular into catalogue language, and report what fired so
+   the trace can show its working. */
+function expand(text) {
+  let t = ` ${normalise(text)} `;
+  const fired = [];
+  for (const { p, canon, kind } of ALIAS_INDEX) {
+    if (kind === "side") continue; // side handled separately
+    const re = new RegExp(`(?<=\\s)${p.replace(/[.*+?^${}()|[\]\\\/]/g, "\\$&")}(?=\\s)`, "g");
+    if (re.test(t)) {
+      t = t.replace(re, ` ${canon} `);
+      fired.push(`${p} → ${canon}`);
+    }
+  }
+  return { text: t.replace(/\s+/g, " ").trim(), fired };
+}
+
+/* ---------- 6. THE MATCHER --------------------------------------------- */
+
+const CONF = {
+  band(score) {
+    if (score >= 85) return "confirmed";
+    if (score >= 60) return "probable";
+    if (score >= 40) return "uncertain";
+    return "unmatched";
+  },
+};
+
+/* A high score that is statistically tied with the runner-up is NOT a
+   confident answer, however good it looks. Jefrey says so instead of
+   quietly picking one. */
+const bandFor = (r) => {
+  if (!r.candidates.length) return "unmatched";
+  if (r.candidates[0].contested) return "contested";
+  return CONF.band(r.candidates[0].score);
+};
+
+function matchLine(rawLine, catalogue) {
+  const { qty, rest } = extractQty(rawLine);
+  const side = detectSide(rest);
+  const { text: expanded, fired } = expand(rest);
+  const trace = [];
+
+  trace.push({ step: "segment", detail: `qty ${qty} · "${rest}"` });
+  if (side) trace.push({ step: "side lock", detail: `${side} — enforced as a hard gate` });
+  if (fired.length) trace.push({ step: "vernacular", detail: fired.join("  ·  ") });
+
+  /* 6a. Learned memory beats everything. If Ian has taught this phrase, the
+     answer is not up for debate. */
+  const learned = memory.recall(rest);
+  if (learned) {
+    const part = catalogue.find((p) => p.id === learned.partId);
+    if (part) {
+      trace.push({ step: "learned", detail: `you taught Jefrey this phrase (${learned.hits}×)` });
+      return {
+        raw: rawLine, qty, phrase: rest, side, trace,
+        candidates: [{ part, score: 100, why: "learned from your correction" }],
+      };
+    }
+  }
+
+  /* 6b. Part numbers in the text — the strongest signal available. */
+  const pnHits = (rest.match(PN_RE) || [])
+    .map((x) => canonPN(x))
+    .filter((x) => x.length >= 5);
+  if (pnHits.length) trace.push({ step: "part numbers", detail: pnHits.join(", ") });
+
+  const reqTri = trigrams(expanded);
+
+  const scored = catalogue.map((part) => {
+    let score = 0;
+    let why = "";
+
+    // -- exact / base / partial part-number matching
+    for (const pn of pnHits) {
+      const inv = canonPN(part.inv_pn), cat = canonPN(part.cat_pn), sku = canonPN(part.sku);
+      if (pn === inv || pn === cat) { score = Math.max(score, 100); why = `exact PN ${part.inv_pn}`; }
+      else if (pn === sku)          { score = Math.max(score, 99);  why = `SKU ${part.sku}`; }
+      else if (basePN(pn) && basePN(pn) === basePN(inv)) {
+        score = Math.max(score, 93); why = `base PN ${basePN(inv)} (suffix differs)`;
+      }
+      else if (pn.length >= 6 && (inv.includes(pn) || cat.includes(pn))) {
+        score = Math.max(score, 82); why = `partial PN in ${part.inv_pn}`;
+      }
+      else if (inv.length >= 6 && pn.includes(inv)) {
+        score = Math.max(score, 80); why = `PN contains ${part.inv_pn}`;
+      }
+    }
+
+    // -- descriptive matching on name + section
+    const nameTri = trigrams(`${part.name} ${part.section}`);
+    const sim = dice(reqTri, nameTri);
+    const textScore = Math.round(sim * 100);
+    if (textScore > score) {
+      score = textScore;
+      why = `text match on "${part.name}"`;
+    } else if (textScore > 30 && score < 100) {
+      score = Math.min(100, score + Math.round(textScore * 0.06));
+    }
+
+    // -- section keyword bonus: a named section is a strong narrowing signal
+    const secNorm = normalise(part.section);
+    if (secNorm && expanded.includes(secNorm)) {
+      score += 12;
+      why = why || `section "${part.section}"`;
+    }
+
+    // -- SIDE GATE. Wrong side is not a near miss, it is a wrong part.
+    score += sideConflict(side, part.side);
+
+    // -- negative memory: never re-offer something already rejected here
+    if (memory.isRejected(rest, part.id)) score -= 60;
+
+    return { part, score: Math.max(0, Math.min(100, Math.round(score))), why: why || "weak text overlap" };
+  });
+
+  const candidates = scored
+    .filter((c) => c.score >= 25)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 6);
+
+  if (candidates.length) {
+    trace.push({
+      step: "rank",
+      detail: `${candidates.length} candidate${candidates.length > 1 ? "s" : ""} above threshold · top ${candidates[0].score}%`,
+    });
+    // A close second means genuine ambiguity — say so rather than guessing.
+    if (candidates[1] && candidates[0].score < 95 && candidates[0].score - candidates[1].score < 8) {
+      trace.push({ step: "ambiguity", detail: "top two are within 8 points — needs your eyes" });
+      candidates[0].contested = true;
+    }
+  } else {
+    trace.push({ step: "rank", detail: "nothing in the catalogue clears the threshold — flag for sourcing" });
+  }
+
+  return { raw: rawLine, qty, phrase: rest, side, trace, candidates };
+}
+
+function identify(text, catalogue) {
+  return segment(text).map((line, i) => {
+    const r = matchLine(line, catalogue);
+    r.key = `r${i}_${Math.random().toString(36).slice(2, 7)}`;
+    r.chosen = 0;
+    r.status = bandFor(r);
+    return r;
+  });
+}
+
+</script>
+<script>
+/* ==========================================================================
+   JEFREY — UI layer
+   ========================================================================== */
+
+const $ = (id) => document.getElementById(id);
+const el = (t, c, h) => { const n = document.createElement(t); if (c) n.className = c; if (h !== undefined) n.innerHTML = h; return n; };
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const zar = (c) => "R" + (c || 0).toLocaleString("en-ZA", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+let ROWS = [];
+let ONLINE = false;
+let openKey = null;
+
+/* ---------- Jefrey's voice & state ------------------------------------- */
+
+const STATES = {
+  idle:      "● STANDBY",
+  scanning:  "◈ SCANNING CATALOGUE",
+  confident: "✓ RESOLVED",
+  ambiguous: "⚠ NEEDS YOUR EYES",
+  void:      "✕ NOT IN CATALOGUE",
+  offline:   "◌ OFFLINE — WORK QUEUED",
+};
+
+function jset(state, say) {
+  $("jbox").className = "jbox j-" + state;
+  $("jstate").textContent = STATES[state] || STATES.idle;
+  if (say !== undefined) $("jsay").innerHTML = say;
+}
+jset("idle");
+
+function toast(html) {
+  const t = $("toast");
+  t.innerHTML = html;
+  t.classList.add("on");
+  clearTimeout(t._x);
+  t._x = setTimeout(() => t.classList.remove("on"), 2600);
+}
+
+/* ---------- samples ----------------------------------------------------- */
+
+const SAMPLES = [
+  {
+    title: "WhatsApp from a fleet customer",
+    hint: "mixed PNs, shop slang, sloppy quantities",
+    text: `Good morning Ian
+Please quote the following for the JH6:
+1) 2803035B1063 - 6 pcs
+2) fender lh  x2
+3) drivers door skin qty 3
+4) sun visor bracket 1
+5) bull bar bracket right hand - 5 pcs
+Thanks`,
+  },
+  {
+    title: "Counter scribble — genuinely ambiguous",
+    hint: "shows Jefrey refusing to guess",
+    text: `mud flap rear x4
+roof spoiler centre
+wing mirror complete
+cab shock absorber`,
+  },
+  {
+    title: "Pure part numbers",
+    hint: "including a -DQ suffix and a catalogue gap",
+    text: `2803040B1063 x2
+5704251-H40
+2803645B1063 - 10 off
+9999999X0000 qty 5`,
+  },
+];
+
+SAMPLES.forEach((s) => {
+  const b = el("button", "samp", `<b>${esc(s.title)}</b><span>${esc(s.hint)}</span>`);
+  b.onclick = () => { $("ta").value = s.text; run(); };
+  $("samples").appendChild(b);
+});
+
+/* ---------- the run loop ------------------------------------------------ */
+
+function run() {
+  const text = $("ta").value.trim();
+  if (!text) { jset("idle", "Give me something to read."); return; }
+
+  jset("scanning", `Reading <span class="k">${text.split(/\n/).filter((x) => x.trim()).length}</span> lines against <span class="k">${CATALOGUE.length}</span> parts…`);
+  $("go").disabled = true;
+  $("out").innerHTML = '<div class="empty"><div class="big">SCANNING…</div></div>';
+
+  // A beat of theatre so the scan reads as work. The match itself is ~2ms.
+  setTimeout(() => {
+    const t0 = performance.now();
+    ROWS = identify(text, CATALOGUE);
+    const ms = (performance.now() - t0).toFixed(1);
+    $("go").disabled = false;
+    render(ms);
+  }, 620);
+}
+
+function counts() {
+  const c = { confirmed: 0, probable: 0, contested: 0, uncertain: 0, unmatched: 0 };
+  ROWS.forEach((r) => c[r.status]++);
+  return c;
+}
+
+function render(ms) {
+  const c = counts();
+  const needsEyes = c.contested + c.uncertain + c.probable;
+
+  if (!ROWS.length) {
+    jset("void", "Nothing in that text reads as a part request.");
+    $("out").innerHTML = '<div class="empty"><div class="big">NO LINE ITEMS FOUND</div></div>';
+    return;
+  }
+  const src = c.unmatched ? ` <span class="k">${c.unmatched}</span> not in the catalogue — flagged for sourcing.` : "";
+  if (c.unmatched === ROWS.length)
+    jset("void", `None of these are in the catalogue. Flagged <span class="k">${c.unmatched}</span> for sourcing.`);
+  else if (needsEyes)
+    jset("ambiguous", `<span class="g">${c.confirmed}</span> locked in. <span class="k">${needsEyes}</span> I won't guess on — open a row and set me straight.${src}`);
+  else
+    jset("confident", `<span class="g">${c.confirmed}</span> of ${ROWS.length} lines resolved outright.${src || " Nothing ambiguous."}`);
+
+  // summary strip
+  const strip = $("strip");
+  strip.innerHTML = "";
+  const add = (h) => strip.appendChild(el("div", "stat", h));
+  add(`<b>${ROWS.length}</b> LINES`);
+  strip.appendChild(el("div", "sep"));
+  if (c.confirmed) add(`<span style="color:var(--green)">●</span> <b>${c.confirmed}</b> CONFIRMED`);
+  if (c.probable) add(`<span style="color:var(--amber)">●</span> <b>${c.probable}</b> PROBABLE`);
+  if (c.contested) add(`<span style="color:#ffd24a">●</span> <b>${c.contested}</b> CONTESTED`);
+  if (c.uncertain) add(`<span style="color:#ff8a4a">●</span> <b>${c.uncertain}</b> UNCERTAIN`);
+  if (c.unmatched) add(`<span style="color:var(--red)">●</span> <b>${c.unmatched}</b> SOURCE`);
+  strip.appendChild(el("div", "sep"));
+  add(`<b>${ms}</b> MS · OFFLINE`);
+  strip.appendChild(el("div", "sp"));
+  const csvB = el("button", "ghost", "Copy CSV"); csvB.onclick = copyCSV;
+  const pushB = el("button", "ghost", "Push to order →"); pushB.onclick = pushOrder;
+  strip.appendChild(csvB); strip.appendChild(pushB);
+
+  // table
+  const t = el("table");
+  t.innerHTML = `<thead><tr>
+    <th style="text-align:right">Qty</th><th>What they asked for</th><th>Matched part</th>
+    <th>Inventory PN</th><th>Loc</th><th style="text-align:right">Stock</th>
+    <th style="text-align:right">List</th><th>Confidence</th></tr></thead>`;
+  const tb = el("tbody");
+
+  ROWS.forEach((r) => {
+    const cand = r.candidates[r.chosen];
+    const tr = el("tr");
+    tr.dataset.k = r.key;
+    if (openKey === r.key) tr.classList.add("open");
+
+    if (!cand) {
+      tr.innerHTML = `
+        <td class="c-qty">${r.qty}</td>
+        <td class="c-req">${esc(r.phrase)}</td>
+        <td colspan="5" style="color:var(--red);font-size:11.5px">
+          Not in the catalogue — needs sourcing from the supplier
+        </td>
+        <td><span class="chip c-unmatched"><span class="n">—</span> SOURCE</span></td>`;
+    } else {
+      const p = cand.part;
+      const stkCls = p.qty === 0 ? "no" : p.qty <= 3 ? "low" : "ok";
+      tr.innerHTML = `
+        <td class="c-qty">${r.qty}</td>
+        <td class="c-req">${esc(r.phrase)}${r.side ? `<span class="sidetag">${r.side}</span>` : ""}</td>
+        <td>
+          <div class="pname${p.flag === "no_name" ? " gap" : ""}">${esc(p.name)}</div>
+          <div class="psub">${esc(p.sku)} · ${esc(p.section)}${p.side !== "-" ? " · " + p.side : ""}</div>
+        </td>
+        <td class="pn">${esc(p.inv_pn)}${p.cat_pn !== p.inv_pn ? `<small>cat ${esc(p.cat_pn)}</small>` : ""}</td>
+        <td class="loc">${esc(p.loc || "—")}</td>
+        <td class="stk ${stkCls}">${p.qty}</td>
+        <td class="zar">${zar(p.list)}</td>
+        <td><span class="chip c-${r.status}"><span class="n">${cand.score}%</span> ${r.status.toUpperCase()}</span></td>`;
+    }
+
+    tr.onclick = () => { openKey = openKey === r.key ? null : r.key; render(ms); };
+    tb.appendChild(tr);
+
+    if (openKey === r.key) tb.appendChild(drawer(r, ms));
+  });
+
+  t.appendChild(tb);
+  $("out").innerHTML = "";
+  $("out").appendChild(t);
+}
+
+/* ---------- the drawer: show the working, take the correction ---------- */
+
+function drawer(r, ms) {
+  const tr = el("tr", "drawer");
+  const td = el("td");
+  td.colSpan = 8;
+  const d = el("div", "dr");
+
+  // left: trace
+  const left = el("div");
+  left.appendChild(el("h4", null, "How Jefrey got there"));
+  r.trace.forEach((t) => {
+    left.appendChild(el("div", "tr", `<div class="s">${esc(t.step)}</div><div class="d">${esc(t.detail)}</div>`));
+  });
+  if (r.candidates[0] && r.candidates[0].why) {
+    left.appendChild(el("div", "tr", `<div class="s">verdict</div><div class="d">${esc(r.candidates[0].why)}</div>`));
+  }
+
+  // right: alternatives + teach
+  const right = el("div");
+  right.appendChild(el("h4", null, r.candidates.length ? "Pick the right one — Jefrey remembers" : "Teach Jefrey this part"));
+
+  r.candidates.forEach((c, i) => {
+    const a = el("div", "alt" + (i === r.chosen ? " sel" : ""));
+    a.innerHTML = `<div class="sc">${c.score}%</div>
+      <div class="nm">${esc(c.part.name)}<small>${esc(c.part.sku)} · ${esc(c.part.inv_pn)}</small></div>`;
+    const b = el("button", null, i === r.chosen ? "CURRENT" : "THIS ONE");
+    b.onclick = (e) => {
+      e.stopPropagation();
+      r.chosen = i;
+      memory.learn(r.phrase, c.part.id);
+      r.candidates.forEach((o, j) => { if (j !== i) memory.reject(r.phrase, o.part.id); });
+      r.status = "confirmed";
+      c.score = 100;
+      c.why = "learned from your correction";
+      $("memN").textContent = memory.size();
+      toast(`Learned: <b>"${esc(r.phrase)}"</b> → ${esc(c.part.sku)}. Next time it's instant.`);
+      jset("confident", `Got it. <span class="g">"${esc(r.phrase)}"</span> means ${esc(c.part.sku)} from now on.`);
+      render(ms);
+    };
+    a.appendChild(b);
+    right.appendChild(a);
+  });
+
+  // free search — for when the right part isn't even in the shortlist
+  const box = el("div", "teach");
+  const inp = el("input");
+  inp.placeholder = "Search catalogue by name or PN…";
+  const hits = el("div");
+  hits.style.marginTop = "6px";
+  inp.oninput = () => {
+    const q = normalise(inp.value);
+    hits.innerHTML = "";
+    if (q.length < 2) return;
+    CATALOGUE.filter((p) => normalise(`${p.name} ${p.sku} ${p.inv_pn} ${p.section}`).includes(q))
+      .slice(0, 4)
+      .forEach((p) => {
+        const a = el("div", "alt");
+        a.innerHTML = `<div class="sc">—</div><div class="nm">${esc(p.name)}<small>${esc(p.sku)} · ${esc(p.inv_pn)}</small></div>`;
+        const b = el("button", null, "TEACH");
+        b.onclick = (e) => {
+          e.stopPropagation();
+          memory.learn(r.phrase, p.id);
+          r.candidates.unshift({ part: p, score: 100, why: "learned from your correction" });
+          r.chosen = 0;
+          r.status = "confirmed";
+          $("memN").textContent = memory.size();
+          toast(`Learned: <b>"${esc(r.phrase)}"</b> → ${esc(p.sku)}.`);
+          jset("confident", `Filed. <span class="g">"${esc(r.phrase)}"</span> → ${esc(p.sku)}.`);
+          render(ms);
+        };
+        a.appendChild(b);
+        hits.appendChild(a);
+      });
+  };
+  inp.onclick = (e) => e.stopPropagation();
+  box.appendChild(inp);
+  right.appendChild(box);
+  right.appendChild(hits);
+
+  d.appendChild(left);
+  d.appendChild(right);
+  td.appendChild(d);
+  tr.appendChild(td);
+  tr.onclick = (e) => e.stopPropagation();
+  return tr;
+}
+
+/* ---------- exports ----------------------------------------------------- */
+
+function tableRows() {
+  return ROWS.map((r) => {
+    const c = r.candidates[r.chosen];
+    return {
+      qty: r.qty,
+      request: r.phrase,
+      sku: c ? c.part.sku : "",
+      name: c ? c.part.name : "*** NOT IN CATALOGUE ***",
+      inv_pn: c ? c.part.inv_pn : "",
+      loc: c ? c.part.loc : "",
+      stock: c ? c.part.qty : "",
+      list: c ? c.part.list : "",
+      confidence: c ? c.score + "%" : "0%",
+      status: r.status,
+    };
+  });
+}
+
+function copyCSV() {
+  const rows = tableRows();
+  const head = ["Qty", "Customer wording", "SKU", "Part name", "Inventory PN", "Loc", "On hand", "List (ZAR)", "Confidence", "Status"];
+  const csv = [head.join(",")]
+    .concat(rows.map((r) => [r.qty, r.request, r.sku, r.name, r.inv_pn, r.loc, r.stock, r.list, r.confidence, r.status]
+      .map((v) => `"${String(v).replace(/"/g, '""')}"`).join(",")))
+    .join("\n");
+  navigator.clipboard.writeText(csv).then(
+    () => toast(`<b>${rows.length} rows</b> copied as CSV.`),
+    () => toast("Clipboard blocked by the browser.")
+  );
+}
+
+function pushOrder() {
+  const ok = ROWS.filter((r) => r.status === "confirmed" && r.candidates[r.chosen]);
+  const held = ROWS.length - ok.length;
+  const val = ok.reduce((s, r) => s + r.qty * r.candidates[r.chosen].part.list, 0);
+  toast(`<b>${ok.length} lines</b> → draft order · ${zar(val)}${held ? ` · ${held} held back for review` : ""}`);
+  jset(held ? "ambiguous" : "confident",
+    held ? `Pushed <span class="g">${ok.length}</span>. Held <span class="k">${held}</span> — I'm not putting a guess on an invoice.`
+         : `Draft order created. <span class="g">${ok.length}</span> lines, ${zar(val)}.`);
+}
+
+/* ---------- photo queue (offline-first) -------------------------------- */
+
+const QUEUE = [];
+
+function renderQueue() {
+  const q = $("queue");
+  q.innerHTML = "";
+  QUEUE.forEach((item) => {
+    const d = el("div", "qitem" + (item.done ? " done" : ""));
+    d.innerHTML = `<img class="qthumb" src="${item.url}">
+      <div class="qtxt"><b>${esc(item.name)}</b>
+      <span>${item.done ? "✓ TRANSCRIBED · " + item.lines + " LINES" : ONLINE ? "◈ TRANSCRIBING…" : "◌ QUEUED — WAITING FOR CONNECTION"}</span></div>`;
+    if (item.done) {
+      d.style.cursor = "pointer";
+      d.onclick = () => { $("ta").value = item.text; run(); };
+    }
+    q.appendChild(d);
+  });
+}
+
+function processQueue() {
+  const pending = QUEUE.filter((i) => !i.done);
+  if (!pending.length || !ONLINE) return;
+  jset("scanning", `Connection back. Transcribing <span class="k">${pending.length}</span> queued page(s)…`);
+  renderQueue();
+  setTimeout(() => {
+    pending.forEach((i) => {
+      i.done = true;
+      // Demo transcription. In the app this is one cloud vision call, then the
+      // matching below it runs entirely offline exactly as it does now.
+      i.text = `2803035B1063 - 6 pcs\nfender lh x2\nmud flap rear x4\nsun visor bracket 1\nwing mirror complete`;
+      i.lines = 5;
+    });
+    renderQueue();
+    jset("confident", `Transcribed. Click the page to run it — matching stays offline.`);
+    toast(`<b>${pending.length} page(s)</b> transcribed and ready.`);
+  }, 1400);
+}
+
+const drop = $("drop");
+const fileIn = el("input");
+fileIn.type = "file"; fileIn.accept = "image/*"; fileIn.multiple = true; fileIn.style.display = "none";
+document.body.appendChild(fileIn);
+drop.onclick = () => fileIn.click();
+fileIn.onchange = (e) => addFiles(e.target.files);
+["dragenter", "dragover"].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.add("over"); }));
+["dragleave", "drop"].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.remove("over"); }));
+drop.addEventListener("drop", (e) => addFiles(e.dataTransfer.files));
+
+function addFiles(files) {
+  [...files].filter((f) => f.type.startsWith("image/")).forEach((f) => {
+    QUEUE.push({ name: f.name, url: URL.createObjectURL(f), done: false });
+  });
+  renderQueue();
+  if (ONLINE) processQueue();
+  else jset("offline", `Page stored on this machine. I'll transcribe it the moment you're online — the matching never needed a connection anyway.`);
+}
+
+/* ---------- network toggle --------------------------------------------- */
+
+$("netPill").onclick = () => {
+  ONLINE = !ONLINE;
+  $("netPill").classList.toggle("off", !ONLINE);
+  $("netTxt").textContent = ONLINE ? "ONLINE · CLOUD OCR AVAILABLE" : "LOCAL · OFFLINE-CAPABLE";
+  renderQueue();
+  if (ONLINE) processQueue();
+};
+
+/* ---------- wiring ------------------------------------------------------ */
+
+$("go").onclick = run;
+$("clr").onclick = () => { $("ta").value = ""; ROWS = []; openKey = null; $("ta").focus(); jset("idle", "Cleared. Paste the next one."); $("out").innerHTML = '<div class="empty"><div class="big">NO REQUEST LOADED</div><div style="font-size:11.5px">Paste a customer request on the left, or pick a sample.</div></div>'; $("strip").innerHTML = '<div class="stat">READY</div>'; };
+$("ta").addEventListener("keydown", (e) => { if ((e.ctrlKey || e.metaKey) && e.key === "Enter") run(); });
+$("memPill").onclick = () => {
+  if (!memory.size()) { toast("Nothing learned yet — correct a row and I'll remember it."); return; }
+  const lines = [...memory.positive.entries()].map(([k, v]) => {
+    const p = CATALOGUE.find((x) => x.id === v.partId);
+    return `"${k}" → ${p ? p.sku : v.partId}`;
+  });
+  toast(`<b>Learned aliases</b><br>${lines.map(esc).join("<br>")}`);
+};
+$("ta").focus();
+
+</script>
+</body>
+</html>

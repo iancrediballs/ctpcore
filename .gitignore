@@ -1,0 +1,35 @@
+# ── dependencies & build output ─────────────────────────────
+node_modules/
+**/node_modules/
+dist/
+**/dist/
+app/src-tauri/target/
+**/target/
+
+# ── large scratch / image-processing data (not source) ──────
+_to_process/
+_check/
+
+# ── python & tooling caches ─────────────────────────────────
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# ── logs & OS cruft ─────────────────────────────────────────
+*.log
+.DS_Store
+Thumbs.db
+
+# ── temporary preview scratch ───────────────────────────────
+/_*.png
+
+# ── large binary assets: moving to Supabase Storage in M2, and regenerable ──
+# (kept OUT of git so commits stay fast; back these up separately)
+app/public/assets/photos/
+app/public/assets/models/
+Master_Cutouts_White/
+*.CR2
+
+# ── generated output (rebuild with catalogue_gen.py) ────────
+CTP_Parts_Catalogue.html

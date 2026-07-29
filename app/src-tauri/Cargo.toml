@@ -1,0 +1,20 @@
+[package]
+name = "fleetview"
+version = "0.0.1"
+description = "FleetView ERP — local-first truck parts"
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# bundled SQLite is compiled with FTS5 (incl. the trigram tokenizer) enabled
+rusqlite = { version = "0.32", features = ["bundled"] }
+# tiny blocking HTTP client (rustls TLS) — caches supplier diagrams to local disk
+ureq = "2"
+
+[features]
+custom-protocol = ["tauri/custom-protocol"]

@@ -1,0 +1,162 @@
+Item No,Section,Part Name,Side,Inventory PN,Catalogue PN,Status,Qty,Photo Filename (Primary),New Part Code,Notes
+1,Front Bumper,Front Bumper L/H Assembly,L/H,2803035B1063-DQ,2803035B1063,MATCHED,10,JH6-FB-001-LH.jpg,JH6-FB-001-LH,-DQ suffix not in catalogue; base PN matches.
+2,Front Bumper,Front Bumper R/H Assembly,R/H,2803040B1063-DQ,2803040B1063,MATCHED,5,JH6-FB-002-RH.jpg,JH6-FB-002-RH,-DQ suffix not in catalogue.
+3,Front Bumper,Front Bumper L/H Bracket Assembly,L/H,2803645B1063,2803645B1063,MATCHED,10,JH6-FB-003-LH.jpg,JH6-FB-003-LH,
+4,Front Bumper,Front Bumper R/H Bracket Assembly,R/H,2803650B1063,2803650B1063,MATCHED,5,JH6-FB-004-RH.jpg,JH6-FB-004-RH,
+5,Front Bumper,Front Bumper L/H Decorative Panel,L/H,2803031B1063-G,2803031B1063,MATCHED,10,JH6-FB-005-LH.jpg,JH6-FB-005-LH,-G = colour/trim variant. Base PN matches.
+6,Front Bumper,Front Bumper R/H Decorative Panel,R/H,2803032B1063-G,2803032B1063,MATCHED,5,JH6-FB-006-RH.jpg,JH6-FB-006-RH,-G colour variant.
+7,Front Bumper,Front Bumper L/H Spoiler,L/H,2803721B1063-G,2803721B1063,MATCHED,10,JH6-FB-007-LH.jpg,JH6-FB-007-LH,-G colour variant.
+8,Front Bumper,Front Bumper R/H Spoiler,R/H,2803722B1063-G,2803722B1063,MATCHED,5,JH6-FB-008-RH.jpg,JH6-FB-008-RH,-G colour variant.
+9,Front Bumper,Front Bumper Centre Assembly,CENTRE,2803010B1063-DQ,2803010B1063,MATCHED,10,JH6-FB-009-CN.jpg,JH6-FB-009-CN,-DQ suffix; confirm with supplier.
+10,Front Bumper,Front Bumper Centre Spoiler,CENTRE,2803731B1063-G,2803731B1063,MATCHED,10,JH6-FB-010-CN.jpg,JH6-FB-010-CN,-G colour variant.
+11,Front Bumper,Front Bumper Centre Mesh Screen,CENTRE,2803821B1063,2803821B1063,MATCHED,10,JH6-FB-011-CN.jpg,JH6-FB-011-CN,
+12,Front Bumper,Front Bumper Upper Mesh Screen,CENTRE,2803831B1063,2803831B1063,MATCHED,10,JH6-FB-012-CN.jpg,JH6-FB-012-CN,
+13,Front Bumper,Front Bumper Lower Tow Hook Cover,CENTRE,2803091B1063-G,2803091B1063,MATCHED,10,JH6-FB-013-CN.jpg,JH6-FB-013-CN,-G colour variant.
+14,Front Bumper,Spoiler L/H Connecting Bracket,L/H,2803761B1063,2803761B1063,MATCHED,3,JH6-FB-014-LH.jpg,JH6-FB-014-LH,
+15,Front Bumper,Spoiler R/H Connecting Bracket,R/H,2803762B1063,2803762B1063,MATCHED,3,JH6-FB-015-RH.jpg,JH6-FB-015-RH,
+16,Front Bumper,Spoiler Centre Connecting Bracket,CENTRE,2803763B1063,2803763B1063,MATCHED,3,JH6-FB-016-CN.jpg,JH6-FB-016-CN,
+17,Front Bumper,Front Bumper Intake Grille Assembly,CENTRE,2803015B1063-G,2803015B1063,MATCHED,10,JH6-FB-017-CN.jpg,JH6-FB-017-CN,-G colour variant.
+18,Front Bumper,Front Bumper Bug Shield,CENTRE,2803018B1063,2803018B1063,MATCHED,10,JH6-FB-018-CN.jpg,JH6-FB-018-CN,
+19,Front Bumper,Front Bumper Primary Step,CENTRE,2803052B1063,2803052B1063,MATCHED,10,JH6-FB-019-CN.jpg,JH6-FB-019-CN,
+20,Front Bumper,Front Bumper Centre Lower L/H Decorative Panel,L/H,2803381B1063,2803381B1063,MATCHED,10,JH6-FB-020-LH.jpg,JH6-FB-020-LH,
+21,Front Bumper,Front Bumper Centre Lower R/H Decorative Panel,R/H,2803382B1063,2803382B1063,MATCHED,10,JH6-FB-021-RH.jpg,JH6-FB-021-RH,
+22,Chassis,Front Crossmember Assembly,CENTRE,2801070-1063,2801070-1063,MATCHED,3,JH6-CH-022-CN.jpg,JH6-CH-022-CN,
+23,Chassis,Front Spring Front Bracket Crossmember Welding Assembly,CENTRE,2801090-1066,2801090-1066,MATCHED,3,JH6-CH-023-CN.jpg,JH6-CH-023-CN,
+24,Lighting,Front Combination Lamp L/H Assembly,L/H,3711015-1544,3711015-1063,MATCHED,10,JH6-LT-024-LH.jpg,JH6-LT-024-LH,Model suffix 1544 vs 1063. Confirm model variant with supplier.
+25,Lighting,Front Combination Lamp R/H Assembly,R/H,3711020-1544,3711020-1063,MATCHED,5,JH6-LT-025-RH.jpg,JH6-LT-025-RH,Model suffix 1544 vs 1063.
+26,Lighting,Front Fog Lamp L/H Assembly,L/H,3732015-1063-C00,3732015-1063,MATCHED,10,JH6-LT-026-LH.jpg,JH6-LT-026-LH,-C00 = complete assembly suffix. Base PN matches.
+27,Lighting,Front Fog Lamp R/H Assembly,R/H,3732020-1063-C00,3732020-1063,MATCHED,5,JH6-LT-027-RH.jpg,JH6-LT-027-RH,-C00 complete assembly suffix.
+28,Cab Suspension,Cab Hydraulic Lock Assembly L/H,L/H,5004055-79H-C00,5004055-1063-C00,MATCHED,6,JH6-CS-028-LH.jpg,JH6-CS-028-LH,Inventory PN uses variant -79H; catalogue shows -1063 only.
+29,Cab Suspension,Cab Hydraulic Lock Assembly R/H,R/H,5004055-1063-C00,5004055-1063-C00,MATCHED,3,JH6-CS-029-RH.jpg,JH6-CS-029-RH,
+30,Cab Suspension,Rear Suspension Air Spring & Shock Absorber Assembly L/H,L/H,5001315B1063-C00,5001315A1063-C00,MATCHED,6,JH6-CS-030-LH.jpg,JH6-CS-030-LH,Inventory prefix B1063; catalogue shows A1063.
+31,Cab Suspension,Rear Suspension Air Spring & Shock Absorber Assembly R/H,R/H,5001315-1063A-C00,5001315A1063-C00,MATCHED,3,JH6-CS-031-RH.jpg,JH6-CS-031-RH,PN format differs (hyphen position). Likely same as catalogue A1063.
+32,Cab Suspension,Cab Front Suspension Assembly,CENTRE,5001010CB45,5001010-B45,MATCHED,2,JH6-CS-032-CN.jpg,JH6-CS-032-CN,Missing hyphen in inventory PN.
+33,Fender,Front Fender L/H,L/H,5103121-H02-G,5103121-B45,MATCHED,10,JH6-FD-033-LH.jpg,JH6-FD-033-LH,Cab variant H02 vs B45. -G = colour.
+34,Fender,Front Fender R/H,R/H,5103122-B45-G,5103122-B45,MATCHED,5,JH6-FD-034-RH.jpg,JH6-FD-034-RH,-G colour suffix only. Base PN matches.
+35,Fender,Second Step,CENTRE,5103181-B45,5103181-B45,MATCHED,10,JH6-FD-035-CN.jpg,JH6-FD-035-CN,
+36,Fender,Third Step,CENTRE,5103191-B45,5103191-B45,MATCHED,10,JH6-FD-036-CN.jpg,JH6-FD-036-CN,
+37,Fender,Front Fender Support Bracket Assembly,BOTH,5103135-B45,5103135-B45,MATCHED,10,JH6-FD-037-BH.jpg,JH6-FD-037-BH,
+38,Fender,Rear Fender L/H,L/H,5103131-B45-G,5103125-B45,MATCHED,10,JH6-FD-038-LH.jpg,JH6-FD-038-LH,Inventory PN 5103131-B45-G. Catalogue shows 5103125-B45.
+39,Fender,Rear Fender R/H,R/H,5103132-B45-G,5103130-B45,MATCHED,5,JH6-FD-039-RH.jpg,JH6-FD-039-RH,Inventory PN 5103132-B45-G. Catalogue shows 5103130-B45.
+40,Fender,Front Wheel Upper Splash Shield L/H,L/H,5103161-H02,5103161-B45,MATCHED,10,JH6-FD-040-LH.jpg,JH6-FD-040-LH,Variant H02 vs B45.
+41,Fender,Front Wheel Upper Splash Shield R/H,R/H,5103162AB83,5103162AB83,MATCHED,5,JH6-FD-041-RH.jpg,JH6-FD-041-RH,
+42,Fender,Upper Splash Shield Small Door,CENTRE,5103211-B45,5103211-B45,MATCHED,10,JH6-FD-042-CN.jpg,JH6-FD-042-CN,
+43,Fender,L/H Engine Side Shield,L/H,5103611-1063,5103611-1063,MATCHED,3,JH6-FD-043-LH.jpg,JH6-FD-043-LH,
+44,Fender,R/H Engine Side Shield,R/H,5103612-1600,5103612-1600,MATCHED,3,JH6-FD-044-RH.jpg,JH6-FD-044-RH,
+45,Fender,L/H Door Sill Scuff Plate,L/H,5109111-H02,5109111-H02,MATCHED,3,JH6-FD-045-LH.jpg,JH6-FD-045-LH,
+46,Fender,R/H Door Sill Scuff Plate,R/H,5109112-B45,5109112-B45,MATCHED,3,JH6-FD-046-RH.jpg,JH6-FD-046-RH,
+47,Side Toolbox,Side Toolbox Cover Assembly L/H,L/H,5407025-B45,5407015-B45,MATCHED,10,JH6-TB-047-LH.jpg,JH6-TB-047-LH,Status corrected: catalogue L/H = 5407015-B45.
+48,Side Toolbox,Side Toolbox Cover Assembly R/H,R/H,5407025-B45,5407020-B45,MATCHED,5,JH6-TB-048-RH.jpg,JH6-TB-048-RH,Status corrected: catalogue R/H = 5407020-B45.
+49,Side Toolbox,Side Toolbox Sealing Strip L/H,L/H,5407086-B45-C00,5407086-B45-C00,MATCHED,10,JH6-TB-049-LH.jpg,JH6-TB-049-LH,Both sides share this PN per catalogue.
+50,Side Toolbox,Side Toolbox Sealing Strip R/H,R/H,5407086-B45-C00,5407086-B45-C00,MATCHED,5,JH6-TB-050-RH.jpg,JH6-TB-050-RH,Both sides share this PN per catalogue.
+51,Cab Interior,Front Pillar Guard Assembly L/H,L/H,5302715-H02,5302715-B45,MATCHED,5,JH6-CI-051-LH.jpg,JH6-CI-051-LH,Variant H02 vs B45.
+52,Cab Interior,Front Pillar Guard Assembly R/H,R/H,5302720-H02,5302720-B45,MATCHED,5,JH6-CI-052-RH.jpg,JH6-CI-052-RH,Variant H02 vs B45.
+53,Cab Interior,Front Pillar L/H Lower Hinge Guard,L/H,5302841-B45-G,5302841-B45,MATCHED,5,JH6-CI-053-LH.jpg,JH6-CI-053-LH,-G colour suffix.
+54,Cab Interior,Front Pillar R/H Lower Hinge Guard,R/H,5302842-B45-G,5302842-B45,MATCHED,5,JH6-CI-054-RH.jpg,JH6-CI-054-RH,-G colour suffix.
+55,Cab Interior,L/H Handrail Assembly,L/H,5302125-B90,5302135-B45,MATCHED,6,JH6-CI-055-LH.jpg,JH6-CI-055-LH,Inventory PN 5302125-B90 (B90 variant). Catalogue lists 5302135-B45.
+56,Cab Interior,R/H Handrail Assembly,R/H,5302130-B90,5302140-B45,MATCHED,6,JH6-CI-056-RH.jpg,JH6-CI-056-RH,Inventory PN 5302130-B90. Catalogue: 5302140-B45.
+57,Cab Interior,L/H Handrail Cover A,L/H,5302171-B45,5302171-B45,MATCHED,3,JH6-CI-057-LH.jpg,JH6-CI-057-LH,
+58,Cab Interior,R/H Handrail Cover A,R/H,5302172-B45,5302172-B45,MATCHED,3,JH6-CI-058-RH.jpg,JH6-CI-058-RH,
+59,Cab Interior,Windshield Lower Trim Panel Assembly,CENTRE,5302350-H02,5302350-B45,MATCHED,5,JH6-CI-059-CN.jpg,JH6-CI-059-CN,Variant H02 vs B45.
+60,Front Wall,Front Wall Outer Panel Assembly,CENTRE,5302021-B45-G,5302010-B45,MATCHED,10,JH6-FW-060-CN.jpg,JH6-FW-060-CN,Inventory PN 5302021. Catalogue shows 5302010-B45.
+61,Front Wall,Gas Spring Assembly — Front Wall,CENTRE,5302410-B45-C00,5302410-B45-C00,MATCHED,10,JH6-FW-061-CN.jpg,JH6-FW-061-CN,
+62,Front Wall,Release Handle Assembly,CENTRE,5302530-A05,5302530-A01,MATCHED,3,JH6-FW-062-CN.jpg,JH6-FW-062-CN,Inventory: A05 variant vs catalogue A01.
+63,Front Wall,Gas Spring Lower Mount Bracket Link Assembly,CENTRE,5302300-H02,5302300-B45,MATCHED,3,JH6-FW-063-CN.jpg,JH6-FW-063-CN,Variant H02 vs B45.
+64,Front Wall,Gas Spring Lower Mount Bracket Link Base,CENTRE,5302311-B45,5302311-B45,MATCHED,3,JH6-FW-064-CN.jpg,JH6-FW-064-CN,
+65,Front Wall,L/H Handrail Bracket Assembly,L/H,5302415-B45,5302415-B45,MATCHED,3,JH6-FW-065-LH.jpg,JH6-FW-065-LH,
+66,Front Wall,R/H Handrail Bracket Assembly,R/H,5302420-B45,5302420-B45,MATCHED,3,JH6-FW-066-RH.jpg,JH6-FW-066-RH,
+67,Front Wall,Front Wall Lock Strap Cable Assembly,CENTRE,5302500-H02-C00,5302500-B45-C00,MATCHED,3,JH6-FW-067-CN.jpg,JH6-FW-067-CN,Variant H02 vs B45.
+68,Front Wall,Front Wall Welding Assembly,CENTRE,5300010-H02-DQ,5300010-B45,MATCHED,3,JH6-FW-068-CN.jpg,JH6-FW-068-CN,Variant H02-DQ vs B45.
+69,Front Wall,Front Wall Bug Screen A,CENTRE,5302051-B45,5302051-B45,MATCHED,3,JH6-FW-069-CN.jpg,JH6-FW-069-CN,
+70,Front Wall,Front Wall Bug Screen B,CENTRE,5302053-B45,5302053-B45,MATCHED,3,JH6-FW-070-CN.jpg,JH6-FW-070-CN,
+71,Front Wall,Front Wall Bug Screen C,CENTRE,5302056-B45,5302056-B45,MATCHED,3,JH6-FW-071-CN.jpg,JH6-FW-071-CN,
+72,Front Wall,Radiator Grille,CENTRE,5302071-B45-G,5302071-B45,MATCHED,3,JH6-FW-072-CN.jpg,JH6-FW-072-CN,-G colour variant.
+73,Front Wall,L/H Front Wall Outer Panel Hinge Assembly,L/H,5302155-B45,5302155-B45,MATCHED,3,JH6-FW-073-LH.jpg,JH6-FW-073-LH,
+74,Front Wall,R/H Front Wall Outer Panel Hinge Assembly,R/H,5302160-B45,5302160-B45,MATCHED,3,JH6-FW-074-RH.jpg,JH6-FW-074-RH,
+75,Front Wall,Gas Spring Fixing Base — Front Wall,CENTRE,5302221-A01,5302221-A01,MATCHED,3,JH6-FW-075-CN.jpg,JH6-FW-075-CN,
+76,Front Wall,Buffer Block A — Front Wall,CENTRE,5302591-B45,5302591-B45,MATCHED,3,JH6-FW-076-CN.jpg,JH6-FW-076-CN,
+77,Front Wall,L/H Deflector,L/H,5302621-B45-G,5302621-B45,MATCHED,3,JH6-FW-077-LH.jpg,JH6-FW-077-LH,-G colour.
+78,Front Wall,R/H Deflector,R/H,5302622-B45-G,5302622-B45,MATCHED,3,JH6-FW-078-RH.jpg,JH6-FW-078-RH,-G colour.
+79,Front Wall,Front Emblem,CENTRE,5302801-B45,5302801-B45,MATCHED,3,JH6-FW-079-CN.jpg,JH6-FW-079-CN,
+80,Front Door,Front Door Assembly L/H,L/H,6100005-H02,6100015-B83,MATCHED,10,JH6-DR-080-LH.jpg,JH6-DR-080-LH,Inventory PN 6100005-H02. Catalogue shows 6100015-B83.
+81,Front Door,Front Door Assembly R/H,R/H,6100010-H02,6100020-B83,MATCHED,5,JH6-DR-081-RH.jpg,JH6-DR-081-RH,Base PN confirmed correct for H02 cab variant.
+82,Front Door,Front Door Rear Frame Trim Cover L/H,L/H,6100031-B45,6100031-B45,MATCHED,10,JH6-DR-082-LH.jpg,JH6-DR-082-LH,
+83,Front Door,Front Door Rear Frame Trim Cover R/H,R/H,6100032-B45,6100032-B45,MATCHED,5,JH6-DR-083-RH.jpg,JH6-DR-083-RH,
+84,Front Door,Front Door Lower Trim Panel Assembly L/H,L/H,6101585-B83,6101585-B83,MATCHED,10,JH6-DR-084-LH.jpg,JH6-DR-084-LH,
+85,Front Door,Front Door Lower Trim Panel Assembly R/H,R/H,6101590-B83,6101590-B83,MATCHED,5,JH6-DR-085-RH.jpg,JH6-DR-085-RH,
+86,Front Door,Front Door Window Frame Upper Protective Panel L/H,L/H,6102151-B45-C00,6102151-B45-C00,MATCHED,5,JH6-DR-086-LH.jpg,JH6-DR-086-LH,
+87,Front Door,Front Door Window Frame Upper Protective Panel R/H,R/H,6102152-B45-C00,6102152-B45-C00,MATCHED,3,JH6-DR-087-RH.jpg,JH6-DR-087-RH,
+88,Front Door,Front Door Interior Trim Panel Assembly L/H,L/H,6102015-H02-C00,6102015-H02-C00,MATCHED,5,JH6-DR-088-LH.jpg,JH6-DR-088-LH,
+89,Front Door,Front Door Interior Trim Panel Assembly R/H,R/H,6102020-H02-C00,6102020-H02-C00,MATCHED,3,JH6-DR-089-RH.jpg,JH6-DR-089-RH,
+90,Front Door,Front Door Electric Window Lift Module Assembly L/H,L/H,6104015AB45-C00,6104015AB45-C00,MATCHED,5,JH6-DR-090-LH.jpg,JH6-DR-090-LH,
+91,Front Door,Front Door Electric Window Lift Module Assembly R/H,R/H,6104020AB45-C00,6104020AB45-C00,MATCHED,3,JH6-DR-091-RH.jpg,JH6-DR-091-RH,
+92,Front Door,Front Door Electric Lock Assembly L/H,L/H,6105025AB45-C00,6105025AB45-C00,MATCHED,5,JH6-DR-092-LH.jpg,JH6-DR-092-LH,
+93,Front Door,Front Door Electric Lock Assembly R/H,R/H,6105030AB45-C00,6105030AB45-C00,MATCHED,3,JH6-DR-093-RH.jpg,JH6-DR-093-RH,
+94,Front Door,Front Door Handle Assembly L/H,L/H,6105045-B45-C00,6105045-B45-C00,MATCHED,10,JH6-DR-094-LH.jpg,JH6-DR-094-LH,
+95,Front Door,Front Door Handle Assembly R/H,R/H,6105050-B45-C00,6105050-B45-C00,MATCHED,5,JH6-DR-095-RH.jpg,JH6-DR-095-RH,
+96,Front Door,Front Door Upper Hinge Assembly L/H,L/H,6106015-B45-C00,6106015-B45-C00,MATCHED,5,JH6-DR-096-LH.jpg,JH6-DR-096-LH,
+97,Front Door,Front Door Upper Hinge Assembly R/H,R/H,6106020-B45-C00,6106020-B45-C00,MATCHED,5,JH6-DR-097-RH.jpg,JH6-DR-097-RH,
+98,Front Door,Front Door Lower Hinge Assembly L/H,L/H,6106055-B45-C00,6106055-B45-C00,MATCHED,5,JH6-DR-098-LH.jpg,JH6-DR-098-LH,
+99,Front Door,Front Door Lower Hinge Assembly R/H,R/H,6106060-B45-C00,6106060-B45-C00,MATCHED,5,JH6-DR-099-RH.jpg,JH6-DR-099-RH,
+100,Front Door,Front Door Limiter Assembly L/H,L/H,6109015-B45-C00,6109015-B45-C00,MATCHED,5,JH6-DR-100-LH.jpg,JH6-DR-100-LH,
+101,Front Door,Front Door Limiter Assembly R/H,R/H,6109015-B45-C00,6109015-B45-C00,MATCHED,5,JH6-DR-101-RH.jpg,JH6-DR-101-RH,Same PN used for both L/H and R/H.
+102,Mirror,Outer Rearview Mirror Assembly L/H — Electric,L/H,8202015-H02-C00,8202015CB45-C00,MATCHED,10,JH6-MR-102-LH.jpg,JH6-MR-102-LH,Variant H02 vs CB45.
+103,Mirror,Outer Rearview Mirror Assembly R/H — Electric,R/H,8202020-H02-C00,8202020CB45-C00,MATCHED,5,JH6-MR-103-RH.jpg,JH6-MR-103-RH,Variant H02 vs CB45.
+104,Mirror,Outer Rearview Mirror L/H Lower Fixed Base Cover,L/H,8202061-B45-C00-G,8202061-B45-C00,MATCHED,3,JH6-MR-104-LH.jpg,JH6-MR-104-LH,-G colour suffix.
+105,Mirror,Outer Rearview Mirror R/H Lower Fixed Base Cover,R/H,8202062-B45-C00-G,8202062-B45-C00,MATCHED,3,JH6-MR-105-RH.jpg,JH6-MR-105-RH,-G colour suffix.
+106,Mirror,Top View Mirror Assembly,CENTRE,8219010-H02-C00,8219010-B45-C00,MATCHED,10,JH6-MR-106-CN.jpg,JH6-MR-106-CN,Variant H02 vs B45.
+107,Mirror,Front Lower View Mirror Assembly,CENTRE,8219020AH02-C00,8219020AB45-C00,MATCHED,10,JH6-MR-107-CN.jpg,JH6-MR-107-CN,Variant AH02 vs AB45.
+108,Steps & Trim,Primary Step,BOTH,5103031-1063,5103031-1063,MATCHED,10,JH6-ST-108-BH.jpg,JH6-ST-108-BH,
+109,Steps & Trim,Step Decorative Cover L/H,L/H,5103021-1544-G,5103021-1063,MATCHED,10,JH6-ST-109-LH.jpg,JH6-ST-109-LH,Model suffix 1544 vs 1063 AND -G colour.
+110,Steps & Trim,Front Lower Protection & Step Bracket Assembly,CENTRE,5103010-1544,5103010-1544,MATCHED,5,JH6-ST-110-CN.jpg,JH6-ST-110-CN,
+111,Steps & Trim,Step Decorative Cover R/H,R/H,5103022-1544-G,5103022-1063,MATCHED,5,JH6-ST-111-RH.jpg,JH6-ST-111-RH,Model 1544 vs 1063. -G colour.
+112,Steps & Trim,Primary Step R/H,R/H,5103031-1063,5103031-1063,MATCHED,5,JH6-ST-112-RH.jpg,JH6-ST-112-RH,Same PN as Item 1.
+113,Steps & Trim,Step Decorative Cover Small Door Limit Clip,CENTRE,5103061-1063,5103061-1063,MATCHED,5,JH6-ST-113-CN.jpg,JH6-ST-113-CN,
+114,Steps & Trim,Step Decorative Cover Small Door,CENTRE,5103052-1063-G,5103052-1063,MATCHED,5,JH6-ST-114-CN.jpg,JH6-ST-114-CN,-G colour.
+115,Steps & Trim,Step Decorative Cover Small Door Fixing Bracket,CENTRE,5103053-1063,5103053-1063,MATCHED,5,JH6-ST-115-CN.jpg,JH6-ST-115-CN,
+116,Mudguard,Rear Mudguard L/H,L/H,5103361A1600,5103361-1063,MATCHED,10,JH6-MG-116-LH.jpg,JH6-MG-116-LH,"Inventory PN 5103361A1600 (no hyphen, wrong suffix)."
+117,Mudguard,Rear Mudguard R/H,R/H,5103362A1600,5103362-1600,MATCHED,5,JH6-MG-117-RH.jpg,JH6-MG-117-RH,Inventory PN missing hyphen.
+118,Mudguard,Rear Mudguard Bracket Assembly,BOTH,5103385-1600,5103385-1600,MATCHED,5,JH6-MG-118-BH.jpg,JH6-MG-118-BH,
+119,Mudguard,L/H Rear Mudguard Bracket Fixing Seat,L/H,5103373-1546,5103373-1546,MATCHED,5,JH6-MG-119-LH.jpg,JH6-MG-119-LH,
+120,Mudguard,R/H Rear Mudguard Bracket Fixing Seat,R/H,5103374-1546,5103374-1546,MATCHED,5,JH6-MG-120-RH.jpg,JH6-MG-120-RH,
+121,Mudguard,Front Wheel Rear Mudguard Fixing Bracket Assembly,BOTH,5103510-1600,5103510-1600,MATCHED,5,JH6-MG-121-BH.jpg,JH6-MG-121-BH,
+122,Mudguard,Rear Mudguard Fixing Bracket,BOTH,5103511-1509,5103510-1509,MATCHED,5,JH6-MG-122-BH.jpg,JH6-MG-122-BH,Inventory PN 5103511-1509. Catalogue: 5103510-1509.
+123,Wiper,Windscreen Wiper Assembly,CENTRE,5205010-H02-C00,5205010-B45-C00,MATCHED,3,JH6-WP-123-CN.jpg,JH6-WP-123-CN,Variant H02 vs B45.
+124,Wiper,Windscreen Washer Assembly,CENTRE,5207010-H02-C00,5207010-H02-C00,MATCHED,3,JH6-WP-124-CN.jpg,JH6-WP-124-CN,Variant H02 vs B93.
+125,Cab Body,Cab Weld Assembly,CENTRE,5000020-H02-001,5000040EB45,NOT IN CAT,1,JH6-CB-125-CN.jpg,JH6-CB-125-CN,Inventory PN 5000020-H02-001. Catalogue Drawing 305 shows 5000040EB45.
+126,Cab Body,Front Wall Welding Assembly — Inner Board,CENTRE,5300010-H02-DQ,5300010-B45,MATCHED,2,JH6-CB-126-CN.jpg,JH6-CB-126-CN,H02-DQ vs B45.
+127,Cab Body,Windshield Upper Crossbeam Assembly,CENTRE,5201010-B45,5201010-B45,MATCHED,1,JH6-CB-127-CN.jpg,JH6-CB-127-CN,
+128,Cab Body,Floor Assembly,CENTRE,5100010-H02,5100010-H02,MATCHED,0,JH6-CB-128-CN.jpg,JH6-CB-128-CN,
+129,Cab Body,Rear Panel Assembly,CENTRE,5600010-B45,5600010-B45,MATCHED,4,JH6-CB-129-CN.jpg,JH6-CB-129-CN,
+130,Cab Body,Top Cover Welding Assembly,CENTRE,5700010-B45,5700010-B45,MATCHED,2,JH6-CB-130-CN.jpg,JH6-CB-130-CN,
+131,Cab Body,L/H Side Outer Panel Assembly,L/H,5400015-H02,5400015-H02,MATCHED,5,JH6-CB-131-LH.jpg,JH6-CB-131-LH,
+132,Cab Body,R/H Side Outer Panel Assembly,R/H,5400020-H02,5400020-H02,MATCHED,3,JH6-CB-132-RH.jpg,JH6-CB-132-RH,
+133,Cab Body,L/H Side Inner Panel Assembly,L/H,5401085-H02,5401085-H02,MATCHED,3,JH6-CB-133-LH.jpg,JH6-CB-133-LH,
+134,Cab Body,R/H Side Inner Panel Assembly,R/H,5401090-H02,5401090-H02,MATCHED,2,JH6-CB-134-RH.jpg,JH6-CB-134-RH,
+135,Roof Deflector,Roof Sun Visor,CENTRE,5704011-B45,5704011-B45,MATCHED,3,JH6-RD-135-CN.jpg,JH6-RD-135-CN,
+136,Roof Deflector,Roof Sun Visor Bracket 1,CENTRE,5704021-B45,5704021-B45,MATCHED,3,JH6-RD-136-CN.jpg,JH6-RD-136-CN,
+137,Roof Deflector,Roof Sun Visor Bracket 2,CENTRE,5704031-B45,5704031-B45,MATCHED,3,JH6-RD-137-CN.jpg,JH6-RD-137-CN,
+138,Roof Deflector,Roof Trim Strip L/H,L/H,5704081-B45,5704081-B45,MATCHED,3,JH6-RD-138-LH.jpg,JH6-RD-138-LH,
+139,Roof Deflector,Roof Trim Strip R/H,R/H,5704082-B45,5704082-B45,MATCHED,3,JH6-RD-139-RH.jpg,JH6-RD-139-RH,
+140,Roof Deflector,Roof Deflector Assembly,CENTRE,5704111CB45-G,5704111CB45,MATCHED,3,JH6-RD-140-CN.jpg,JH6-RD-140-CN,-G colour.
+141,Roof Deflector,Roof Deflector Adjustment Bracket,CENTRE,5704116CB45,5704116CB45,MATCHED,3,JH6-RD-141-CN.jpg,JH6-RD-141-CN,
+142,Roof Deflector,Deflector Front Hinge Assembly,CENTRE,5704130CB45,5704130CB45,MATCHED,3,JH6-RD-142-CN.jpg,JH6-RD-142-CN,
+143,Roof Deflector,Roof Deflector L/H Adjustment Support Assembly,L/H,5704145CB45,5704145CB45,MATCHED,3,JH6-RD-143-LH.jpg,JH6-RD-143-LH,
+144,Roof Deflector,Roof Deflector R/H Adjustment Support Assembly,R/H,5704150CB45,5704150CB45,MATCHED,3,JH6-RD-144-RH.jpg,JH6-RD-144-RH,
+145,Roof Deflector,Roof Deflector L/H Support Tube Assembly,L/H,5704175CB45,5704175CB45,MATCHED,3,JH6-RD-145-LH.jpg,JH6-RD-145-LH,
+146,Roof Deflector,Roof Deflector R/H Support Tube Assembly,R/H,5704180CB45,5704180CB45,MATCHED,3,JH6-RD-146-RH.jpg,JH6-RD-146-RH,
+147,Roof Deflector,R/H Lower Deflector Bracket Welding Assembly,R/H,5704190-H40,5704190-H40,MATCHED,3,JH6-RD-147-RH.jpg,JH6-RD-147-RH,
+148,Roof Deflector,Upper Deflector L/H,L/H,5704211CB45-G,5704211CB45,MATCHED,3,JH6-RD-148-LH.jpg,JH6-RD-148-LH,-G colour.
+149,Roof Deflector,Upper Deflector R/H,R/H,5704212CB45-G,5704212CB45,MATCHED,3,JH6-RD-149-RH.jpg,JH6-RD-149-RH,-G colour.
+150,Roof Deflector,Lower Deflector L/H,L/H,5704221CB45-G,5704221CB45,MATCHED,3,JH6-RD-150-LH.jpg,JH6-RD-150-LH,-G colour.
+151,Roof Deflector,Lower Deflector R/H,R/H,5704222CB45-G,5704222CB45,MATCHED,3,JH6-RD-151-RH.jpg,JH6-RD-151-RH,-G colour.
+152,Roof Deflector,Upper Deflector Bracket L/H,L/H,5704231-H40,5704231-H40,MATCHED,3,JH6-RD-152-LH.jpg,JH6-RD-152-LH,
+153,Roof Deflector,Upper Deflector Bracket R/H,R/H,5704232-H40,5704232-H40,MATCHED,3,JH6-RD-153-RH.jpg,JH6-RD-153-RH,
+154,Roof Deflector,Lower Deflector Upper Bracket L/H,L/H,5704241-H40,5704241-H40,MATCHED,3,JH6-RD-154-LH.jpg,JH6-RD-154-LH,
+155,Roof Deflector,Lower Deflector Upper Bracket R/H,R/H,5704242-H40,5704242-H40,MATCHED,3,JH6-RD-155-RH.jpg,JH6-RD-155-RH,
+156,Roof Deflector,Lower Deflector Middle Bracket L/H,L/H,5704251-H40,5704251-H40,MATCHED,3,JH6-RD-156-LH.jpg,JH6-RD-156-LH,
+157,Roof Deflector,Lower Deflector Lower Bracket R/H,R/H,5704262-H40,5704262-H40,MATCHED,3,JH6-RD-157-RH.jpg,JH6-RD-157-RH,
+158,Roof Deflector,Lower Reinforcement Tube L/H,L/H,5704281DB45,5704281DB45,MATCHED,3,JH6-RD-158-LH.jpg,JH6-RD-158-LH,
+159,Roof Deflector,R/H Deflector Support Tube,R/H,5704282-H40,5704282-H40,MATCHED,3,JH6-RD-159-RH.jpg,JH6-RD-159-RH,
+160,Roof Deflector,Reinforcement Tube Fixing Bracket,CENTRE,5704283CB45,5704283CB45,MATCHED,3,JH6-RD-160-CN.jpg,JH6-RD-160-CN,
+161,Air Conditioning,Condenser Assembly,CENTRE,8105010-1600-C00,8105010-1600-C00,MATCHED,5,JH6-AC-161-CN.jpg,JH6-AC-161-CN,PN not found in translated catalogue sections.

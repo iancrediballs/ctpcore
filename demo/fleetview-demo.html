@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>FleetView — Parts Counter</title>
+<style>
+:root{
+  --bg:#0a0e14; --panel:#11161f; --panel2:#0d1219; --line:#1e2733;
+  --text:#e6edf3; --dim:#7d8da1; --accent:#3ddc97; --accent2:#1f6feb;
+  --warn:#f0883e; --bad:#f85149; --mono:'SF Mono',ui-monospace,'JetBrains Mono',Menlo,Consolas,monospace;
+}
+*{box-sizing:border-box}
+body{margin:0;background:radial-gradient(1200px 600px at 50% -10%,#0f1620,#0a0e14 60%);
+  color:var(--text);font:15px/1.45 -apple-system,Segoe UI,Roboto,sans-serif;min-height:100vh}
+.wrap{max-width:860px;margin:0 auto;padding:32px 20px 80px}
+.brandbar{display:flex;align-items:center;gap:10px;margin-bottom:6px}
+.logo{font-weight:800;letter-spacing:.18em;font-size:13px;color:var(--accent)}
+.logo b{color:var(--text)}
+.tag{color:var(--dim);font-size:12px;letter-spacing:.04em}
+.kpi{margin-left:auto;color:var(--dim);font-size:12px;font-family:var(--mono)}
+.kpi b{color:var(--accent)}
+.searchbox{position:relative;margin:18px 0 6px}
+#q{width:100%;background:var(--panel);border:1px solid var(--line);border-radius:12px;
+  color:var(--text);font:600 22px/1 var(--mono);padding:20px 20px 20px 54px;outline:none;
+  letter-spacing:.02em;transition:border .15s,box-shadow .15s}
+#q:focus{border-color:var(--accent2);box-shadow:0 0 0 4px rgba(31,111,235,.18)}
+.searchbox svg{position:absolute;left:18px;top:50%;transform:translateY(-50%);opacity:.5}
+.hint{color:var(--dim);font-size:12px;font-family:var(--mono);margin:4px 2px 0}
+.hint b{color:var(--text)}
+.chips{display:flex;flex-wrap:wrap;gap:7px;margin:14px 0 4px}
+.chip{cursor:pointer;background:var(--panel2);border:1px solid var(--line);color:var(--dim);
+  font-family:var(--mono);font-size:12px;padding:6px 11px;border-radius:20px;transition:.12s}
+.chip:hover{border-color:var(--accent);color:var(--text)}
+.count{color:var(--dim);font-size:12px;font-family:var(--mono);margin:18px 2px 8px;text-transform:uppercase;letter-spacing:.08em}
+.card{background:linear-gradient(180deg,var(--panel),var(--panel2));border:1px solid var(--line);
+  border-radius:12px;padding:14px 16px;margin-bottom:10px;cursor:pointer;transition:.12s}
+.card:hover{border-color:#2b3b4f;transform:translateY(-1px)}
+.row1{display:flex;align-items:center;gap:12px}
+.sku{font-family:var(--mono);font-weight:700;color:var(--accent);font-size:15px}
+.nm{font-weight:600}
+.brand{color:var(--dim);font-size:12px;border:1px solid var(--line);padding:2px 8px;border-radius:6px}
+.spacer{margin-left:auto}
+.stock{font-family:var(--mono);font-weight:700;font-size:13px;padding:3px 10px;border-radius:6px}
+.s-ok{color:var(--accent);background:rgba(61,220,151,.1)}
+.s-low{color:var(--warn);background:rgba(240,136,62,.12)}
+.s-out{color:var(--bad);background:rgba(248,81,73,.12)}
+.price{font-family:var(--mono);font-weight:700;font-size:15px;min-width:78px;text-align:right}
+.why{font-family:var(--mono);font-size:11.5px;color:var(--accent2);margin-top:7px}
+.why b{color:var(--text);background:rgba(31,111,235,.16);padding:1px 5px;border-radius:4px}
+.detail{margin-top:12px;padding-top:12px;border-top:1px dashed var(--line);display:none;
+  grid-template-columns:1fr 1fr;gap:14px;font-size:13px}
+.card.open .detail{display:grid}
+.detail h4{margin:0 0 6px;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim)}
+.xr{font-family:var(--mono);font-size:12px;margin:2px 0;display:flex;gap:8px}
+.xr .t{color:var(--dim);min-width:88px;text-transform:uppercase;font-size:10px;padding-top:2px}
+.fit{font-family:var(--mono);font-size:12px;margin:2px 0;color:var(--text)}
+.fit span{color:var(--dim)}
+.empty{color:var(--dim);text-align:center;padding:40px;font-family:var(--mono);font-size:13px}
+.foot{color:#3a475a;font-size:11px;text-align:center;margin-top:30px;font-family:var(--mono)}
+</style></head><body><div class="wrap">
+  <div class="brandbar">
+    <div class="logo">FLEET<b>VIEW</b></div>
+    <div class="tag">// parts counter — local-first demo</div>
+    <div class="kpi"><b>12</b> SKUs · <b>259</b> on hand · offline</div>
+  </div>
+  <div class="searchbox">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#e6edf3" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+    <input id="q" placeholder="part #, competitor #, brand…" autocomplete="off" autofocus>
+  </div>
+  <div class="hint">type any number — yours, OEM, aftermarket, or a <b>competitor's</b>. fuzzy + offline. press <b>/</b> to focus.</div>
+  <div class="chips" id="chips"></div>
+  <div class="count" id="count"></div>
+  <div id="results"></div>
+  <div class="foot">FleetView ERP · Phase-0 vertical slice · data + search verified against SQLite FTS5 trigram</div>
+</div>
+<script>
+const PARTS = [{"id":1,"sku":"FV-FUEL-0445120","mpn":"VG1560080276","name":"Common Rail Fuel Injector","description":"Bosch common-rail injector for Weichai WD615 EFI","brand":"Bosch","is_oem":0,"category":"Fuel System","on_hand":20,"price_cents":18500,"bin":"A-01-2","reorder_point":6,"xrefs":[{"n":"0445120123","brand":"Bosch","type":"aftermarket"},{"n":"0445120224","brand":"Generic","type":"competitor"},{"n":"VG1560080276","brand":"Sinotruk","type":"oem"},{"n":"VG1560080179","brand":"Sinotruk","type":"supersession"}],"fitment":[{"make":"Sinotruk","model":"HOWO A7","engine":"WD615","yf":2007,"yt":2018},{"make":"Sinotruk","model":"HOWO T7H","engine":"WP10","yf":2015,"yt":2024}]},{"id":2,"sku":"FV-FILT-VG1540","mpn":"VG1540070007","name":"Oil Filter, Spin-on","description":"Full-flow lube spin-on filter","brand":"Fleetguard","is_oem":0,"category":"Filtration","on_hand":105,"price_cents":1200,"bin":null,"reorder_point":null,"xrefs":[{"n":"W11102/36","brand":"Mann-Filter","type":"aftermarket"},{"n":"LF3349","brand":"Fleetguard","type":"aftermarket"},{"n":"JX0810","brand":"Generic","type":"competitor"},{"n":"VG1540070007","brand":"Sinotruk","type":"oem"}],"fitment":[{"make":"Sinotruk","model":"HOWO A7","engine":"WD615","yf":2007,"yt":2018},{"make":"Sinotruk","model":"HOWO T7H","engine":"WP10","yf":2015,"yt":2024},{"make":"Shacman","model":"X3000","engine":"WP12","yf":2014,"yt":2024}]},{"id":3,"sku":"FV-FILT-K2841","mpn":"WG9725190102","name":"Air Filter Element","description":"Primary air filter element, radial seal","brand":"Mann-Filter","is_oem":0,"category":"Filtration","on_hand":32,"price_cents":3400,"bin":null,"reorder_point":null,"xrefs":[{"n":"C331840","brand":"Mann-Filter","type":"aftermarket"},{"n":"AF26393","brand":"Fleetguard","type":"competitor"},{"n":"WG9725190102","brand":"Sinotruk","type":"oem"}],"fitment":[{"make":"Sinotruk","model":"HOWO A7","engine":"","yf":2007,"yt":2018},{"make":"Sinotruk","model":"HOWO T7H","engine":"","yf":2015,"yt":2024}]},{"id":4,"sku":"FV-FILT-FS19732","mpn":"FS19732","name":"Fuel / Water Separator","description":"Spin-on fuel/water separator with bowl","brand":"Fleetguard","is_oem":0,"category":"Fuel System","on_hand":5,"price_cents":2800,"bin":"A-12-3","reorder_point":10,"xrefs":[{"n":"FS19732","brand":"Fleetguard","type":"aftermarket"},{"n":"PS7079","brand":"Generic","type":"competitor"},{"n":"R90T","brand":"Parker","type":"oem"}],"fitment":[{"make":"Sinotruk","model":"HOWO A7","engine":"","yf":2007,"yt":2018},{"make":"Sinotruk","model":"HOWO T7H","engine":"","yf":2015,"yt":2024},{"make":"Shacman","model":"X3000","engine":"","yf":2014,"yt":2024}]},{"id":5,"sku":"FV-BRK-T2430","mpn":"WG9000360523","name":"Brake Chamber T24/30","description":"Spring brake chamber, rear axle","brand":"Knorr-Bremse","is_oem":0,"category":"Braking","on_hand":12,"price_cents":4500,"bin":null,"reorder_point":null,"xrefs":[{"n":"II37156","brand":"Knorr-Bremse","type":"aftermarket"},{"n":"WG9000360523","brand":"Sinotruk","type":"oem"}],"fitment":[{"make":"Sinotruk","model":"HOWO A7","engine":"","yf":2007,"yt":2018},{"make":"Sinotruk","model":"HOWO T7H","engine":"","yf":2015,"yt":2024},{"make":"Shacman","model":"X3000","engine":"","yf":2014,"yt":2024},{"make":"FAW","model":"J6","engine":"","yf":2012,"yt":2022}]},{"id":6,"sku":"FV-BRK-PAD7H","mpn":"WG9100440010","name":"Disc Brake Pad Set, Front","description":"Front axle disc pad set, WVA 29202","brand":"Knorr-Bremse","is_oem":0,"category":"Braking","on_hand":0,"price_cents":6900,"bin":"C-04-1","reorder_point":5,"xrefs":[{"n":"29202","brand":"Knorr-Bremse","type":"aftermarket"},{"n":"WG9100440010","brand":"Sinotruk","type":"oem"}],"fitment":[{"make":"Sinotruk","model":"HOWO T7H","engine":"","yf":2015,"yt":2024},{"make":"Shacman","model":"X3000","engine":"","yf":2014,"yt":2024}]},{"id":7,"sku":"FV-DRV-CL430","mpn":"WG9725160100","name":"Clutch Disc 430mm","description":"Organic clutch driven disc, 430mm","brand":"Sachs","is_oem":0,"category":"Driveline","on_hand":8,"price_cents":12500,"bin":null,"reorder_point":null,"xrefs":[{"n":"1878634567","brand":"Sachs","type":"aftermarket"},{"n":"WG9725160100","brand":"Sinotruk","type":"oem"}],"fitment":[{"make":"Sinotruk","model":"HOWO A7","engine":"","yf":2007,"yt":2018},{"make":"Sinotruk","model":"HOWO T7H","engine":"","yf":2015,"yt":2024}]},{"id":8,"sku":"FV-ENG-HX40W","mpn":"4051092","name":"Turbocharger HX40W","description":"Holset HX40W turbo for WD615","brand":"Holset","is_oem":0,"category":"Engine","on_hand":5,"price_cents":89000,"bin":null,"reorder_point":null,"xrefs":[{"n":"4051092","brand":"Holset","type":"aftermarket"},{"n":"3787794","brand":"Generic","type":"competitor"},{"n":"612600118895","brand":"Weichai","type":"oem"}],"fitment":[{"make":"Sinotruk","model":"HOWO A7","engine":"WD615","yf":2007,"yt":2018}]},{"id":9,"sku":"FV-COOL-WP307","mpn":"612600060307","name":"Water Pump Assembly","description":"Coolant pump assembly, Weichai","brand":"Weichai","is_oem":1,"category":"Cooling","on_hand":12,"price_cents":7600,"bin":null,"reorder_point":null,"xrefs":[{"n":"VG1500060051","brand":"Sinotruk","type":"aftermarket"},{"n":"612600060307","brand":"Weichai","type":"oem"}],"fitment":[{"make":"Sinotruk","model":"HOWO A7","engine":"WD615","yf":2007,"yt":2018},{"make":"Sinotruk","model":"HOWO T7H","engine":"WP10","yf":2015,"yt":2024}]},{"id":10,"sku":"FV-ELEC-ST24","mpn":"VG1560090001","name":"Starter Motor 24V","description":"24V 7.5kW reduction starter","brand":"Bosch","is_oem":0,"category":"Electrical","on_hand":7,"price_cents":21000,"bin":null,"reorder_point":null,"xrefs":[{"n":"0001241014","brand":"Bosch","type":"aftermarket"},{"n":"VG1560090001","brand":"Sinotruk","type":"oem"}],"fitment":[{"make":"Sinotruk","model":"HOWO A7","engine":"","yf":2007,"yt":2018},{"make":"Sinotruk","model":"HOWO T7H","engine":"","yf":2015,"yt":2024}]},{"id":11,"sku":"FV-ELEC-ALT28","mpn":"VG1560090002","name":"Alternator 28V 55A","description":"28V 55A brushless alternator","brand":"Bosch","is_oem":0,"category":"Electrical","on_hand":9,"price_cents":19500,"bin":null,"reorder_point":null,"xrefs":[{"n":"0124655009","brand":"Bosch","type":"aftermarket"},{"n":"VG1560090002","brand":"Sinotruk","type":"oem"}],"fitment":[{"make":"Sinotruk","model":"HOWO A7","engine":"","yf":2007,"yt":2018},{"make":"Sinotruk","model":"HOWO T7H","engine":"","yf":2015,"yt":2024}]},{"id":12,"sku":"FV-DRV-SHK","mpn":"WG9725680020","name":"Shock Absorber, Rear","description":"Rear suspension gas shock","brand":"Sachs","is_oem":0,"category":"Driveline","on_hand":44,"price_cents":4200,"bin":null,"reorder_point":null,"xrefs":[{"n":"313875","brand":"Sachs","type":"aftermarket"},{"n":"WG9725680020","brand":"Sinotruk","type":"oem"}],"fitment":[{"make":"Sinotruk","model":"HOWO A7","engine":"","yf":2007,"yt":2018},{"make":"Sinotruk","model":"HOWO T7H","engine":"","yf":2015,"yt":2024}]}];
+const fmt = c => '$'+(c/100).toFixed(2);
+const norm = s => (s||'').toLowerCase().replace(/[^a-z0-9]/g,'');
+// build a searchable haystack per part, remembering which token matched
+PARTS.forEach(p=>{
+  p._tokens = [
+    {label:'SKU',v:p.sku},{label:'MPN',v:p.mpn},{label:'name',v:p.name},{label:'brand',v:p.brand},
+    ...p.xrefs.map(x=>({label:x.type+' #',v:x.n})),
+    ...p.xrefs.filter(x=>x.brand).map(x=>({label:x.type+' brand',v:x.brand}))
+  ].filter(t=>t.v);
+});
+const chips=['0445120224','W11102/36','445120','turbo','29202','sinotruk'];
+document.getElementById('chips').innerHTML = chips.map(c=>'<span class="chip" data-q="'+c+'">'+c+'</span>').join('');
+function stockClass(p){ if(p.on_hand<=0)return 's-out'; if(p.reorder_point&&p.on_hand<=p.reorder_point)return 's-low'; return 's-ok';}
+function stockLabel(p){ if(p.on_hand<=0)return 'OUT'; return p.on_hand+' on hand';}
+function search(q){
+  const nq=norm(q);
+  if(nq.length<2) return [];
+  const hits=[];
+  for(const p of PARTS){
+    let best=null,bestScore=1e9;
+    for(const t of p._tokens){
+      const nt=norm(t.v); const i=nt.indexOf(nq);
+      if(i>=0){ const score=i*100 + Math.abs(nt.length-nq.length); if(score<bestScore){bestScore=score;best=t;} }
+    }
+    if(best) hits.push({p,best,score:bestScore});
+  }
+  hits.sort((a,b)=>a.score-b.score);
+  return hits;
+}
+function render(q){
+  const res=document.getElementById('results'), cnt=document.getElementById('count');
+  if(norm(q).length<2){res.innerHTML='<div class="empty">start typing a part number…</div>';cnt.textContent='';return;}
+  const hits=search(q);
+  cnt.textContent=hits.length+' result'+(hits.length!=1?'s':'');
+  if(!hits.length){res.innerHTML='<div class="empty">no cross-reference found for “'+q+'”</div>';return;}
+  res.innerHTML=hits.map(({p,best})=>{
+    const matchedSelf = ['SKU','name','brand','MPN'].includes(best.label);
+    const why = matchedSelf
+      ? 'matched on '+best.label+': <b>'+best.v+'</b>'
+      : 'matched '+best.label+': <b>'+best.v+'</b> → your '+p.sku;
+    const xr=p.xrefs.map(x=>'<div class="xr"><span class="t">'+x.type+'</span><span>'+x.n+(x.brand?'  ·  '+x.brand:'')+'</span></div>').join('');
+    const fit=p.fitment.map(f=>'<div class="fit">'+f.make+' '+f.model+' <span>'+(f.engine?f.engine+' ':'')+(f.yf?'('+f.yf+'–'+f.yt+')':'')+'</span></div>').join('')||'<div class="fit"><span>—</span></div>';
+    return '<div class="card" onclick="this.classList.toggle(\'open\')">'+
+      '<div class="row1"><span class="sku">'+p.sku+'</span><span class="nm">'+p.name+'</span>'+
+      '<span class="brand">'+(p.brand||'')+'</span><span class="spacer"></span>'+
+      '<span class="stock '+stockClass(p)+'">'+stockLabel(p)+'</span><span class="price">'+fmt(p.price_cents)+'</span></div>'+
+      '<div class="why">'+why+'</div>'+
+      '<div class="detail"><div><h4>Cross-references</h4>'+xr+'</div><div><h4>Fits</h4>'+fit+
+      (p.bin?'<h4 style="margin-top:10px">Bin</h4><div class="fit">'+p.bin+'</div>':'')+'</div></div></div>';
+  }).join('');
+}
+const q=document.getElementById('q');
+q.addEventListener('input',e=>render(e.target.value));
+document.getElementById('chips').addEventListener('click',e=>{
+  const c=e.target.closest('.chip'); if(!c)return; q.value=c.dataset.q; render(q.value); q.focus();});
+document.addEventListener('keydown',e=>{ if(e.key==='/'&&document.activeElement!==q){e.preventDefault();q.focus();}});
+render('');
+</script></body></html>

@@ -1,0 +1,62 @@
+# ============================================================================
+#  CTP Core — PowerSync sync rules (STARTER)
+#  Defines what slice of Postgres replicates down to each device's SQLite.
+#  Validate against your PowerSync project's current schema when wiring B0
+#  (syntax is version-sensitive). Requires a `user_role` claim in the JWT —
+#  set it via a Supabase custom-access-token hook that reads app_user.role.
+#
+#  Model:
+#   * staff devices get the full operational dataset (offline ERP)
+#   * customer logins get only their own customer row + their orders/lines
+#   * the append-only ledger means multi-device staff edits reconcile cleanly
+# ============================================================================
+
+bucket_definitions:
+
+  # ---- STAFF: full operational data (catalogue + inventory + sales) ----------
+  staff_all:
+    # bucket is active only for staff roles
+    parameters: >
+      SELECT request.user_id() AS user_id
+      WHERE request.jwt() ->> 'user_role' IN ('sales','warehouse','manager','admin')
+    data:
+      - SELECT * FROM category
+      - SELECT * FROM brand
+      - SELECT * FROM part
+      - SELECT * FROM part_xref
+      - SELECT * FROM vehicle_model
+      - SELECT * FROM part_fitment
+      - SELECT * FROM location
+      - SELECT * FROM stock_movement
+      - SELECT * FROM stock_policy
+      - SELECT * FROM price
+      - SELECT * FROM customer
+      - SELECT * FROM sales_order
+      - SELECT * FROM sales_line
+      - SELECT * FROM company
+      - SELECT * FROM diagram
+      - SELECT * FROM part_diagram_callout
+      - SELECT * FROM part_image
+      - SELECT * FROM part_model
+      - SELECT * FROM hotspot
+
+  # ---- MANAGERS: also sync the accounting outbox -----------------------------
+  manager_accounting:
+    parameters: >
+      SELECT request.user_id() AS user_id
+      WHERE request.jwt() ->> 'user_role' IN ('manager','admin')
+    data:
+      - SELECT * FROM accounting_export
+      - SELECT * FROM lead
+
+  # ---- CUSTOMER: only their own account + orders -----------------------------
+  customer_self:
+    parameters: >
+      SELECT c.id AS customer_id
+      FROM customer c
+      WHERE c.auth_user_id = request.user_id()
+    data:
+      - SELECT * FROM customer WHERE id = bucket.customer_id
+      - SELECT * FROM sales_order WHERE customer_id = bucket.customer_id
+      - SELECT * FROM sales_line  WHERE order_id IN
+          (SELECT id FROM sales_order WHERE customer_id = bucket.customer_id)

@@ -1,0 +1,30 @@
+# CTP Core sync streams (PowerSync edition 3) — the DEPLOYED config.
+# B0: sync catalogue + operational data to authenticated devices.
+# B1 will split into role-scoped streams (staff vs customer) and add the
+# sensitive lead / accounting_export tables with proper filtering, using a
+# user_role JWT claim from a Supabase custom-access-token hook.
+config:
+  edition: 3
+streams:
+  ctp_data:
+    auto_subscribe: true
+    queries:
+      - SELECT * FROM category
+      - SELECT * FROM brand
+      - SELECT * FROM part
+      - SELECT * FROM part_xref
+      - SELECT * FROM vehicle_model
+      - SELECT * FROM part_fitment
+      - SELECT * FROM location
+      - SELECT * FROM stock_movement
+      - SELECT * FROM stock_policy
+      - SELECT * FROM price
+      - SELECT * FROM customer
+      - SELECT * FROM sales_order
+      - SELECT * FROM sales_line
+      - SELECT * FROM company
+      - SELECT * FROM diagram
+      - SELECT * FROM part_diagram_callout
+      - SELECT * FROM part_image
+      - SELECT * FROM part_model
+      - SELECT * FROM hotspot

@@ -1,0 +1,162 @@
+Item #,Section,Inventory Part No.,Part Name (EN),Side,Catalogue Part No.,Drawing No.,Status,Qty,Unit Price (USD),Unit Price (ZAR),Total Value (ZAR),Warehouse Location,Discrepancy Notes
+1,Front Bumper,2803035B1063-DQ,Front Bumper L/H Assembly,L/H,2803035B1063,2803G01B1063,MATCHED,10,59.72,1015.24,10152.4,A1-a,-DQ suffix not in catalogue; base PN matches. Confirm -DQ grade with supplier.
+2,Front Bumper,2803040B1063-DQ,Front Bumper R/H Assembly,R/H,2803040B1063,2803G01B1063,MATCHED,5,59.72,1015.24,5076.2,A1-a,-DQ suffix not in catalogue. Ref. 2803035B1063.
+3,Front Bumper,2803645B1063,Front Bumper L/H Bracket Assembly,L/H,2803645B1063,2803G01B1063,MATCHED,10,51.16,869.72,8697.2,A1-a,
+4,Front Bumper,2803650B1063,Front Bumper R/H Bracket Assembly,R/H,2803650B1063,2803G01B1063,MATCHED,5,51.16,869.72,4348.6,A1-a,Ref. 2803645B1063.
+5,Front Bumper,2803031B1063-G,Front Bumper L/H Decorative Panel,L/H,2803031B1063,2803G01B1063,MATCHED,10,3.11,52.87,528.7,A1-b,-G = colour/trim variant. Base PN matches.
+6,Front Bumper,2803032B1063-G,Front Bumper R/H Decorative Panel,R/H,2803032B1063,2803G01B1063,MATCHED,5,3.11,52.87,264.35,A1-b,-G colour variant. Ref. 2803031B1063.
+7,Front Bumper,2803721B1063-G,Front Bumper L/H Spoiler,L/H,2803721B1063,2803G01B1063,MATCHED,10,3.77,64.09,640.9,A1-b,-G colour variant.
+8,Front Bumper,2803722B1063-G,Front Bumper R/H Spoiler,R/H,2803722B1063,2803G01B1063,MATCHED,5,3.77,64.09,320.45,A1-b,-G colour variant. Ref. 2803721B1063.
+9,Front Bumper,2803010B1063-DQ,Front Bumper Centre Assembly,CENTRE,2803010B1063,2803G01B1063,MATCHED,10,74.37,1264.29,12642.9,A1-a,-DQ suffix not in catalogue; confirm with supplier.
+10,Front Bumper,2803731B1063-G,Front Bumper Centre Spoiler,CENTRE,2803731B1063,2803G01B1063,MATCHED,10,7.15,121.55,1215.5,A1-b,-G colour variant.
+11,Front Bumper,2803821B1063,Front Bumper Centre Mesh Screen,CENTRE,2803821B1063,2803G01B1063,MATCHED,10,3.57,60.69,606.9,A1-c,
+12,Front Bumper,2803831B1063,Front Bumper Upper Mesh Screen,CENTRE,2803831B1063,2803G01B1063,MATCHED,10,7.81,132.77,1327.7,A1-c,
+13,Front Bumper,2803091B1063-G,Front Bumper Lower Tow Hook Cover,CENTRE,2803091B1063,2803G01B1063,MATCHED,10,0.28,4.76,47.6,A1-d,-G colour variant.
+14,Front Bumper,2803761B1063,Spoiler L/H Connecting Bracket,L/H,2803761B1063,2803G01B1063,MATCHED,3,1,17,51,A1-d,
+15,Front Bumper,2803762B1063,Spoiler R/H Connecting Bracket,R/H,2803762B1063,2803G01B1063,MATCHED,3,1,17,51,A1-d,Ref. 2803761B1063.
+16,Front Bumper,2803763B1063,Spoiler Centre Connecting Bracket,CENTRE,2803763B1063,2803G01B1063,MATCHED,3,0.5,8.5,25.5,A1-d,
+17,Front Bumper,2803015B1063-G,Front Bumper Intake Grille Assembly,CENTRE,2803015B1063,2803G01B1063,MATCHED,10,11.08,188.36,1883.6,A1-c,-G colour variant.
+18,Front Bumper,2803018B1063,Front Bumper Bug Shield,CENTRE,2803018B1063,2803G01B1063,MATCHED,10,3.6,61.2,612,A1-c,
+19,Front Bumper,2803052B1063,Front Bumper Primary Step,CENTRE,2803052B1063,2803G01B1063,MATCHED,10,1.98,33.66,336.6,A1-c,
+20,Front Bumper,2803381B1063,Front Bumper Centre Lower L/H Decorative Panel,L/H,2803381B1063,2803G01B1063,MATCHED,10,0.42,7.14,71.4,A1-d,
+21,Front Bumper,2803382B1063,Front Bumper Centre Lower R/H Decorative Panel,R/H,2803382B1063,2803G01B1063,MATCHED,10,0.42,7.14,71.4,A1-d,Ref. 2803381B1063.
+22,Chassis,2801070-1063,Front Crossmember Assembly,CENTRE,2801070-1063,1086,MATCHED,3,50.5,858.5,2575.5,A3-a,
+23,Chassis,2801090-1066,Front Spring Front Bracket Crossmember Welding Assembly,CENTRE,2801090-1066,1086,MATCHED,3,14.5,246.5,739.5,A3-a,
+24,Lighting,3711015-1544,Front Combination Lamp L/H Assembly,L/H,3711015-1063,3711015-1544,MATCHED,10,55.86,949.62,9496.2,D2-a,Model suffix 1544 (inventory) ≠ 1063 (catalogue). Confirm model variant with supplier.
+25,Lighting,3711020-1544,Front Combination Lamp R/H Assembly,R/H,3711020-1063,3711020-1544,MATCHED,5,55.86,949.62,4748.1,D2-a,Model suffix 1544 ≠ 1063. Ref. 3711015-1063.
+26,Lighting,3732015-1063-C00,Front Fog Lamp L/H Assembly,L/H,3732015-1063,3732G01-1063,MATCHED,10,21.4,363.8,3638,D2-a,-C00 = complete assembly suffix. Base PN matches.
+27,Lighting,3732020-1063-C00,Front Fog Lamp R/H Assembly,R/H,3732020-1063,3732G01-1063,MATCHED,5,21.4,363.8,1819,D2-a,-C00 complete assembly suffix. Ref. 3732015-1063.
+28,Cab Suspension,5004055-79H-C00,Cab Hydraulic Lock Assembly L/H,L/H,5004055-1063-C00,5001G02-GY699D,MATCHED,6,22.82,387.94,2327.64,A3-b,Inventory PN uses variant -79H; catalogue shows -1063 only. Verify physical part markings — may be wrong part supplied.
+29,Cab Suspension,5004055-1063-C00,Cab Hydraulic Lock Assembly R/H,R/H,5004055-1063-C00,5001G02-GY699D,MATCHED,3,26.36,448.12,1344.36,A3-b,
+30,Cab Suspension,5001315B1063-C00,Rear Suspension Air Spring & Shock Absorber Assembly L/H,L/H,5001315A1063-C00,5001G02-GY699D,MATCHED,6,59.91,1018.47,6110.82,A3-b,Inventory prefix B1063; catalogue shows A1063. 'B' vs 'A' is a significant variant. Verify physical part and confirm with supplier.
+31,Cab Suspension,5001315-1063A-C00,Rear Suspension Air Spring & Shock Absorber Assembly R/H,R/H,5001315A1063-C00,5001G02-GY699D,MATCHED,3,65.73,1117.41,3352.23,A3-b,PN format differs (hyphen position). Likely same as catalogue A1063. Verify.
+32,Cab Suspension,5001010CB45,Cab Front Suspension Assembly,CENTRE,5001010-B45,5001G01A1554,MATCHED,2,193.54,3290.18,6580.36,A3-b,Missing hyphen in inventory PN. Catalogue: 5001010-B45. Correct inventory record.
+33,Fender,5103121-H02-G,Front Fender L/H,L/H,5103121-B45,5103G07-B45,MATCHED,10,83.13,1413.21,14132.1,B1-a,Cab variant H02 (inventory) vs B45 (catalogue). -G = colour. Confirm correct cab spec.
+34,Fender,5103122-B45-G,Front Fender R/H,R/H,5103122-B45,5103G07-B45,MATCHED,5,33.04,561.68,2808.4,B1-a,-G colour suffix only. Base PN matches catalogue.
+35,Fender,5103181-B45,Second Step,CENTRE,5103181-B45,5103G07-B45,MATCHED,10,11.8,200.6,2006,B1-d,
+36,Fender,5103191-B45,Third Step,CENTRE,5103191-B45,5103G07-B45,MATCHED,10,14.58,247.86,2478.6,B1-d,
+37,Fender,5103135-B45,Front Fender Support Bracket Assembly,BOTH,5103135-B45,5103G07-B45,MATCHED,10,4.98,84.66,846.6,B1-c,
+38,Fender,5103131-B45-G,Rear Fender L/H,L/H,5103125-B45,5103G07-B45,MATCHED,10,6.47,109.99,1099.9,B1-b,Inventory PN 5103131-B45-G. Catalogue Drawing 314 shows 5103125-B45 (Left rear fender assembly). Different base PN. Verify physical part markings.
+39,Fender,5103132-B45-G,Rear Fender R/H,R/H,5103130-B45,5103G07-B45,MATCHED,5,6.47,109.99,549.95,B1-b,Inventory PN 5103132-B45-G. Catalogue shows 5103130-B45. Different base PN. Verify.
+40,Fender,5103161-H02,Front Wheel Upper Splash Shield L/H,L/H,5103161-B45,5103G07-B45,MATCHED,10,12.59,214.03,2140.3,B1-c,Variant H02 vs B45. Confirm cab spec.
+41,Fender,5103162AB83,Front Wheel Upper Splash Shield R/H,R/H,5103162AB83,5103G07-B45,MATCHED,5,10.44,177.48,887.4,B1-c,
+42,Fender,5103211-B45,Upper Splash Shield Small Door,CENTRE,5103211-B45,5103G07-B45,MATCHED,10,0.42,7.14,71.4,B1-c,
+43,Fender,5103611-1063,L/H Engine Side Shield,L/H,5103611-1063,5103G02-1063,MATCHED,3,6.5,110.5,331.5,B1-d,
+44,Fender,5103612-1600,R/H Engine Side Shield,R/H,5103612-1600,5103G02-1063,MATCHED,3,6.5,110.5,331.5,B1-d,
+45,Fender,5109111-H02,L/H Door Sill Scuff Plate,L/H,5109111-H02,5109G01AB83,MATCHED,3,2.5,42.5,127.5,B1-d,
+46,Fender,5109112-B45,R/H Door Sill Scuff Plate,R/H,5109112-B45,5109G01AB83,MATCHED,3,1.5,25.5,76.5,B1-d,
+47,Side Toolbox,5407025-B45,Side Toolbox Cover Assembly L/H,L/H,5407015-B45,5407M10-B45-001,MATCHED,10,47.17,801.89,8018.9,C2-a,CRITICAL: PN 5407025-B45 does NOT exist in catalogue. Catalogue L/H = 5407015-B45. Inventory lists same PN for both L/H and R/H — impossible. Correct to 5407015-B45.
+48,Side Toolbox,5407025-B45,Side Toolbox Cover Assembly R/H,R/H,5407020-B45,5407M10-B45-001,MATCHED,5,47.17,801.89,4009.45,C2-a,CRITICAL: Same PN as L/H above — definite error. Catalogue R/H = 5407020-B45. Correct to 5407020-B45.
+49,Side Toolbox,5407086-B45-C00,Side Toolbox Sealing Strip L/H,L/H,5407086-B45-C00,5407M10-B45-001,MATCHED,10,3.27,55.59,555.9,C2-b,Both sides share this PN per catalogue.
+50,Side Toolbox,5407086-B45-C00,Side Toolbox Sealing Strip R/H,R/H,5407086-B45-C00,5407M10-B45-001,MATCHED,5,3.27,55.59,277.95,C2-b,Both sides share this PN per catalogue.
+51,Cab Interior,5302715-H02,Front Pillar Guard Assembly L/H,L/H,5302715-B45,5302715-H02,MATCHED,5,8.12,138.04,690.2,C2-d,Variant H02 vs B45. Confirm cab spec.
+52,Cab Interior,5302720-H02,Front Pillar Guard Assembly R/H,R/H,5302720-B45,5302720-H02,MATCHED,5,8.12,138.04,690.2,C2-d,Inventory: 'Lift front pillar lower hinge guard' — incorrect name. Catalogue: Right Front Pillar Guard Assembly.
+53,Cab Interior,5302841-B45-G,Front Pillar L/H Lower Hinge Guard,L/H,5302841-B45,5302841-B45-G,MATCHED,5,6.5,110.5,552.5,C2-d,Name was blank in source. Identified from Sheet1(3) + catalogue context. -G colour suffix.
+54,Cab Interior,5302842-B45-G,Front Pillar R/H Lower Hinge Guard,R/H,5302842-B45,5302842-B45-G,MATCHED,5,6.5,110.5,552.5,C2-d,-G colour suffix. Ref. 5302841-B45.
+55,Cab Interior,5302125-B90,L/H Handrail Assembly,L/H,5302135-B45,5302G01-B45,MATCHED,6,2.76,46.92,281.52,C2-d,Inventory PN 5302125-B90 (B90 variant). Catalogue Drawing 332 lists 5302135-B45 as left handrail. Different base PN and variant. Verify physical part.
+56,Cab Interior,5302130-B90,R/H Handrail Assembly,R/H,5302140-B45,5302G01-B45,MATCHED,6,2.76,46.92,281.52,C2-d,Inventory PN 5302130-B90. Catalogue: 5302140-B45. Ref. discrepancy same as L/H. Verify.
+57,Cab Interior,5302171-B45,L/H Handrail Cover A,L/H,5302171-B45,5302G01-B45,MATCHED,3,0.5,8.5,25.5,C2-e,
+58,Cab Interior,5302172-B45,R/H Handrail Cover A,R/H,5302172-B45,5302G01-B45,MATCHED,3,0.5,8.5,25.5,C2-e,Ref. 5302171-B45.
+59,Cab Interior,5302350-H02,Windshield Lower Trim Panel Assembly,CENTRE,5302350-B45,5302G01-B45,MATCHED,5,17.06,290.02,1450.1,C2-e,Variant H02 vs B45.
+60,Front Wall,5302021-B45-G,Front Wall Outer Panel Assembly,CENTRE,5302010-B45,5302G01-B45,MATCHED,10,71.62,1217.54,12175.4,B2-a,Inventory PN 5302021. Catalogue Drawing 333 shows 5302010-B45 (front outer panel assembly). Different base PN. Verify — 5302021 may be a sub-component. -G colour suffix.
+61,Front Wall,5302410-B45-C00,Gas Spring Assembly — Front Wall,CENTRE,5302410-B45-C00,5302G01-B45,MATCHED,10,3.25,55.25,552.5,B2-b,
+62,Front Wall,5302530-A05,Release Handle Assembly,CENTRE,5302530-A01,5302G01-B45,MATCHED,3,1,17,51,B2-d,Inventory: A05 variant vs catalogue A01. Minor variant — confirm with supplier.
+63,Front Wall,5302300-H02,Gas Spring Lower Mount Bracket Link Assembly,CENTRE,5302300-B45,5302G01-B45,MATCHED,3,6.8,115.6,346.8,B2-b,Variant H02 vs B45.
+64,Front Wall,5302311-B45,Gas Spring Lower Mount Bracket Link Base,CENTRE,5302311-B45,5302G01-B45,MATCHED,3,1.5,25.5,76.5,B2-b,
+65,Front Wall,5302415-B45,L/H Handrail Bracket Assembly,L/H,5302415-B45,5302G01-B45,MATCHED,3,11,187,561,B2-a,
+66,Front Wall,5302420-B45,R/H Handrail Bracket Assembly,R/H,5302420-B45,5302G01-B45,MATCHED,3,11,187,561,B2-a,Ref. 5302415-B45.
+67,Front Wall,5302500-H02-C00,Front Wall Lock Strap Cable Assembly,CENTRE,5302500-B45-C00,5302G01-B45,MATCHED,3,8,136,408,B2-b,Variant H02 vs B45.
+68,Front Wall,5300010-H02-DQ,Front Wall Welding Assembly,CENTRE,5300010-B45,5302G01-B45,MATCHED,3,335,5695,17085,B2-a,Variant H02-DQ vs B45. -DQ suffix confirm grade.
+69,Front Wall,5302051-B45,Front Wall Bug Screen A,CENTRE,5302051-B45,5302G01-B45,MATCHED,3,3.8,64.6,193.8,B2-c,
+70,Front Wall,5302053-B45,Front Wall Bug Screen B,CENTRE,5302053-B45,5302G01-B45,MATCHED,3,3.5,59.5,178.5,B2-c,
+71,Front Wall,5302056-B45,Front Wall Bug Screen C,CENTRE,5302056-B45,5302G01-B45,MATCHED,3,3.5,59.5,178.5,B2-c,
+72,Front Wall,5302071-B45-G,Radiator Grille,CENTRE,5302071-B45,5302G01-B45,MATCHED,3,13.5,229.5,688.5,B2-d,-G colour variant.
+73,Front Wall,5302155-B45,L/H Front Wall Outer Panel Hinge Assembly,L/H,5302155-B45,5302G01-B45,MATCHED,3,2.5,42.5,127.5,B2-c,
+74,Front Wall,5302160-B45,R/H Front Wall Outer Panel Hinge Assembly,R/H,5302160-B45,5302G01-B45,MATCHED,3,2.5,42.5,127.5,B2-c,Ref. 5302155-B45.
+75,Front Wall,5302221-A01,Gas Spring Fixing Base — Front Wall,CENTRE,5302221-A01,5302G01-B45,MATCHED,3,0.8,13.6,40.8,B2-b,
+76,Front Wall,5302591-B45,Buffer Block A — Front Wall,CENTRE,5302591-B45,5302G01-B45,MATCHED,3,0.5,8.5,25.5,B2-e,
+77,Front Wall,5302621-B45-G,L/H Deflector,L/H,5302621-B45,5302G01-B45,MATCHED,3,7,119,357,B2-d,-G colour.
+78,Front Wall,5302622-B45-G,R/H Deflector,R/H,5302622-B45,5302G01-B45,MATCHED,3,7,119,357,B2-d,-G colour.
+79,Front Wall,5302801-B45,Front Emblem,CENTRE,5302801-B45,5302G01-B45,MATCHED,3,10,170,510,B2-e,
+80,Front Door,6100005-H02,Front Door Assembly L/H,L/H,6100015-B83,6100G01-B83,MATCHED,10,552.8,9397.6,93976,A2-a,Inventory PN 6100005-H02. Catalogue (Drw 377) shows 6100015-B83. Completely different base PN and variant. Verify physical door markings urgently.
+81,Front Door,6100010-H02,Front Door Assembly R/H,R/H,6100020-B83,6100G01-B83,MATCHED,5,552.8,9397.6,46988,A2-a,Inventory PN 6100010-H02. Catalogue: 6100020-B83. Ref. discrepancy same as L/H.
+82,Front Door,6100031-B45,Front Door Rear Frame Trim Cover L/H,L/H,6100031-B45,6100G01-B83,MATCHED,10,1.13,19.21,192.1,A2-d,
+83,Front Door,6100032-B45,Front Door Rear Frame Trim Cover R/H,R/H,6100032-B45,6100G01-B83,MATCHED,5,1.13,19.21,96.05,A2-d,
+84,Front Door,6101585-B83,Front Door Lower Trim Panel Assembly L/H,L/H,6101585-B83,6100G01-B83,MATCHED,10,24.9,423.3,4233,A2-d,
+85,Front Door,6101590-B83,Front Door Lower Trim Panel Assembly R/H,R/H,6101590-B83,6100G01-B83,MATCHED,5,24.9,423.3,2116.5,A2-d,
+86,Front Door,6102151-B45-C00,Front Door Window Frame Upper Protective Panel L/H,L/H,6102151-B45-C00,6100G01-B83,MATCHED,5,4.02,68.34,341.7,A2-d,
+87,Front Door,6102152-B45-C00,Front Door Window Frame Upper Protective Panel R/H,R/H,6102152-B45-C00,6100G01-B83,MATCHED,3,4.02,68.34,205.02,A2-d,
+88,Front Door,6102015-H02-C00,Front Door Interior Trim Panel Assembly L/H,L/H,6102015-H02-C00,6100G01-B83,MATCHED,5,32.04,544.68,2723.4,A2-d,
+89,Front Door,6102020-H02-C00,Front Door Interior Trim Panel Assembly R/H,R/H,6102020-H02-C00,6100G01-B83,MATCHED,3,32.04,544.68,1634.04,A2-d,
+90,Front Door,6104015AB45-C00,Front Door Electric Window Lift Module Assembly L/H,L/H,6104015AB45-C00,6100G01-B83,MATCHED,5,49.41,839.97,4199.85,A2-b,
+91,Front Door,6104020AB45-C00,Front Door Electric Window Lift Module Assembly R/H,R/H,6104020AB45-C00,6100G01-B83,MATCHED,3,49.41,839.97,2519.91,A2-b,Ref. 6104015AB45-C00.
+92,Front Door,6105025AB45-C00,Front Door Electric Lock Assembly L/H,L/H,6105025AB45-C00,6100G01-B83,MATCHED,5,12.22,207.74,1038.7,A2-b,
+93,Front Door,6105030AB45-C00,Front Door Electric Lock Assembly R/H,R/H,6105030AB45-C00,6100G01-B83,MATCHED,3,12.22,207.74,623.22,A2-b,
+94,Front Door,6105045-B45-C00,Front Door Handle Assembly L/H,L/H,6105045-B45-C00,6100G01-B83,MATCHED,10,9.47,160.99,1609.9,A2-c,
+95,Front Door,6105050-B45-C00,Front Door Handle Assembly R/H,R/H,6105050-B45-C00,6100G01-B83,MATCHED,5,9.47,160.99,804.95,A2-c,
+96,Front Door,6106015-B45-C00,Front Door Upper Hinge Assembly L/H,L/H,6106015-B45-C00,6100G01-B83,MATCHED,5,11.97,203.49,1017.45,A2-c,
+97,Front Door,6106020-B45-C00,Front Door Upper Hinge Assembly R/H,R/H,6106020-B45-C00,6100G01-B83,MATCHED,5,11.97,203.49,1017.45,A2-c,
+98,Front Door,6106055-B45-C00,Front Door Lower Hinge Assembly L/H,L/H,6106055-B45-C00,6100G01-B83,MATCHED,5,8.3,141.1,705.5,A2-c,
+99,Front Door,6106060-B45-C00,Front Door Lower Hinge Assembly R/H,R/H,6106060-B45-C00,6100G01-B83,MATCHED,5,8.3,141.1,705.5,A2-c,
+100,Front Door,6109015-B45-C00,Front Door Limiter Assembly L/H,L/H,6109015-B45-C00,6100G01-B83,MATCHED,5,3.77,64.09,320.45,A2-c,
+101,Front Door,6109015-B45-C00,Front Door Limiter Assembly R/H,R/H,6109015-B45-C00,6100G01-B83,MATCHED,5,3.77,64.09,320.45,A2-c,"CRITICAL: Same PN used for both L/H and R/H. Physical door limiters may be symmetrical (check), otherwise supplier error. Verify against catalogue."
+102,Mirror,8202015-H02-C00,Outer Rearview Mirror Assembly L/H — Electric,L/H,8202015CB45-C00,8202G01CB45,MATCHED,10,56.92,967.64,9676.4,C2-c,Variant H02 vs CB45. Confirm cab spec.
+103,Mirror,8202020-H02-C00,Outer Rearview Mirror Assembly R/H — Electric,R/H,8202020CB45-C00,8202G01CB45,MATCHED,5,56.92,967.64,4838.2,C2-c,Variant H02 vs CB45. Ref. 8202015CB45.
+104,Mirror,8202061-B45-C00-G,Outer Rearview Mirror L/H Lower Fixed Base Cover,L/H,8202061-B45-C00,8202G01CB45,MATCHED,3,1.2,20.4,61.2,C2-c,-G colour suffix.
+105,Mirror,8202062-B45-C00-G,Outer Rearview Mirror R/H Lower Fixed Base Cover,R/H,8202062-B45-C00,8202G01CB45,MATCHED,3,1.2,20.4,61.2,C2-c,-G colour suffix.
+106,Mirror,8219010-H02-C00,Top View Mirror Assembly,CENTRE,8219010-B45-C00,8219G01AB45,MATCHED,10,7.26,123.42,1234.2,C2-c,Variant H02 vs B45.
+107,Mirror,8219020AH02-C00,Front Lower View Mirror Assembly,CENTRE,8219020AB45-C00,8219G01AB45,MATCHED,10,16.3,277.1,2771,C2-c,Variant AH02 vs AB45.
+108,Steps & Trim,5103031-1063,Primary Step,BOTH,5103031-1063,5103G01-1548,MATCHED,10,4.38,74.46,744.6,C2-b,
+109,Steps & Trim,5103021-1544-G,Step Decorative Cover L/H,L/H,5103021-1063,5103G01-1548,MATCHED,10,14.62,248.54,2485.4,C2-b,Model suffix 1544 vs 1063 AND -G colour. Confirm model variant.
+110,Steps & Trim,5103010-1544,Front Lower Protection & Step Bracket Assembly,CENTRE,5103010-1544,5103G01-1548,MATCHED,5,124.75,2120.75,10603.75,C2-a,
+111,Steps & Trim,5103022-1544-G,Step Decorative Cover R/H,R/H,5103022-1063,5103G01-1548,MATCHED,5,14.56,247.52,1237.6,C2-b,Model 1544 vs 1063. -G colour. Ref. 5103021-1063.
+112,Steps & Trim,5103031-1063,Primary Step R/H,R/H,5103031-1063,5103G01-1548,MATCHED,5,4.38,74.46,372.3,C2-b,Same PN as Drawing 397 Item 1. Single PN covers both sides per catalogue. Remove duplicate row.
+113,Steps & Trim,5103061-1063,Step Decorative Cover Small Door Limit Clip,CENTRE,5103061-1063,5103G01-1548,MATCHED,5,0.15,2.55,12.75,C2-b,
+114,Steps & Trim,5103052-1063-G,Step Decorative Cover Small Door,CENTRE,5103052-1063,5103G01-1548,MATCHED,5,0.31,5.27,26.35,C2-b,-G colour.
+115,Steps & Trim,5103053-1063,Step Decorative Cover Small Door Fixing Bracket,CENTRE,5103053-1063,5103G01-1548,MATCHED,5,0.49,8.33,41.65,C2-b,
+116,Mudguard,5103361A1600,Rear Mudguard L/H,L/H,5103361-1063,5103G03A1511,MATCHED,10,8.76,148.92,1489.2,B1-e,"Inventory PN 5103361A1600 (no hyphen, wrong suffix). Catalogue: 5103361-1063. Likely data entry error. Verify physical part markings."
+117,Mudguard,5103362A1600,Rear Mudguard R/H,R/H,5103362-1600,5103G03A1511,MATCHED,5,9.2,156.4,782,B1-e,Inventory PN missing hyphen: should be 5103362-1600. Correct data entry.
+118,Mudguard,5103385-1600,Rear Mudguard Bracket Assembly,BOTH,5103385-1600,5103G03A1511,MATCHED,5,17,289,1445,B1-e,Note: appeared twice in Sheet1 — deduplicated here.
+119,Mudguard,5103373-1546,L/H Rear Mudguard Bracket Fixing Seat,L/H,5103373-1546,5103G03A1511,MATCHED,5,7.2,122.4,612,B1-e,
+120,Mudguard,5103374-1546,R/H Rear Mudguard Bracket Fixing Seat,R/H,5103374-1546,5103G03A1511,MATCHED,5,7.2,122.4,612,B1-e,
+121,Mudguard,5103510-1600,Front Wheel Rear Mudguard Fixing Bracket Assembly,BOTH,5103510-1600,5103G03A1511,MATCHED,5,7.95,135.15,675.75,B1-e,Note: appeared twice in Sheet1 — deduplicated.
+122,Mudguard,5103511-1509,Rear Mudguard Fixing Bracket,BOTH,5103510-1509,5103G03A1511,MATCHED,5,7.71,131.07,655.35,B1-e,Inventory PN 5103511-1509. Catalogue Drawing 400 item 7: 5103510-1509 (511 vs 510 discrepancy). Verify physical part.
+123,Wiper,5205010-H02-C00,Windscreen Wiper Assembly,CENTRE,5205010-B45-C00,5205G01-B45,MATCHED,3,46.5,790.5,2371.5,D2-b,Variant H02 vs B45.
+124,Wiper,5207010-H02-C00,Windscreen Washer Assembly,CENTRE,5207010-B93-C00,5207010-H02-C00,MATCHED,3,8.5,144.5,433.5,D2-b,Variant H02 vs B93. Confirm spec.
+125,Cab Body,5000020-H02-001,Cab Weld Assembly,CENTRE,5000040EB45,GP5000020-B83-001,NOT IN CAT,1,5777.75,98221.75,98221.75,D1-FL,Inventory PN 5000020-H02-001. Catalogue Drawing 305 shows 5000040EB45 — completely different. Separate catalogue entry may exist for H02 cab variant.
+126,Cab Body,5300010-H02-DQ,Front Wall Welding Assembly — Inner Board,CENTRE,5300010-B45,GP5000020-B83-001,MATCHED,2,329.57,5602.69,11205.38,D1-b,H02-DQ vs B45. -DQ confirm grade.
+127,Cab Body,5201010-B45,Windshield Upper Crossbeam Assembly,CENTRE,5201010-B45,GP5000020-B83-001,MATCHED,1,35.35,600.95,600.95,D1-b,
+128,Cab Body,5100010-H02,Floor Assembly,CENTRE,5100010-H02,GP5000020-B83-001,MATCHED,0,492.96,8380.32,,D1-FL,
+129,Cab Body,5600010-B45,Rear Panel Assembly,CENTRE,5600010-B45,GP5000020-B83-001,MATCHED,4,239.44,4070.48,16281.92,D1-a,
+130,Cab Body,5700010-B45,Top Cover Welding Assembly,CENTRE,5700010-B45,GP5000020-B83-001,MATCHED,2,338.03,5746.51,11493.02,D1-a,
+131,Cab Body,5400015-H02,L/H Side Outer Panel Assembly,L/H,5400015-H02,GP5000020-B83-001,MATCHED,5,236.62,4022.54,20112.7,D1-FL,
+132,Cab Body,5400020-H02,R/H Side Outer Panel Assembly,R/H,5400020-H02,GP5000020-B83-001,MATCHED,3,236.62,4022.54,12067.62,D1-FL,
+133,Cab Body,5401085-H02,L/H Side Inner Panel Assembly,L/H,5401085-H02,GP5000020-B83-001,MATCHED,3,77.46,1316.82,3950.46,D1-a,
+134,Cab Body,5401090-H02,R/H Side Inner Panel Assembly,R/H,5401090-H02,GP5000020-B83-001,MATCHED,2,77.46,1316.82,2633.64,D1-a,
+135,Roof Deflector,5704011-B45,Roof Sun Visor,CENTRE,5704011-B45,5704M10-B45-001,MATCHED,3,33,561,1683,C1-d,
+136,Roof Deflector,5704021-B45,Roof Sun Visor Bracket 1,CENTRE,5704021-B45,5704M10-B45-001,MATCHED,3,1,17,51,C1-d,
+137,Roof Deflector,5704031-B45,Roof Sun Visor Bracket 2,CENTRE,5704031-B45,5704M10-B45-001,MATCHED,3,1,17,51,C1-d,
+138,Roof Deflector,5704081-B45,Roof Trim Strip L/H,L/H,5704081-B45,5704M10-B45-001,MATCHED,3,6.8,115.6,346.8,C1-d,
+139,Roof Deflector,5704082-B45,Roof Trim Strip R/H,R/H,5704082-B45,5704M10-B45-001,MATCHED,3,6.8,115.6,346.8,C1-d,Ref. 5704081-B45.
+140,Roof Deflector,5704111CB45-G,Roof Deflector Assembly,CENTRE,5704111CB45,5704M10-B45-002,MATCHED,3,71,1207,3621,C1-a,-G colour.
+141,Roof Deflector,5704116CB45,Roof Deflector Adjustment Bracket,CENTRE,5704116CB45,5704M10-B45-002,MATCHED,3,10.5,178.5,535.5,C1-c,
+142,Roof Deflector,5704130CB45,Deflector Front Hinge Assembly,CENTRE,5704130CB45,5704M10-B45-002,MATCHED,3,3,51,153,C1-c,
+143,Roof Deflector,5704145CB45,Roof Deflector L/H Adjustment Support Assembly,L/H,5704145CB45,5704M10-B45-002,MATCHED,3,12.5,212.5,637.5,C1-b,
+144,Roof Deflector,5704150CB45,Roof Deflector R/H Adjustment Support Assembly,R/H,5704150CB45,5704M10-B45-002,MATCHED,3,12.5,212.5,637.5,C1-b,Ref. 5704145CB45.
+145,Roof Deflector,5704175CB45,Roof Deflector L/H Support Tube Assembly,L/H,5704175CB45,5704M10-B45-002,MATCHED,3,6.6,112.2,336.6,C1-b,
+146,Roof Deflector,5704180CB45,Roof Deflector R/H Support Tube Assembly,R/H,5704180CB45,5704M10-B45-002,MATCHED,3,6.6,112.2,336.6,C1-b,Ref. 5704175CB45.
+147,Roof Deflector,5704190-H40,R/H Lower Deflector Bracket Welding Assembly,R/H,5704190-H40,5704M10-B45-002,MATCHED,3,4.7,79.9,239.7,C1-c,
+148,Roof Deflector,5704211CB45-G,Upper Deflector L/H,L/H,5704211CB45,5704M10-B45-002,MATCHED,3,15.5,263.5,790.5,C1-a,-G colour.
+149,Roof Deflector,5704212CB45-G,Upper Deflector R/H,R/H,5704212CB45,5704M10-B45-002,MATCHED,3,15.5,263.5,790.5,C1-a,-G colour. Ref. 5704211CB45.
+150,Roof Deflector,5704221CB45-G,Lower Deflector L/H,L/H,5704221CB45,5704M10-B45-002,MATCHED,3,24,408,1224,C1-a,-G colour.
+151,Roof Deflector,5704222CB45-G,Lower Deflector R/H,R/H,5704222CB45,5704M10-B45-002,MATCHED,3,23,391,1173,C1-a,-G colour.
+152,Roof Deflector,5704231-H40,Upper Deflector Bracket L/H,L/H,5704231-H40,5704M10-B45-002,MATCHED,3,2.2,37.4,112.2,C1-c,
+153,Roof Deflector,5704232-H40,Upper Deflector Bracket R/H,R/H,5704232-H40,5704M10-B45-002,MATCHED,3,2.2,37.4,112.2,C1-c,Ref. 5704231-H40.
+154,Roof Deflector,5704241-H40,Lower Deflector Upper Bracket L/H,L/H,5704241-H40,5704M10-B45-002,MATCHED,3,2,34,102,C1-c,
+155,Roof Deflector,5704242-H40,Lower Deflector Upper Bracket R/H,R/H,5704242-H40,5704M10-B45-002,MATCHED,3,2.2,37.4,112.2,C1-c,
+156,Roof Deflector,5704251-H40,Lower Deflector Middle Bracket L/H,L/H,5704251-H40,5704M10-B45-002,MATCHED,3,2.2,37.4,112.2,C1-c,
+157,Roof Deflector,5704262-H40,Lower Deflector Lower Bracket R/H,R/H,5704262-H40,5704M10-B45-002,MATCHED,3,3,51,153,C1-c,
+158,Roof Deflector,5704281DB45,Lower Reinforcement Tube L/H,L/H,5704281DB45,5704M10-B45-002,MATCHED,3,3.5,59.5,178.5,C1-d,
+159,Roof Deflector,5704282-H40,R/H Deflector Support Tube,R/H,5704282-H40,5704M10-B45-002,MATCHED,3,2.3,39.1,117.3,C1-b,
+160,Roof Deflector,5704283CB45,Reinforcement Tube Fixing Bracket,CENTRE,5704283CB45,5704M10-B45-002,MATCHED,3,2.3,39.1,117.3,C1-d,
+161,Air Conditioning,8105010-1600-C00,Condenser Assembly,CENTRE,8105010-1600-C00,8105010-1600-C00,MATCHED,5,46.27,786.59,3932.95,D2-b,PN not found in translated catalogue sections. Likely in A/C section (Drw 405/406). Verify.
