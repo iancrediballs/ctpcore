@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import * as api from "./data/api";
 import { money } from "./App";
 
 type Target = "xero" | "quickbooks";
@@ -27,7 +27,7 @@ export default function AccountingView() {
 
   const load = useCallback(async (t: Target) => {
     try {
-      const r = await invoke<ExportRow[]>("list_export_queue", { target: t });
+      const r = await api.listExportQueue<ExportRow[]>(t);
       setRows(r);
       // default-select everything not yet exported to this target
       setPicked(new Set(r.filter((x) => !x.exported_at).map((x) => x.id)));
@@ -45,7 +45,7 @@ export default function AccountingView() {
     if (ids.length === 0) { setMsg("nothing selected"); return; }
     setMsg("");
     try {
-      const res = await invoke<ExportResult>("export_accounting", { target, orderIds: ids });
+      const res = await api.exportAccounting<ExportResult>(target, ids);
       setResult(res);
       await load(target);
     } catch (e) { setMsg("✕ " + String(e)); }

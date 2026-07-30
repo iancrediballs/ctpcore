@@ -4,7 +4,7 @@
 // pulled live from the DB (list_parts) and grouped by category_code, and
 // clicking a part opens the shared DetailPanel — same panel Parts/Diagrams use.
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import * as api from "./data/api";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
@@ -75,7 +75,7 @@ export default function ExplorerView() {
 
   // Load parts once.
   useEffect(() => {
-    invoke<PartRow[]>("list_parts").then(setRows).catch(console.error);
+    api.listParts<PartRow[]>().then(setRows).catch(console.error);
   }, []);
 
   // Group parts → sections in catalogue order.
@@ -102,7 +102,7 @@ export default function ExplorerView() {
   useEffect(() => { stateRef.current.sections = sections; }, [sections]);
 
   const openPart = useCallback(async (id: number) => {
-    try { setDetail(await invoke<PartDetail>("part_detail", { partId: id })); }
+    try { setDetail(await api.partDetail<PartDetail>(id)); }
     catch (e) { console.error(e); }
   }, []);
 

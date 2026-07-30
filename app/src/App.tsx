@@ -1,6 +1,6 @@
 // CTP Core — counter / sales / accounting shell + part detail with media.
 import { useEffect, useRef, useState, useCallback } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import * as api from "./data/api";
 import SalesView from "./SalesView";
 import AccountingView from "./AccountingView";
 import DiagramsView from "./DiagramsView";
@@ -147,11 +147,11 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
   const [c, setC] = useState<Company | null>(null);
   const [msg, setMsg] = useState("");
   const prefs = usePrefs();
-  useEffect(() => { invoke<Company>("get_company").then(setC).catch(console.error); }, []);
+  useEffect(() => { api.getCompany<Company>().then(setC).catch(console.error); }, []);
   if (!c) return null;
   const f = (k: keyof Company) => (e: { target: { value: string } }) => setC({ ...c, [k]: e.target.value });
   const save = async () => {
-    try { await invoke("set_company", { company: c }); setMsg("✓ saved"); }
+    try { await api.setCompany(c); setMsg("✓ saved"); }
     catch (e) { setMsg("✕ " + String(e)); }
   };
   return (
@@ -206,7 +206,7 @@ function CounterView() {
     setBusy(true);
     const t = setTimeout(async () => {
       try {
-        const rows = await invoke<Hit[]>("search_parts", { query: term });
+        const rows = await api.searchParts<Hit[]>(term);
         if (!cancelled) { setHits(rows); setSel(0); }
       } catch (e) { console.error(e); }
       finally { if (!cancelled) setBusy(false); }
@@ -215,7 +215,7 @@ function CounterView() {
   }, [q]);
 
   const openDetail = useCallback(async (partId: number) => {
-    try { setDetail(await invoke<PartDetail>("part_detail", { partId })); }
+    try { setDetail(await api.partDetail<PartDetail>(partId)); }
     catch (e) { console.error(e); }
   }, []);
   const refresh = useCallback(() => { if (detail) openDetail(detail.id); }, [detail, openDetail]);
@@ -278,15 +278,15 @@ function PartMedia({ detail, onChanged }: { detail: PartDetail; onChanged?: () =
   const addPhoto = async (file: File) => {
     const buf = new Uint8Array(await file.arrayBuffer());
     try {
-      await invoke("save_part_image", { partId: detail.id, filename: file.name, bytes: Array.from(buf), kind: "photo" });
+      await api.savePartImage(detail.id, file.name, Array.from(buf), "photo");
       onChanged?.();
     } catch (e) { console.error(e); }
   };
   const removeImg = async (id: number) => {
-    try { await invoke("remove_part_image", { imageId: id }); setSel(0); onChanged?.(); } catch (e) { console.error(e); }
+    try { await api.removePartImage(id); setSel(0); onChanged?.(); } catch (e) { console.error(e); }
   };
   const makePrimary = async (id: number) => {
-    try { await invoke("set_primary_image", { imageId: id }); onChanged?.(); } catch (e) { console.error(e); }
+    try { await api.setPrimaryImage(id); onChanged?.(); } catch (e) { console.error(e); }
   };
 
   return (
@@ -351,8 +351,8 @@ function PartMedia({ detail, onChanged }: { detail: PartDetail; onChanged?: () =
       )}
       {(detail.catalogue_pn || detail.inventory_pn) && (
         <button className="srcbtn" title="Look this part up on the supplier catalogue (rusauto43) — live price & isolated exploded view"
-          onClick={() => invoke("open_url", { url: "https://www.google.com/search?q=" +
-            encodeURIComponent("site:rusauto43.ru " + (detail.catalogue_pn || detail.inventory_pn)) }).catch(console.error)}>
+          onClick={() => api.openUrl("https://www.google.com/search?q=" +
+            encodeURIComponent("site:rusauto43.ru " + (detail.catalogue_pn || detail.inventory_pn))).catch(console.error)}>
           ₽ Check price &amp; supplier exploded view ⇗
         </button>
       )}
@@ -393,7 +393,7 @@ function PartEditForm({ detail, onSaved, onCancel }: {
     category_id: 0,
   });
   useEffect(() => {
-    invoke<{ id: number; code: string; name: string }[]>("list_categories").then((c) => {
+    api.listCategories<{ id: number; code: string; name: string }[]>().then((c) => {
       setCats(c);
       const cur = c.find((x) => x.name === detail.category_name);
       setF((p) => ({ ...p, category_id: cur?.id ?? (c[0]?.id ?? 0) }));
@@ -404,14 +404,14 @@ function PartEditForm({ detail, onSaved, onCancel }: {
     ? { ...p, locator: `${p.make}-${p.model}-${p.drawing_no}-${p.diagram_item_no.padStart(3, "0")}` } : p));
   const save = async () => {
     try {
-      await invoke("update_part", { partId: detail.id, patch: {
+      await api.updatePart(detail.id, {
         name: f.name, side: f.side || null, make: f.make || null, model: f.model || null,
         drawing_no: f.drawing_no || null, diagram_item_no: f.diagram_item_no ? parseInt(f.diagram_item_no, 10) : null,
         locator: f.locator || null, catalogue_pn: f.catalogue_pn || null, inventory_pn: f.inventory_pn || null,
         mpn: f.mpn || null, description: f.description || null, status: f.status,
         match_status: f.match_status || null, notes: f.notes || null, category_id: f.category_id,
         list_price_minor: f.list_price ? Math.round(parseFloat(f.list_price) * 100) : null,
-      } });
+      });
       onSaved();
     } catch (e) { setMsg("✕ " + String(e)); }
   };
@@ -489,10 +489,9 @@ export function DetailPanel({ detail, onClose, onPosted }: {
 
     setPosting(true); setMsg("");
     try {
-      const res = await invoke<PostResult>("post_movement", {
-        partId: detail.id, locationId: locId, delta, reason: action,
-        clientUuid: crypto.randomUUID(), actorId: null,
-      });
+      const res = await api.postMovement<PostResult>(
+        detail.id, locId, delta, action, crypto.randomUUID(), null
+      );
       setMsg(res.duplicate
         ? "already posted (idempotent) — on hand " + res.on_hand
         : `posted · ${delta > 0 ? "+" : ""}${delta} → ${res.on_hand} on hand`);

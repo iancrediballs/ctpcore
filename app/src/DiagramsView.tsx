@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import * as api from "./data/api";
 import { DetailPanel, type PartDetail, type Hit } from "./App";
 
 const asset = (p: string | null) => (p ? "/" + p.replace(/^\/+/, "") : "");
@@ -38,7 +38,7 @@ export default function DiagramsView() {
   const upRef = useRef<HTMLInputElement>(null);
 
   const loadList = useCallback(() => {
-    invoke<DiagramSummary[]>("list_diagrams").then(setList).catch(console.error);
+    api.listDiagrams<DiagramSummary[]>().then(setList).catch(console.error);
   }, []);
   useEffect(() => { loadList(); }, [loadList]);
   useEffect(() => {
@@ -50,13 +50,13 @@ export default function DiagramsView() {
 
   const reload = useCallback(() => {
     if (curId == null) return;
-    invoke<DiagramFull>("get_diagram", { diagramId: curId }).then(setDiag).catch(console.error);
+    api.getDiagram<DiagramFull>(curId).then(setDiag).catch(console.error);
   }, [curId]);
   useEffect(() => { reload(); setSelHot(null); setNatDims(null); }, [curId, reload]);
 
   const openPart = useCallback(async (partId: number | null) => {
     if (partId == null) return;
-    try { setDetail(await invoke<PartDetail>("part_detail", { partId })); } catch (e) { console.error(e); }
+    try { setDetail(await api.partDetail<PartDetail>(partId)); } catch (e) { console.error(e); }
   }, []);
 
   const effW = () => (diag?.img_w || natDims?.w || 0);
@@ -83,7 +83,7 @@ export default function DiagramsView() {
       const id = dragId, pos = dragPos.current; setDragId(null);
       if (moved.current && pos) {
         const h = hot(id);
-        try { await invoke("update_hotspot", { id, x: pos.x, y: pos.y, partId: h?.part_id ?? null, itemNo: h?.item_no ?? null }); reload(); }
+        try { await api.updateHotspot(id, pos.x, pos.y, h?.part_id ?? null, h?.item_no ?? null); reload(); }
         catch (e) { console.error(e); }
       }
     };
@@ -96,24 +96,24 @@ export default function DiagramsView() {
     if (!edit || curId == null || !adding) return;
     const c = imgCoords(e); if (!c) return;
     try {
-      const id = await invoke<number>("add_hotspot", { diagramId: curId, x: c.x, y: c.y, partId: null, itemNo: null });
+      const id = await api.addHotspot(curId, c.x, c.y, null, null);
       reload(); setSelHot(id); setAdding(false);
     } catch (err) { console.error(err); }
   };
   const assignPart = async (h: Hotspot, partId: number) => {
-    try { await invoke("update_hotspot", { id: h.id, x: h.x, y: h.y, partId, itemNo: h.item_no }); reload(); setAssignQ(""); setAssignHits([]); } catch (e) { console.error(e); }
+    try { await api.updateHotspot(h.id, h.x, h.y, partId, h.item_no); reload(); setAssignQ(""); setAssignHits([]); } catch (e) { console.error(e); }
   };
   const setItem = async (h: Hotspot, val: string) => {
-    try { await invoke("update_hotspot", { id: h.id, x: h.x, y: h.y, partId: h.part_id, itemNo: val || null }); reload(); } catch (e) { console.error(e); }
+    try { await api.updateHotspot(h.id, h.x, h.y, h.part_id, val || null); reload(); } catch (e) { console.error(e); }
   };
   const delHot = async (id: number) => {
-    try { await invoke("delete_hotspot", { id }); setSelHot(null); reload(); loadList(); } catch (e) { console.error(e); }
+    try { await api.deleteHotspot(id); setSelHot(null); reload(); loadList(); } catch (e) { console.error(e); }
   };
   useEffect(() => {
     const t = assignQ.trim();
     if (t.length < 2) { setAssignHits([]); return; }
     let cx = false;
-    invoke<Hit[]>("search_parts", { query: t }).then((r) => { if (!cx) setAssignHits(r); }).catch(console.error);
+    api.searchParts<Hit[]>(t).then((r) => { if (!cx) setAssignHits(r); }).catch(console.error);
     return () => { cx = true; };
   }, [assignQ]);
 
@@ -125,7 +125,7 @@ export default function DiagramsView() {
     const w = im.naturalWidth, h = im.naturalHeight; URL.revokeObjectURL(url);
     const buf = new Uint8Array(await file.arrayBuffer());
     try {
-      const newId = await invoke<number>("save_diagram", { filename: file.name, bytes: Array.from(buf), title: file.name.replace(/\.[^.]+$/, ""), imgW: w, imgH: h });
+      const newId = await api.saveDiagram(file.name, Array.from(buf), file.name.replace(/\.[^.]+$/, ""), w, h);
       loadList(); setCurId(newId); setEdit(true);
     } catch (e) { console.error(e); }
   };
@@ -133,7 +133,7 @@ export default function DiagramsView() {
   const deleteDiagram = async () => {
     if (curId == null) return;
     if (!confirm("Delete this diagram and its hotspots? (Parts are not affected.)")) return;
-    try { await invoke("delete_diagram", { diagramId: curId }); setCurId(null); setDiag(null); setSelHot(null); loadList(); }
+    try { await api.deleteDiagram(curId); setCurId(null); setDiag(null); setSelHot(null); loadList(); }
     catch (e) { console.error(e); }
   };
 

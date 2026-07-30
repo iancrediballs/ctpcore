@@ -2,7 +2,7 @@
 // reconcile, pick, audit, ask. Everything runs against a local snapshot of the
 // catalogue, so it works with no connection and answers in milliseconds.
 import { Fragment, useEffect, useMemo, useRef, useState, useCallback } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import * as api from "../data/api";
 import {
   Part, Row, RustPart, AliasRow, fromRust, identify, memory, normalise,
 } from "./brain";
@@ -98,8 +98,8 @@ export default function JefreyView() {
   const reload = useCallback(async () => {
     try {
       const [raw, aliases] = await Promise.all([
-        invoke<RustPart[]>("jefrey_catalogue"),
-        invoke<AliasRow[]>("jefrey_aliases"),
+        api.jefreyCatalogue<RustPart[]>(),
+        api.jefreyAliases<AliasRow[]>(),
       ]);
       memory.load(aliases);
       setAliasN(memory.size);
@@ -155,9 +155,9 @@ export default function JefreyView() {
     memory.learn(row.phrase, cand.part.id);
     row.candidates.forEach((o, j) => { if (j !== idx) memory.reject(row.phrase, o.part.id); });
     try {
-      await invoke("jefrey_learn", { phrase: normalise(row.phrase), partId: cand.part.id, polarity: 1 });
+      await api.jefreyLearn(normalise(row.phrase), cand.part.id, 1);
       await Promise.all(row.candidates.filter((_, j) => j !== idx).map((o) =>
-        invoke("jefrey_learn", { phrase: normalise(row.phrase), partId: o.part.id, polarity: -1 })));
+        api.jefreyLearn(normalise(row.phrase), o.part.id, -1)));
     } catch (e) {
       flash("Saved in this session, but couldn't write it to the database: " + String(e));
     }

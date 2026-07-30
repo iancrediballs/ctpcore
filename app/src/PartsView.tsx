@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, useCallback, useRef } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import * as api from "./data/api";
 import { DetailPanel, type PartDetail, money, stockClass, usePrefs } from "./App";
 
 type PartRow = {
@@ -41,11 +41,11 @@ export default function PartsView() {
   const noteTimer = useRef<number | undefined>(undefined);
 
   const load = useCallback(() => {
-    invoke<PartRow[]>("list_parts").then(setRows).catch(console.error);
-    invoke<DeletedRow[]>("list_deleted_parts").then(setDeleted).catch(console.error);
+    api.listParts<PartRow[]>().then(setRows).catch(console.error);
+    api.listDeletedParts<DeletedRow[]>().then(setDeleted).catch(console.error);
   }, []);
   useEffect(() => { load(); }, [load]);
-  useEffect(() => { invoke<Cat[]>("list_categories").then(setCats).catch(console.error); }, []);
+  useEffect(() => { api.listCategories<Cat[]>().then(setCats).catch(console.error); }, []);
 
   /* A retirement is reversible, so the right affordance is an undo, not a
      confirmation dialog nobody reads. Blocked deletes say why instead. */
@@ -59,7 +59,7 @@ export default function PartsView() {
   }, []);
 
   const openPart = useCallback(async (partId: number) => {
-    try { setDetail(await invoke<PartDetail>("part_detail", { partId })); }
+    try { setDetail(await api.partDetail<PartDetail>(partId)); }
     catch (e) { console.error(e); }
   }, []);
 
@@ -100,7 +100,7 @@ export default function PartsView() {
     const name = newName.trim();
     if (!name || !newCat) { setAdding(false); return; }
     try {
-      const id = await invoke<number>("create_part", { name, categoryId: newCat });
+      const id = await api.createPart(name, newCat);
       setAdding(false);
       load();
       openPart(id);            // straight into the editor — no extra click
@@ -112,7 +112,7 @@ export default function PartsView() {
   const removePart = async (r: PartRow, ev: React.MouseEvent) => {
     ev.stopPropagation();
     try {
-      const chk = await invoke<DeleteCheck>("delete_part", { partId: r.id });
+      const chk = await api.deletePart<DeleteCheck>(r.id);
       load();
       if (detail?.id === r.id) setDetail(null);
       const stock = chk.on_hand !== 0 ? ` — it still had ${chk.on_hand} on hand` : "";
@@ -123,7 +123,7 @@ export default function PartsView() {
 
   const restore = async (id: number) => {
     try {
-      await invoke("restore_part", { partId: id });
+      await api.restorePart(id);
       load();
       say("Restored.");
     } catch (e) { say(String(e), undefined, true); }

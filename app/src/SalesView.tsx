@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import * as api from "./data/api";
 import { money, stockClass, type Hit } from "./App";
 import { buildDocHTML, openPrintWindow, type DocCompany } from "./invoiceDoc";
 
@@ -25,14 +25,14 @@ export default function SalesView() {
   const [creating, setCreating] = useState(false);
 
   const loadOrders = useCallback(async () => {
-    try { setOrders(await invoke<OrderSummary[]>("list_orders")); }
+    try { setOrders(await api.listOrders<OrderSummary[]>()); }
     catch (e) { console.error(e); }
   }, []);
 
   useEffect(() => { loadOrders(); }, [loadOrders]);
 
   const openOrder = useCallback(async (id: number) => {
-    try { setOpen(await invoke<OrderDetail>("get_order", { orderId: id })); }
+    try { setOpen(await api.getOrder<OrderDetail>(id)); }
     catch (e) { console.error(e); }
   }, []);
 
@@ -83,8 +83,8 @@ function NewQuote({ onClose, onCreated }: { onClose: () => void; onCreated: (d: 
 
   useEffect(() => {
     (async () => {
-      const c = await invoke<Customer[]>("list_customers");
-      const l = await invoke<Loc[]>("list_locations");
+      const c = await api.listCustomers<Customer[]>();
+      const l = await api.listLocations<Loc[]>();
       setCusts(c); setLocs(l);
       setCust(c[0]?.id ?? null);
       setLoc(l[0]?.id ?? null);
@@ -94,7 +94,7 @@ function NewQuote({ onClose, onCreated }: { onClose: () => void; onCreated: (d: 
   const create = async () => {
     if (cust == null || loc == null) return;
     try {
-      const d = await invoke<OrderDetail>("create_order", { customerId: cust, locationId: loc });
+      const d = await api.createOrder<OrderDetail>(cust, loc);
       onCreated(d);
     } catch (e) { setErr(String(e)); }
   };
@@ -139,7 +139,7 @@ function OrderPanel({ order, onClose, onChange, afterMutation }: {
   useEffect(() => {
     const t = setTimeout(async () => {
       if (q.trim().length < 2) { setHits([]); return; }
-      try { setHits(await invoke<Hit[]>("search_parts", { query: q })); } catch { /* noop */ }
+      try { setHits(await api.searchParts<Hit[]>(q)); } catch { /* noop */ }
     }, 90);
     return () => clearTimeout(t);
   }, [q]);
@@ -150,17 +150,17 @@ function OrderPanel({ order, onClose, onChange, afterMutation }: {
   };
 
   const addPart = (partId: number) =>
-    mut(() => invoke<OrderDetail>("add_line", { orderId: order.id, partId, qty: 1 }));
+    mut(() => api.addLine<OrderDetail>(order.id, partId, 1));
 
   const fulfill = () =>
-    mut(() => invoke<OrderDetail>("fulfill_order", { orderId: order.id }), "fulfilled — stock issued through the ledger");
+    mut(() => api.fulfillOrder<OrderDetail>(order.id), "fulfilled — stock issued through the ledger");
 
   const setStatus = (status: string) =>
-    mut(() => invoke<OrderDetail>("set_status", { orderId: order.id, status }));
+    mut(() => api.setStatus<OrderDetail>(order.id, status));
 
   const printDoc = async () => {
     try {
-      const company = await invoke<DocCompany>("get_company");
+      const company = await api.getCompany<DocCompany>();
       openPrintWindow(buildDocHTML(order, company));
     } catch (e) { setMsg("✕ " + String(e)); }
   };
@@ -225,14 +225,14 @@ function OrderPanel({ order, onClose, onChange, afterMutation }: {
                   onBlur={(e) => {
                     const v = parseInt(e.target.value, 10);
                     if (Number.isFinite(v) && v > 0 && v !== l.qty)
-                      mut(() => invoke<OrderDetail>("update_line_qty", { lineId: l.id, qty: v }));
+                      mut(() => api.updateLineQty<OrderDetail>(l.id, v));
                   }}
                   onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }} />
               ) : (<span className="qtystatic">{l.qty}</span>)}
               <span className="uprice">@ {money(l.unit_price_minor)}</span>
               <span className="price">{money(l.line_total_minor)}</span>
               {editable && <button className="x sm" title="remove"
-                onClick={() => mut(() => invoke<OrderDetail>("remove_line", { lineId: l.id }))}>✕</button>}
+                onClick={() => mut(() => api.removeLine<OrderDetail>(l.id))}>✕</button>}
             </div>
           ))}
           {order.lines.length === 0 && <div className="empty">no lines — search above to add parts</div>}
@@ -255,7 +255,7 @@ function OrderPanel({ order, onClose, onChange, afterMutation }: {
                     const pct = parseFloat(e.target.value);
                     const bps = Math.round((Number.isFinite(pct) ? pct : 0) * 100);
                     if (bps !== order.tax_rate_bps)
-                      mut(() => invoke<OrderDetail>("set_tax_rate", { orderId: order.id, bps }));
+                      mut(() => api.setTaxRate<OrderDetail>(order.id, bps));
                   }}
                   onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }} />
               ) : (<> {(order.tax_rate_bps / 100).toFixed(2)}%</>)}
