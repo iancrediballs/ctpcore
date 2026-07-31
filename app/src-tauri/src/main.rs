@@ -119,6 +119,14 @@ fn init_db(path: &PathBuf) -> rusqlite::Result<Connection> {
         conn.execute_batch("PRAGMA user_version = 11;")?;
     }
 
+    // v11 -> v12: pricing reset. Re-keys list prices onto the right parts, moves
+    // landed cost out of the price table into part_cost, loads official ZAR costs
+    // (no more flat 17.00 FX), and adds price_tier for discounts + margin floors.
+    if ver < 12 {
+        conn.execute_batch(include_str!("../migrations/0013_pricing_reset.sql"))?;
+        conn.execute_batch("PRAGMA user_version = 12;")?;
+    }
+
     Ok(conn)
 }
 
@@ -1215,27 +1223,79 @@ fn create_order(customer_id: i64, location_id: i64, db: State<Db>) -> Result<Ord
 }
 
 /// Snapshot the price for a part at a customer's tier (fall back to list, then 0).
+/// Price one order line: list price, less the customer's tier discount, floored
+/// so a discount can never take the line below cost plus a minimum margin.
+///
+/// Before migration 0013 this read the `price` table while that table held landed
+/// COST tagged as tier='list', so every line was charged at cost. 0013 moved cost
+/// to part_cost and made tier='list' the genuine list price.
+///
+/// Returns 0 only when the part has no list price at all. That is deliberate: a
+/// zero is visible and gets questioned, whereas a guessed number gets invoiced.
 fn snapshot_price(conn: &Connection, part_id: i64, tier: &str) -> rusqlite::Result<i64> {
-    let at_tier: Option<i64> = conn
-        .query_row(
-            "SELECT amount_minor FROM price WHERE part_id=?1 AND tier=?2
-              ORDER BY valid_from DESC LIMIT 1",
-            rusqlite::params![part_id, tier],
-            |r| r.get(0),
-        )
-        .ok();
-    if let Some(v) = at_tier {
-        return Ok(v);
-    }
+    // 1. The list price. price(tier='list') is authoritative; part.list_price_minor
+    //    is the denormalised copy the part panel shows, used here as a fallback.
     let list: Option<i64> = conn
         .query_row(
-            "SELECT amount_minor FROM price WHERE part_id=?1 AND tier='list'
+            "SELECT amount_minor FROM price
+              WHERE part_id = ?1 AND tier = 'list' AND deleted_at IS NULL
+              ORDER BY valid_from DESC LIMIT 1",
+            rusqlite::params![part_id],
+            |r| r.get(0),
+        )
+        .ok()
+        .or_else(|| {
+            conn.query_row(
+                "SELECT list_price_minor FROM part WHERE id = ?1",
+                rusqlite::params![part_id],
+                |r| r.get::<_, Option<i64>>(0),
+            )
+            .ok()
+            .flatten()
+        });
+
+    let list = match list {
+        Some(v) if v > 0 => v,
+        _ => return Ok(0),
+    };
+
+    // 2. The customer's tier. An unknown tier means no discount, which is the
+    //    safe direction to fail in.
+    let (discount_bps, min_margin_bps): (i64, i64) = conn
+        .query_row(
+            "SELECT discount_bps, min_margin_bps FROM price_tier WHERE code = ?1",
+            rusqlite::params![tier],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap_or((0, 1500));
+
+    let discounted = list * (10_000 - discount_bps) / 10_000;
+
+    // 3. The floor. margin = (price - cost) / price, so holding margin at
+    //    min_margin_bps means price >= cost / (1 - min_margin).
+    //    With no cost on file there is nothing to protect, so no floor.
+    let cost: Option<i64> = conn
+        .query_row(
+            "SELECT amount_minor FROM part_cost
+              WHERE part_id = ?1 AND currency = 'ZAR'
               ORDER BY valid_from DESC LIMIT 1",
             rusqlite::params![part_id],
             |r| r.get(0),
         )
         .ok();
-    Ok(list.unwrap_or(0))
+
+    let floor = match cost {
+        Some(c) if c > 0 && min_margin_bps < 10_000 => {
+            (c * 10_000) / (10_000 - min_margin_bps) + 1
+        }
+        _ => 0,
+    };
+
+    // Never below the floor, never above list. The upper clamp only bites if a
+    // part's own list margin is thinner than the tier minimum (today the thinnest
+    // is 32.5%, well clear of the 15% default), and it stops the app ever charging
+    // more than the list price it advertises.
+    Ok(discounted.max(floor).min(list))
 }
 
 fn order_is_editable(conn: &Connection, order_id: i64) -> Result<String, String> {
