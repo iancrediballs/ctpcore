@@ -1,11 +1,19 @@
 # CTP Core sync streams (PowerSync edition 3) — the DEPLOYED config.
-# B0: sync catalogue + operational data to authenticated devices.
-# B1 will split into role-scoped streams (staff vs customer) and add the
-# sensitive lead / accounting_export tables with proper filtering, using a
-# user_role JWT claim from a Supabase custom-access-token hook.
+#
+# B0 shipped one stream carrying catalogue + operational data to any
+# authenticated device. B1 splits the commercially sensitive tables into their
+# own stream so role-scoping later is a one-line change instead of a re-split.
+#
+# ⚠ BOTH streams still auto_subscribe, so today every signed-in device gets
+# everything — PowerSync replicates as `powersync_role`, which BYPASSES the RLS
+# that migration 0015 put on part_cost and price_tier. The Data API is locked
+# down; the sync path is not. Before a customer or a client portal ever gets a
+# login, `ctp_staff` must be gated on a `user_role` JWT claim (Supabase
+# custom-access-token hook). Until then, only staff accounts may exist.
 config:
   edition: 3
 streams:
+  # ── catalogue + operations: fine for any staff device ──────────────────────
   ctp_data:
     auto_subscribe: true
     queries:
@@ -28,3 +36,17 @@ streams:
       - SELECT * FROM part_image
       - SELECT * FROM part_model
       - SELECT * FROM hotspot
+
+  # ── staff-only: landed cost, the margin floor, and Jefrey's vocabulary ──────
+  # part_cost   — what we paid. Never a customer-visible number.
+  # price_tier  — discount_bps + min_margin_bps, i.e. how low we will go.
+  # part_alias  — Jefrey's learned phrase→part mappings; internal search training.
+  #
+  # This is the stream to put behind the user_role claim. When the hook lands,
+  # change auto_subscribe to a role-scoped subscription and nothing else moves.
+  ctp_staff:
+    auto_subscribe: true
+    queries:
+      - SELECT * FROM part_cost
+      - SELECT * FROM price_tier
+      - SELECT * FROM part_alias

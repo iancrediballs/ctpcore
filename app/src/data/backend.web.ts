@@ -11,8 +11,9 @@
 //
 // Still to port:
 //   Tier 1: jefrey_aliases (read), jefrey_learn / jefrey_forget (writes).
-//     BLOCKED: part_alias is not in server/sync-streams.yaml, so the learned
-//     vocabulary never reaches the client. That is mobile-plan item M0.3.
+//     part_alias now syncs (stream ctp_staff), so the read is unblocked and is
+//     a small job. The two writes need the PowerSync upload path, which no
+//     command uses yet — that is mobile-plan item M0.3.
 //   Tier 2 (counter): post_movement, save_part_image
 //   Tier 3 (sales):   list_customers, list_orders, get_order, create_order,
 //     add_line, update_line_qty, remove_line, set_status, fulfill_order, set_tax_rate
@@ -20,18 +21,25 @@
 // Desktop-only (never ported): the hotspot editor, save_diagram/delete_diagram,
 // update_part, export_accounting, delete_part/restore_part, open_url.
 //
-// ⚠ COST PRICES. Everything here runs with the signed-in user's full read scope.
-// jefrey_catalogue exposes cost_minor and part_detail exposes price_cents. That
-// is correct for staff on a phone and WRONG for a customer-facing surface. If
-// this backend is ever reused for a client portal, the price fields need a
-// role-scoped variant — do not rely on the UI to hide them.
+// ⚠ COST PRICES — read this before adding any non-staff login.
+// jefrey_catalogue.cost_minor and part_detail's ZAR cost now return REAL landed
+// cost (they were null while part_cost was unsynced). That is correct for staff
+// on a phone and wrong for anything customer-facing.
+//
+// The important part: migration 0015 locked part_cost and price_tier to staff
+// over the Data API, but PowerSync replicates as `powersync_role`, which
+// BYPASSES RLS. The only thing keeping cost off a device is which sync stream
+// that device subscribes to — see `ctp_staff` in server/sync-streams.yaml. A
+// customer account created today would sync full cost to their phone. Gate
+// `ctp_staff` on the user_role claim before any such account exists, and never
+// rely on the UI to hide these fields.
 //
 // ── Two things worth knowing before you read the SQL ──────────────────────────
 //
 // 1. The Rust layer reads through the `part_detail` VIEW and the `part_search`
 //    FTS5 table. Neither exists in the PowerSync schema — PowerSync only mirrors
 //    base tables. So the view is re-expressed inline as PART_DETAIL_SQL below,
-//    column-for-column against migration 0010's definition, and the FTS index is
+//    column-for-column against migration 0013's definition, and the FTS index is
 //    replaced by a scan (see searchParts).
 //
 // 2. Ids are integers on the desktop and text in PowerSync. The Postgres schema
@@ -88,10 +96,13 @@ const nstr = (v: unknown): string | null => (v == null || v === "" ? null : Stri
 const nnum = (v: unknown): number | null => (v == null ? null : Number(v));
 
 // ─── the part_detail view, re-expressed ──────────────────────────────────────
-// Mirrors migrations/0010_section_diagrams.sql's CREATE VIEW part_detail, with
-// one documented gap: `diagram_item` there is `p.diagram_ref`, a column added by
-// migration 0010 that is NOT in src/sync/AppSchema.ts (nor in Postgres, which is
-// still at 0009). It is selected as NULL here and flagged by GAPS below.
+// Mirrors migrations/0013_pricing_reset.sql's CREATE VIEW part_detail — the
+// current definition, column for column, with no gaps.
+//
+// It used to have two holes (diagram_item and the ZAR cost), both because the
+// backing columns had not reached Postgres or the sync config. Postgres 0016
+// landed the data (122 diagram_refs, 159 part_cost rows) and part_cost is now
+// carried by the `ctp_staff` sync stream, so both are read for real below.
 const PART_DETAIL_SQL = `
   SELECT
     p.id                AS id,
@@ -118,11 +129,15 @@ const PART_DETAIL_SQL = `
     -- Migration 0013 moved landed cost out of the price table (where it sat
     -- mislabelled as tier='list') into part_cost, and made tier='list' the
     -- real list price. USD cost is no longer tracked, so price_usd_minor is
-    -- always NULL and price_cents falls through to the genuine list price.
+    -- NULL by definition — not a gap. Matches the view exactly.
     NULL                AS price_usd_minor,
-    -- part_cost is not in AppSchema/sync-streams yet, so cost cannot reach the
-    -- browser build. Jefrey's cost_minor stays null on web until it is. See GAPS.
-    NULL                AS price_zar_minor,
+    -- Landed COST, newest shipment first. Despite the column name this is what
+    -- the view calls price_zar_minor and what Jefrey reads as cost_minor.
+    -- part_cost is versioned by valid_from, so ORDER BY matters: without it a
+    -- reprice would return whichever historical row SQLite happened to hit.
+    (SELECT pc.amount_minor FROM part_cost pc
+      WHERE pc.part_id = p.id AND pc.currency = 'ZAR' AND pc.deleted_at IS NULL
+      ORDER BY pc.valid_from DESC LIMIT 1) AS price_zar_minor,
     (SELECT pi.path FROM part_image pi
       WHERE pi.part_id = p.id AND pi.deleted_at IS NULL
       ORDER BY pi.is_primary DESC, pi.sort_order LIMIT 1) AS primary_image,
@@ -130,7 +145,7 @@ const PART_DETAIL_SQL = `
       WHERE pm.part_id = p.id AND pm.deleted_at IS NULL LIMIT 1) AS model_3d,
     (SELECT d.image_path FROM diagram d
       WHERE d.drawing_key = 'SEC' || p.category_id LIMIT 1) AS diagram_image,
-    NULL                AS diagram_item
+    p.diagram_ref       AS diagram_item
   FROM part p
   JOIN category c ON c.id = p.category_id
   WHERE p.deleted_at IS NULL
@@ -141,11 +156,15 @@ const PART_DETAIL_SQL = `
  * a missing value in the UI is explained in the console instead of looking like
  * a bug in the query.
  */
+// Verified against Postgres on 2026-08-06: 161/161 live parts resolve to a SEC*
+// section view and 122 carry a diagram_ref, so the DATA gaps are closed. What
+// remains is not data.
 const GAPS = [
-  "part_detail.diagram_item — needs part.diagram_ref in AppSchema + Postgres (migration 0010; mobile plan M0.2)",
-  "part_detail.diagram_image — needs the SEC* diagram rows from migration 0010 to reach Postgres (M0.2)",
-  "jefrey_aliases / jefrey_learn — needs part_alias in sync-streams.yaml (M0.3)",
-  "jefrey_catalogue.cost_minor / part_detail cost — needs part_cost (migration 0013) in sync-streams.yaml + AppSchema",
+  "image + diagram + .glb PATHS resolve to /assets/… which only exists in the " +
+    "desktop bundle. A hosted web build 404s every one until the files move to " +
+    "Supabase Storage and an assetUrl() resolver lands (mobile plan M2)",
+  "jefrey_learn / jefrey_forget — part_alias syncs now, but these are WRITES " +
+    "and the PowerSync upload path is not ported yet (M0.3)",
 ];
 let gapsLogged = false;
 function noteGaps(): void {
@@ -181,9 +200,14 @@ const SEARCH_SQL = `
     p.id, p.sku, p.name, p.mpn, p.locator, p.catalogue_pn, p.inventory_pn,
     b.name AS brand,
     COALESCE((SELECT SUM(m.delta) FROM stock_movement m WHERE m.part_id = p.id), 0) AS on_hand,
+    -- Was ORDER BY (currency <> 'USD') first, preferring a USD row. Migration
+    -- 0013 deleted every USD price and stopped tracking USD, so that tiebreak
+    -- is dead code that would silently prefer a stale currency if one ever came
+    -- back. Newest list price wins, full stop. deleted_at guard added to match
+    -- the fallback in partDetail().
     (SELECT pr.amount_minor FROM price pr
-      WHERE pr.part_id = p.id AND pr.tier = 'list'
-      ORDER BY (pr.currency <> 'USD'), pr.valid_from DESC LIMIT 1) AS price_cents,
+      WHERE pr.part_id = p.id AND pr.tier = 'list' AND pr.deleted_at IS NULL
+      ORDER BY pr.valid_from DESC LIMIT 1) AS price_cents,
     (SELECT x.xref_type || ' # ' || x.xref_number FROM part_xref x
       WHERE x.part_id = p.id AND instr(lower(x.xref_number), ?) > 0 LIMIT 1) AS matched_xref,
     (SELECT group_concat(x2.xref_number || ' ' || COALESCE(x2.xref_brand, ''), ' ')
@@ -369,7 +393,7 @@ async function partDetail(partId: number): Promise<unknown> {
       is_primary: bool(i["is_primary"]),
     })),
     diagram_image: nstr(d["diagram_image"]),
-    diagram_item: nstr(d["diagram_item"]), // always null until M0.2 — see GAPS
+    diagram_item: nstr(d["diagram_item"]),
     model_3d: nstr(d["model_3d"]),
   };
 }
@@ -378,7 +402,19 @@ async function partDetail(partId: number): Promise<unknown> {
 
 async function listParts(): Promise<unknown[]> {
   noteGaps();
-  const rows = await all(`SELECT * FROM (${PART_DETAIL_SQL}) ORDER BY category_code, sku`);
+  // price_cents used to read price_usd_minor, which this file defines as a
+  // literal NULL — so every row in the Parts table showed a blank price. The
+  // desktop's list_parts COALESCEs USD onto the latest tier='list' row, so the
+  // correct source post-0013 is simply the list price. Selected alongside the
+  // view rather than inside it, because part_detail has no such column.
+  const rows = await all(
+    `SELECT v.*,
+            (SELECT pr.amount_minor FROM price pr
+              WHERE pr.part_id = v.id AND pr.tier = 'list' AND pr.deleted_at IS NULL
+              ORDER BY pr.valid_from DESC LIMIT 1) AS list_row_minor
+       FROM (${PART_DETAIL_SQL}) v
+      ORDER BY v.category_code, v.sku`
+  );
   return rows.map((r) => ({
     id: numId(r["id"], "part.id"),
     sku: str(r["sku"]),
@@ -392,7 +428,7 @@ async function listParts(): Promise<unknown[]> {
     match_status: nstr(r["match_status"]),
     qty_on_hand: Number(r["qty_on_hand"]),
     bin: nstr(r["bin"]),
-    price_cents: nnum(r["price_usd_minor"]),
+    price_cents: nnum(r["list_row_minor"]) ?? nnum(r["list_price_minor"]),
     has_photo: r["primary_image"] != null,
     has_diagram: r["diagram_image"] != null,
     has_model: r["model_3d"] != null,

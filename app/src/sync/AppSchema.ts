@@ -22,6 +22,10 @@ const part = new Table({
   drawing_no: column.text, diagram_item_no: column.integer, locator: column.text,
   catalogue_pn: column.text, inventory_pn: column.text, side: column.text,
   match_status: column.text, notes: column.text, list_price_minor: column.integer,
+  // diagram_ref: the balloon number to highlight on the part's category section
+  // view. Text, not integer — refs like 'A1' exist. Added by SQLite 0010 and
+  // Postgres 0014/0016; 122 of the 161 live parts carry one.
+  diagram_ref: column.text,
   rev: column.integer, updated_at: column.text, deleted_at: column.text, origin: column.text,
 }, { indexes: { cat: ["category_id"], locator: ["locator"] } });
 
@@ -119,10 +123,39 @@ const hotspot = new Table({
   rev: column.integer, updated_at: column.text, deleted_at: column.text, origin: column.text,
 }, { indexes: { diagram: ["diagram_id"], part: ["part_id"] } });
 
+// ── staff-only tables (sync stream `ctp_staff`) ──────────────────────────────
+// These carry what we paid and how low we will discount. They are in a separate
+// sync stream precisely so they can be withheld from a customer login later;
+// see the warning at the top of server/sync-streams.yaml.
+
+// Landed cost, versioned by shipment date. Read the newest row per (part,
+// currency) — never assume one row per part.
+const part_cost = new Table({
+  part_id: column.text, currency: column.text, amount_minor: column.integer,
+  valid_from: column.text, source: column.text,
+  rev: column.integer, updated_at: column.text, deleted_at: column.text, origin: column.text,
+}, { indexes: { part: ["part_id"] } });
+
+// Discount tiers. min_margin_bps is the floor a trade discount may not cut
+// through — the guard that stops a discount selling below cost.
+const price_tier = new Table({
+  code: column.text, name: column.text,
+  discount_bps: column.integer, min_margin_bps: column.integer,
+  rev: column.integer, updated_at: column.text, deleted_at: column.text, origin: column.text,
+}, { indexes: { code: ["code"] } });
+
+// Jefrey's learned phrase→part mappings. polarity +1 teaches, -1 un-teaches.
+const part_alias = new Table({
+  phrase_norm: column.text, part_id: column.text, polarity: column.integer,
+  hits: column.integer, source: column.text, created_at: column.text,
+  rev: column.integer, updated_at: column.text, deleted_at: column.text, origin: column.text,
+}, { indexes: { phrase: ["phrase_norm"], part: ["part_id"] } });
+
 export const AppSchema = new Schema({
   category, brand, part, part_xref, vehicle_model, part_fitment, location,
   stock_movement, stock_policy, price, customer, sales_order, sales_line,
   company, diagram, part_diagram_callout, part_image, part_model, hotspot,
+  part_cost, price_tier, part_alias,
 });
 
 export type Database = (typeof AppSchema)["types"];
