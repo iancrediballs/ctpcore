@@ -1,8 +1,11 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import * as api from "./data/api";
 import { DetailPanel, type PartDetail, type Hit } from "./App";
+import { assetUrl } from "./assets";
 
-const asset = (p: string | null) => (p ? "/" + p.replace(/^\/+/, "") : "");
+// Was a local copy that always prefixed "/" — which also mangled the absolute
+// rusauto URLs some diagram rows carry. src/assets.ts passes those through.
+const asset = assetUrl;
 
 type DiagramSummary = {
   id: number; drawing_key: string; title: string;

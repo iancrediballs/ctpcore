@@ -7,6 +7,7 @@ import DiagramsView from "./DiagramsView";
 import PartsView from "./PartsView";
 import ExplorerView from "./ExplorerView";
 import JefreyView from "./jefrey/JefreyView";
+import { assetUrl, supportsModels } from "./assets";
 
 export type Hit = {
   id: number;
@@ -69,8 +70,9 @@ export type PartDetail = {
   model_3d: string | null;
 };
 
-// public/ assets are served from the web root; DB stores "assets/…" paths.
-const asset = (p: string | null) => (p ? (/^https?:\/\//.test(p) ? p : "/" + p.replace(/^\/+/, "")) : "");
+// Where an asset lives depends on the surface — desktop bundle vs Storage CDN.
+// See src/assets.ts; do not resolve paths inline again.
+const asset = assetUrl;
 const SIDE_LABEL: Record<string, string> = { L: "L/H", R: "R/H", C: "Centre", B: "Both" };
 
 // ---- view preferences (persisted locally, broadcast on change) ----
@@ -125,7 +127,10 @@ export default function App() {
           <button className={"navbtn" + (view === "sales" ? " on" : "")} onClick={() => setView("sales")}>Sales</button>
           <button className={"navbtn" + (view === "accounting" ? " on" : "")} onClick={() => setView("accounting")}>Accounting</button>
           <button className={"navbtn" + (view === "diagrams" ? " on" : "")} onClick={() => setView("diagrams")}>Diagrams</button>
-          <button className={"navbtn" + (view === "explorer" ? " on" : "")} onClick={() => setView("explorer")}>3D&nbsp;Explorer</button>
+          {/* 3D Explorer pulls a 37MB truck .glb. Desktop only — see assets.ts. */}
+          {supportsModels && (
+            <button className={"navbtn" + (view === "explorer" ? " on" : "")} onClick={() => setView("explorer")}>3D&nbsp;Explorer</button>
+          )}
           <button className={"navbtn" + (view === "jefrey" ? " on" : "")} onClick={() => setView("jefrey")}>Jefrey</button>
         </nav>
         <span className="kpi">local · offline-ready</span>
@@ -136,7 +141,7 @@ export default function App() {
       {view === "sales" && <SalesView />}
       {view === "accounting" && <AccountingView />}
       {view === "diagrams" && <DiagramsView />}
-      {view === "explorer" && <ExplorerView />}
+      {view === "explorer" && supportsModels && <ExplorerView />}
       {view === "jefrey" && <JefreyView />}
       {settings && <SettingsModal onClose={() => setSettings(false)} />}
     </div>
@@ -346,7 +351,10 @@ function PartMedia({ detail, onChanged }: { detail: PartDetail; onChanged?: () =
             : <div className="mph">no diagram</div>}
         </div>
       </div>
-      {detail.model_3d && (
+      {/* Models are desktop-only: the one .glb in the catalogue is 37MB and is
+          not uploaded to Storage, so on the web build this button would open a
+          404 after a long wait. See supportsModels in src/assets.ts. */}
+      {detail.model_3d && supportsModels && (
         <button className="model3d" onClick={() => open(detail.model_3d)}>◳ 3D model — {detail.inventory_pn ?? detail.sku} ⇗</button>
       )}
       {(detail.catalogue_pn || detail.inventory_pn) && (
