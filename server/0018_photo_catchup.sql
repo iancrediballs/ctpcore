@@ -1,52 +1,61 @@
 -- ============================================================================
 --  CTP Core - migration 0018: the white cutouts reach the cloud
 --
---  On 2026-07-02 the RAW->rembg pipeline produced 146 white-background cutout
---  PNGs and imported them into the LOCAL SQLite as each part's primary photo,
---  demoting the raw camera conversions to secondary. That import never reached
---  Postgres. The cloud copy still points at `assets/photos/raw_*.jpg` - 124 of
---  its 142 image rows - so the desktop shows clean cutouts on white while any
---  web or phone client would show the raw shots. Same drift as 0010-0013, same
---  fix: replay it.
+--  The RAW -> rembg pipeline produced a white-background cutout for very nearly
+--  every part and made it primary in the LOCAL SQLite. That import never
+--  reached Postgres, whose 124 of 142 image rows still point at
+--  `assets/photos/raw_*.jpg`. So the desktop shows clean cutouts on white while
+--  any web or phone client would show the raw shots. Same drift as 0010-0013,
+--  same fix: replay it.
 --
---  MATCHING is not invented here. It is png_import.py's rule, applied verbatim:
---    normalise to [a-z0-9] only, strip a `processed_` prefix / `.png` / `.CR2`
---    tail / a SEPARATED trailing sequence like `-01`, then match on
---    inventory_pn first and catalogue_pn second. Where several files collapse
---    to one key the shortest filename wins.
+--  WHERE THE MAPPING COMES FROM - two sources, best evidence first:
+--    144  Master_Cutouts_White/_master_manifest.csv, which names the
+--         canonical master_png per item. item_no + 1000 = part.id, confirmed
+--         against inventory_pn and catalogue_pn on 144 of 146 rows (the two
+--         that differ - 1062 and 1124 - are the same part under a revised PN).
+--     15  png_import.py's rule applied to the rest: normalise to [a-z0-9],
+--         strip a `processed_` prefix / `.png` / `.CR2` tail / a SEPARATED
+--         trailing sequence, match inventory_pn then catalogue_pn, shortest
+--         filename wins. Not a new heuristic - the desktop importer's own.
 --
---  RESULT (computed from the 146 files actually in app/public/assets/photos/master
---  and the 161 live parts):
---    151 parts get a cutout, drawn from 145 distinct files
---     10 parts have no cutout and keep whatever they had
---      1 file  (5001315A1063-C00-i31.png) is a second shot of a part whose
---              sibling matched, so nothing claims it
+--  RESULT: 159 of 161 live parts get a cutout, from 154 distinct files.
+--  Parts with a photo goes 125 -> 159; exactly 2 parts end up with no image.
 --
---  Parts with a photo goes 125 -> 151.
+--  THE TWO PARTS WITH NO CUTOUT - there is genuinely no file for either, in
+--  Master_Cutouts_White or anywhere else. Both are large structural weldments,
+--  which is a plausible thing not to have photographed:
+--    1125  CTP-CBY-001-C  Cab Weld Assembly     (5000020-H02-001 / 5000040EB45)
+--    1128  CTP-CBY-004-C  Floor Assembly        (5100010-H02)
+--  They keep whatever image they already had. If cutouts appear later, drop
+--  them in app/public/assets/photos/master/ and add two rows here.
 --
 --  NOTHING IS DELETED. The raw rows are demoted to is_primary = 0, exactly as
---  png_import.py does on the desktop, so this is reversible and the originals
---  stay available in the part panel's thumbnail strip.
+--  png_import.py does on the desktop, so this reverses and the originals stay
+--  in the part panel's thumbnail strip.
+--
+--  FILES: all 154 are in app/public/assets/photos/master/. Ten were copied
+--  there from Master_Cutouts_White on 2026-08-06; the rest were already served.
 --
 --  AFTER THIS, RUN:  python server/sync_assets.py
---  The uploader is driven by what the database references, so it picks the
---  cutouts up with no code change. Until it runs, these paths 404 on web (the
---  desktop reads them from app/public/ and is fine immediately).
+--  The uploader is driven by what the database references, so it picks these up
+--  with no code change. Until it runs the new paths 404 on web; the desktop
+--  reads them from app/public/ and is correct immediately.
 --
 --  Idempotent: safe to re-run. One transaction - all or nothing.
 -- ============================================================================
 BEGIN;
 
 -- A real table, not a TEMP one. A TEMP table with ON COMMIT DROP dies the
--- moment the CREATE commits if the script is pasted into an editor that does
--- not wrap it in a single transaction, and every statement after it then
--- silently matches zero rows. Same trap avoided in 0016.
+-- moment the CREATE commits if this is pasted into an editor that does not wrap
+-- it in a single transaction, and every statement after it then silently
+-- matches zero rows - a migration that reports success and changed nothing.
+-- Same trap avoided in 0016.
 DROP TABLE IF EXISTS cutout_map;
 CREATE TABLE cutout_map (part_id BIGINT PRIMARY KEY, path TEXT NOT NULL);
 
 INSERT INTO cutout_map (part_id, path) VALUES
-  (1001, 'assets/photos/master/2803035B1063.png'),   -- CTP-BMP-001-L
-  (1002, 'assets/photos/master/2803040B1063.png'),   -- CTP-BMP-002-R
+  (1001, 'assets/photos/master/2803035B1063-DQ.png'),   -- CTP-BMP-001-L   [pn-match]
+  (1002, 'assets/photos/master/2803040B1063-DQ.png'),   -- CTP-BMP-002-R   [pn-match]
   (1003, 'assets/photos/master/2803645B1063.png'),   -- CTP-BMP-003-L
   (1004, 'assets/photos/master/2803650B1063.png'),   -- CTP-BMP-004-R
   (1005, 'assets/photos/master/2803031B1063.png'),   -- CTP-BMP-005-L
@@ -73,9 +82,9 @@ INSERT INTO cutout_map (part_id, path) VALUES
   (1026, 'assets/photos/master/3732015-1063.png'),   -- CTP-LGT-003-L
   (1027, 'assets/photos/master/3732020-1063.png'),   -- CTP-LGT-004-R
   (1028, 'assets/photos/master/5004055-1063-C00.png'),   -- CTP-SUS-001-L
-  (1029, 'assets/photos/master/5004055-1063-C00.png'),   -- CTP-SUS-002-R
+  (1029, 'assets/photos/master/5004055-1063-C00.png'),   -- CTP-SUS-002-R   [pn-match]
   (1030, 'assets/photos/master/5001315A1063-C00.png'),   -- CTP-SUS-003-L
-  (1031, 'assets/photos/master/5001315A1063-C00.png'),   -- CTP-SUS-004-R
+  (1031, 'assets/photos/master/5001315A1063-C00-i31.png'),   -- CTP-SUS-004-R
   (1032, 'assets/photos/master/5001010-B45.png'),   -- CTP-SUS-005-C
   (1033, 'assets/photos/master/5103121-B45.png'),   -- CTP-FND-001-L
   (1034, 'assets/photos/master/5103122-B45.png'),   -- CTP-FND-002-R
@@ -92,8 +101,9 @@ INSERT INTO cutout_map (part_id, path) VALUES
   (1045, 'assets/photos/master/5109111-H02.png'),   -- CTP-FND-013-L
   (1046, 'assets/photos/master/5109112-B45.png'),   -- CTP-FND-014-R
   (1047, 'assets/photos/master/5407015-B45.png'),   -- CTP-TBX-001-L
+  (1048, 'assets/photos/master/5407025-B45.png'),   -- CTP-TBX-002-R   [pn-match]
   (1049, 'assets/photos/master/5407086-B45-C00.png'),   -- CTP-TBX-003-L
-  (1050, 'assets/photos/master/5407086-B45-C00.png'),   -- CTP-TBX-004-R
+  (1050, 'assets/photos/master/5407086-B45-C00.png'),   -- CTP-TBX-004-R   [pn-match]
   (1051, 'assets/photos/master/5302715-B45.png'),   -- CTP-INT-001-L
   (1052, 'assets/photos/master/5302720-B45.png'),   -- CTP-INT-002-R
   (1053, 'assets/photos/master/5302841-B45.png'),   -- CTP-INT-003-L
@@ -125,6 +135,7 @@ INSERT INTO cutout_map (part_id, path) VALUES
   (1079, 'assets/photos/master/5302801-B45.png'),   -- CTP-FWL-020-C
   (1080, 'assets/photos/master/6100015-B83.png'),   -- CTP-DOR-001-L
   (1081, 'assets/photos/master/6100020-B83.png'),   -- CTP-DOR-002-R
+  (1082, 'assets/photos/master/6100031-B45.png'),   -- CTP-DOR-003-L   [pn-match]
   (1083, 'assets/photos/master/6100032-B45.png'),   -- CTP-DOR-004-R
   (1084, 'assets/photos/master/6101585-B83.png'),   -- CTP-DOR-005-L
   (1085, 'assets/photos/master/6101590-B83.png'),   -- CTP-DOR-006-R
@@ -143,9 +154,10 @@ INSERT INTO cutout_map (part_id, path) VALUES
   (1098, 'assets/photos/master/6106055-B45-C00.png'),   -- CTP-DOR-019-L
   (1099, 'assets/photos/master/6106060-B45-C00.png'),   -- CTP-DOR-020-R
   (1100, 'assets/photos/master/6109015-B45-C00.png'),   -- CTP-DOR-021-L
-  (1101, 'assets/photos/master/6109015-B45-C00.png'),   -- CTP-DOR-022-R
+  (1101, 'assets/photos/master/6109015-B45-C00.png'),   -- CTP-DOR-022-R   [pn-match]
   (1102, 'assets/photos/master/8202015CB45-C00.png'),   -- CTP-MRR-001-L
   (1103, 'assets/photos/master/8202020CB45-C00.png'),   -- CTP-MRR-002-R
+  (1104, 'assets/photos/master/8202061-B45-C00-G.png'),   -- CTP-MRR-003-L   [pn-match]
   (1105, 'assets/photos/master/8202062-B45-C00.png'),   -- CTP-MRR-004-R
   (1106, 'assets/photos/master/8219010-B45-C00.png'),   -- CTP-MRR-005-C
   (1107, 'assets/photos/master/8219020AB45-C00.png'),   -- CTP-MRR-006-C
@@ -153,7 +165,7 @@ INSERT INTO cutout_map (part_id, path) VALUES
   (1109, 'assets/photos/master/5103021-1063.png'),   -- CTP-STP-002-L
   (1110, 'assets/photos/master/5103010-1544.png'),   -- CTP-STP-003-C
   (1111, 'assets/photos/master/5103022-1063.png'),   -- CTP-STP-004-R
-  (1112, 'assets/photos/master/5103031-1063.png'),   -- CTP-STP-005-R
+  (1112, 'assets/photos/master/5103031-1063.png'),   -- CTP-STP-005-R   [pn-match]
   (1113, 'assets/photos/master/5103061-1063.png'),   -- CTP-STP-006-C
   (1114, 'assets/photos/master/5103052-1063.png'),   -- CTP-STP-007-C
   (1115, 'assets/photos/master/5103053-1063.png'),   -- CTP-STP-008-C
@@ -166,7 +178,7 @@ INSERT INTO cutout_map (part_id, path) VALUES
   (1122, 'assets/photos/master/5103510-1509.png'),   -- CTP-MUD-007-B
   (1123, 'assets/photos/master/5205010-B45-C00.png'),   -- CTP-WPR-001-C
   (1124, 'assets/photos/master/5207010-H02-C00.png'),   -- CTP-WPR-002-C
-  (1126, 'assets/photos/master/5300010-B45.png'),   -- CTP-CBY-002-C
+  (1126, 'assets/photos/master/5300010-B45.png'),   -- CTP-CBY-002-C   [pn-match]
   (1127, 'assets/photos/master/5201010-B45.png'),   -- CTP-CBY-003-C
   (1129, 'assets/photos/master/5600010-B45.png'),   -- CTP-CBY-005-C
   (1130, 'assets/photos/master/5700010-B45.png'),   -- CTP-CBY-006-C
@@ -175,6 +187,7 @@ INSERT INTO cutout_map (part_id, path) VALUES
   (1133, 'assets/photos/master/5401085-H02.png'),   -- CTP-CBY-009-L
   (1134, 'assets/photos/master/5401090-H02.png'),   -- CTP-CBY-010-R
   (1135, 'assets/photos/master/5704011-B45.png'),   -- CTP-DEF-001-C
+  (1136, 'assets/photos/master/5704021-B45.png'),   -- CTP-DEF-002-C   [pn-match]
   (1137, 'assets/photos/master/5704031-B45.png'),   -- CTP-DEF-003-C
   (1138, 'assets/photos/master/5704081-B45.png'),   -- CTP-DEF-004-L
   (1139, 'assets/photos/master/5704082-B45.png'),   -- CTP-DEF-005-R
@@ -190,7 +203,11 @@ INSERT INTO cutout_map (part_id, path) VALUES
   (1149, 'assets/photos/master/5704212CB45.png'),   -- CTP-DEF-015-R
   (1150, 'assets/photos/master/5704221CB45.png'),   -- CTP-DEF-016-L
   (1151, 'assets/photos/master/5704222CB45.png'),   -- CTP-DEF-017-R
+  (1152, 'assets/photos/master/5704231-H40.png'),   -- CTP-DEF-018-L   [pn-match]
   (1153, 'assets/photos/master/5704232-H40.png'),   -- CTP-DEF-019-R
+  (1154, 'assets/photos/master/5704241-H40.png'),   -- CTP-DEF-020-L   [pn-match]
+  (1155, 'assets/photos/master/5704242-H40.png'),   -- CTP-DEF-021-R   [pn-match]
+  (1156, 'assets/photos/master/5704251-H40.png'),   -- CTP-DEF-022-L   [pn-match]
   (1157, 'assets/photos/master/5704262-H40.png'),   -- CTP-DEF-023-R
   (1158, 'assets/photos/master/5704281DB45.png'),   -- CTP-DEF-024-L
   (1159, 'assets/photos/master/5704282-H40.png'),   -- CTP-DEF-025-R
@@ -205,14 +222,14 @@ BEGIN
   SELECT count(*) INTO missing FROM cutout_map m
    WHERE NOT EXISTS (SELECT 1 FROM part p WHERE p.id = m.part_id AND p.deleted_at IS NULL);
   IF missing > 0 THEN
-    RAISE EXCEPTION '% mapped part(s) are missing or soft-deleted - regenerate 0018', missing;
+    RAISE EXCEPTION '% mapped part(s) missing or soft-deleted - regenerate 0018', missing;
   END IF;
 END $$;
 
 -- 1. Demote whatever was primary, EXCEPT the cutout itself. Excluding the
 --    cutout is what makes a re-run safe: demote-then-insert would otherwise
---    strip the primary flag on the second pass and never put it back, leaving
---    the part with no primary image at all.
+--    strip the primary flag on the second pass and then skip the insert because
+--    the row already exists, leaving the part with no primary image at all.
 UPDATE part_image pi
    SET is_primary = 0,
        sort_order = GREATEST(pi.sort_order, 1),
@@ -273,8 +290,8 @@ BEGIN
     SELECT part_id FROM part_image WHERE deleted_at IS NULL
      GROUP BY part_id HAVING count(*) FILTER (WHERE is_primary = 1) = 0) z;
 
-  IF n_cutout  <> 151 THEN RAISE EXCEPTION 'cutout rows = %, expected 151', n_cutout;  END IF;
-  IF n_primary <> 151 THEN RAISE EXCEPTION 'cutouts marked primary = %, expected 151', n_primary; END IF;
+  IF n_cutout  <> 159 THEN RAISE EXCEPTION 'cutout rows = %, expected 159', n_cutout; END IF;
+  IF n_primary <> 159 THEN RAISE EXCEPTION 'cutouts primary = %, expected 159', n_primary; END IF;
   IF n_double  >  0   THEN RAISE EXCEPTION '% part(s) have more than one primary image', n_double; END IF;
   IF n_none    >  0   THEN RAISE EXCEPTION '% part(s) with images have no primary', n_none; END IF;
 
