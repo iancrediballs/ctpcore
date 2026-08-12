@@ -1,52 +1,129 @@
-# CTP Core sync streams (PowerSync edition 3) — the DEPLOYED config.
+# CTP Core sync streams (PowerSync edition 3).
 #
-# B0 shipped one stream carrying catalogue + operational data to any
-# authenticated device. B1 splits the commercially sensitive tables into their
-# own stream so role-scoping later is a one-line change instead of a re-split.
+# ⚠ THIS FILE IS THE SECURITY BOUNDARY FOR EVERY PHONE.
 #
-# ⚠ BOTH streams still auto_subscribe, so today every signed-in device gets
-# everything — PowerSync replicates as `powersync_role`, which BYPASSES the RLS
-# that migration 0015 put on part_cost and price_tier. The Data API is locked
-# down; the sync path is not. Before a customer or a client portal ever gets a
-# login, `ctp_staff` must be gated on a `user_role` JWT claim (Supabase
-# custom-access-token hook). Until then, only staff accounts may exist.
+# PowerSync replicates as `powersync_role`, which is BYPASSRLS. Migration 0015's
+# grants and rls.sql's 41 policies protect the Data API and nothing else. What
+# actually lands in a device's local SQLite is decided here and only here — so a
+# missing WHERE in this file is a data leak, not a bug.
+#
+# Every stream below is gated on the `user_role` JWT claim, which migration
+# 0019 puts in the token via a Supabase Custom Access Token hook. There is no
+# ungated stream: a token with no user_role (hook not enabled, or a user with no
+# app_user row) matches nothing and syncs nothing. **Fail closed by design.**
+#
+# DEPLOY ORDER — 0019 first, hook enabled, tokens refreshed, THEN this file.
+# Deploying this first stops sync for everyone and looks like a broken app.
+#
+# ── how to verify, and why the config is not the verification ────────────────
+# Read the DEVICE, not this file. On a test client login, open the app and run
+# in the browser console:
+#     await powerSync.getAll("SELECT count(*) n FROM part_cost")   -- expect 0
+#     await powerSync.getAll("SELECT count(*) n FROM price")       -- expect 0
+#     await powerSync.getAll("SELECT count(*) n FROM stock_policy")-- expect 0
+#     await powerSync.getAll("SELECT count(*) n FROM sales_order") -- expect 0
+#     await powerSync.getAll("SELECT count(*) n FROM part")        -- expect 161
+# A stream that syncs nothing and a stream that was never written look
+# identical from the dashboard. They do not look identical from the phone.
+
 config:
   edition: 3
+
 streams:
-  # ── catalogue + operations: fine for any staff device ──────────────────────
+  # ══ STAFF ═══════════════════════════════════════════════════════════════
+  # Catalogue + operations. Staff only: this carries bins, stock movements,
+  # every customer record and every order.
   ctp_data:
     auto_subscribe: true
     queries:
-      - SELECT * FROM category
-      - SELECT * FROM brand
-      - SELECT * FROM part
-      - SELECT * FROM part_xref
-      - SELECT * FROM vehicle_model
-      - SELECT * FROM part_fitment
-      - SELECT * FROM location
-      - SELECT * FROM stock_movement
-      - SELECT * FROM stock_policy
-      - SELECT * FROM price
-      - SELECT * FROM customer
-      - SELECT * FROM sales_order
-      - SELECT * FROM sales_line
-      - SELECT * FROM company
-      - SELECT * FROM diagram
-      - SELECT * FROM part_diagram_callout
-      - SELECT * FROM part_image
-      - SELECT * FROM part_model
-      - SELECT * FROM hotspot
+      - SELECT * FROM category         WHERE auth.parameter('user_role') IN ('sales','warehouse','manager','admin')
+      - SELECT * FROM brand            WHERE auth.parameter('user_role') IN ('sales','warehouse','manager','admin')
+      - SELECT * FROM part             WHERE auth.parameter('user_role') IN ('sales','warehouse','manager','admin')
+      - SELECT * FROM part_xref        WHERE auth.parameter('user_role') IN ('sales','warehouse','manager','admin')
+      - SELECT * FROM vehicle_model    WHERE auth.parameter('user_role') IN ('sales','warehouse','manager','admin')
+      - SELECT * FROM part_fitment     WHERE auth.parameter('user_role') IN ('sales','warehouse','manager','admin')
+      - SELECT * FROM location         WHERE auth.parameter('user_role') IN ('sales','warehouse','manager','admin')
+      - SELECT * FROM stock_movement   WHERE auth.parameter('user_role') IN ('sales','warehouse','manager','admin')
+      - SELECT * FROM stock_policy     WHERE auth.parameter('user_role') IN ('sales','warehouse','manager','admin')
+      - SELECT * FROM price            WHERE auth.parameter('user_role') IN ('sales','warehouse','manager','admin')
+      - SELECT * FROM customer         WHERE auth.parameter('user_role') IN ('sales','warehouse','manager','admin')
+      - SELECT * FROM sales_order      WHERE auth.parameter('user_role') IN ('sales','warehouse','manager','admin')
+      - SELECT * FROM sales_line       WHERE auth.parameter('user_role') IN ('sales','warehouse','manager','admin')
+      - SELECT * FROM company          WHERE auth.parameter('user_role') IN ('sales','warehouse','manager','admin')
+      - SELECT * FROM diagram          WHERE auth.parameter('user_role') IN ('sales','warehouse','manager','admin')
+      - SELECT * FROM part_diagram_callout WHERE auth.parameter('user_role') IN ('sales','warehouse','manager','admin')
+      - SELECT * FROM part_image       WHERE auth.parameter('user_role') IN ('sales','warehouse','manager','admin')
+      - SELECT * FROM part_model       WHERE auth.parameter('user_role') IN ('sales','warehouse','manager','admin')
+      - SELECT * FROM hotspot          WHERE auth.parameter('user_role') IN ('sales','warehouse','manager','admin')
 
-  # ── staff-only: landed cost, the margin floor, and Jefrey's vocabulary ──────
-  # part_cost   — what we paid. Never a customer-visible number.
-  # price_tier  — discount_bps + min_margin_bps, i.e. how low we will go.
-  # part_alias  — Jefrey's learned phrase→part mappings; internal search training.
-  #
-  # This is the stream to put behind the user_role claim. When the hook lands,
-  # change auto_subscribe to a role-scoped subscription and nothing else moves.
+  # The commercially sensitive three. Kept a separate stream so it can be cut
+  # to a narrower role later (e.g. cost for managers only) without re-splitting
+  # anything else.
+  #   part_cost  — what we paid. Never leaves the business.
+  #   price_tier — discount_bps + min_margin_bps, i.e. how low we will go.
+  #   part_alias — Jefrey's learned phrase→part mappings.
   ctp_staff:
     auto_subscribe: true
     queries:
-      - SELECT * FROM part_cost
-      - SELECT * FROM price_tier
-      - SELECT * FROM part_alias
+      - SELECT * FROM part_cost   WHERE auth.parameter('user_role') IN ('sales','warehouse','manager','admin')
+      - SELECT * FROM price_tier  WHERE auth.parameter('user_role') IN ('sales','warehouse','manager','admin')
+      - SELECT * FROM part_alias  WHERE auth.parameter('user_role') IN ('sales','warehouse','manager','admin')
+
+  # ══ CLIENT ══════════════════════════════════════════════════════════════
+  # What a customer's phone is allowed to hold. Columns are listed ONE BY ONE
+  # on purpose: `SELECT *` on `part` would ship list_price_minor, locator,
+  # inventory_pn and notes, and a future column would be published the day it
+  # is added. Explicit lists fail safe — a new column simply does not sync.
+  #
+  # Deliberately absent, and each for a reason:
+  #   price, part_cost, price_tier  — Ian quotes per customer; no price on a device
+  #   stock_policy, location        — bins are the warehouse's internal map
+  #   stock_movement                — reveals sales volumes
+  #   customer, sales_order, sales_line — other people's business
+  #   part_alias                    — internal search training
+  #   part_model                    — 37MB .glb, desktop-only anyway
+  ctp_client:
+    auto_subscribe: true
+    queries:
+      - SELECT id, code, name, rev, updated_at, deleted_at
+          FROM category
+         WHERE auth.parameter('user_role') = 'customer'
+      - SELECT id, name, rev, updated_at, deleted_at
+          FROM brand
+         WHERE auth.parameter('user_role') = 'customer'
+      # No locator / inventory_pn / notes / list_price_minor / match_status.
+      # catalogue_pn stays: the OEM number is how a customer finds the part.
+      - SELECT id, sku, mpn, brand_id, category_id, name, description, uom,
+               weight_g, status, superseded_by, make, model, drawing_no,
+               diagram_item_no, catalogue_pn, side, diagram_ref,
+               rev, updated_at, deleted_at
+          FROM part
+         WHERE auth.parameter('user_role') = 'customer'
+      - SELECT * FROM part_xref            WHERE auth.parameter('user_role') = 'customer'
+      - SELECT * FROM vehicle_model        WHERE auth.parameter('user_role') = 'customer'
+      - SELECT * FROM part_fitment         WHERE auth.parameter('user_role') = 'customer'
+      - SELECT * FROM part_image           WHERE auth.parameter('user_role') = 'customer'
+      - SELECT * FROM diagram              WHERE auth.parameter('user_role') = 'customer'
+      - SELECT * FROM part_diagram_callout WHERE auth.parameter('user_role') = 'customer'
+      - SELECT * FROM hotspot              WHERE auth.parameter('user_role') = 'customer'
+      - SELECT * FROM company              WHERE auth.parameter('user_role') = 'customer'
+
+  # ── a client's OWN requests (step 4 of the client portal) ────────────────
+  # Not enabled yet: it needs customer.auth_user_id populated for the client
+  # login, and the request-cart write path. When it lands, these two queries go
+  # live — note they are scoped by auth.user_id() through the customer row, so
+  # a client sees their orders and nobody else's.
+  #
+  # ctp_client_orders:
+  #   auto_subscribe: true
+  #   queries:
+  #     - SELECT id, number, customer_id, status, currency, notes, tax_rate_bps,
+  #              rev, created_at, updated_at, deleted_at
+  #         FROM sales_order
+  #        WHERE auth.parameter('user_role') = 'customer'
+  #          AND customer_id IN (SELECT id FROM customer WHERE auth_user_id = auth.user_id())
+  #     - SELECT id, order_id, part_id, qty, rev, updated_at, deleted_at
+  #         FROM sales_line
+  #        WHERE auth.parameter('user_role') = 'customer'
+  #          AND order_id IN (SELECT id FROM sales_order WHERE customer_id IN
+  #                            (SELECT id FROM customer WHERE auth_user_id = auth.user_id()))

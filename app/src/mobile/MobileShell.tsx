@@ -87,6 +87,34 @@ const timeAgo = (iso: string): string => {
 // The brand mark lives in the same bucket as every other asset.
 const LOGO = "assets/brand/ctp_logo_dark.png";
 
+/**
+ * The `user_role` claim out of the access token, or null.
+ *
+ * This is the claim the SYNC STREAMS gate on (migration 0019 + the Custom
+ * Access Token hook), and it is not the same thing as the role AuthProvider
+ * reads from the app_user table — that one is a database read this device
+ * makes, while this one is what the token actually carries. When they
+ * disagree, sync follows the token. Printing it in Info is the only way to
+ * see, from the device, whether the hook is live and the session is new
+ * enough to have picked it up.
+ *
+ * Read-only display. Nothing is authorised on the strength of it: a JWT is
+ * signed, but this decode does NOT verify that signature, so treating it as
+ * proof of anything would be trusting a string the client could edit.
+ */
+function tokenRole(accessToken: string | undefined): string | null {
+  if (!accessToken) return null;
+  try {
+    const body = accessToken.split(".")[1];
+    if (!body) return null;
+    const json = atob(body.replace(/-/g, "+").replace(/_/g, "/"));
+    const claim = JSON.parse(json)?.user_role;
+    return typeof claim === "string" ? claim : null;
+  } catch {
+    return null;
+  }
+}
+
 // ─── icons (inline so the shell has zero icon deps) ──────────────────────────
 
 const IcSearch = () => (
@@ -393,6 +421,11 @@ export default function MobileShell() {
         <div className="mb-rows">
           <div className="mb-row"><span className="mb-rk">Signed in</span>
             <span className="mb-rv">{session?.user.email ?? "—"}</span></div>
+          <div className="mb-row"><span className="mb-rk">Access level</span>
+            <span className="mb-rv">
+              {tokenRole(session?.access_token)
+                ?? <span style={{ color: "var(--warn)" }}>not in your token</span>}
+            </span></div>
           <div className="mb-row"><span className="mb-rk">Sync</span>
             <span className="mb-rv">{connected ? "connected" : "offline — writes queue locally"}</span></div>
           <div className="mb-row"><span className="mb-rk">Last synced</span>
@@ -408,6 +441,14 @@ export default function MobileShell() {
           overwritten. Working offline is fine: movements queue on the phone and
           post themselves when signal returns.
         </div>
+        {!tokenRole(session?.access_token) && (
+          <div className="mb-note">
+            <b>Access level missing.</b> Your sign-in token doesn't carry a role
+            yet, which is what decides the data this device is allowed to hold.
+            Until the access-token hook is switched on, every signed-in device
+            receives everything. Sign out and back in after it is enabled.
+          </div>
+        )}
       </div>
     </div>
   );
