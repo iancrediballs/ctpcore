@@ -126,3 +126,21 @@
 .mb-note{background:var(--surf);border:1.5px dashed var(--line);border-radius:var(--r);padding:16px;
   margin-top:18px;font-size:13.5px;line-height:1.55;color:var(--dim);text-align:left}
 .mb-note b{color:var(--amber)}
+/* lightbox — fullscreen zoomable viewer for photos & diagrams */
+.mb-hero{position:relative;cursor:zoom-in}
+.mb-dgm{cursor:zoom-in}
+.mb-zoomtag{position:absolute;top:8px;right:8px;width:32px;height:32px;display:grid;place-items:center;
+  border-radius:9px;background:rgba(11,13,16,.55);color:#fff;font-size:16px;pointer-events:none}
+.mb-lb{position:fixed;inset:0;z-index:70;background:#05070a;display:flex;flex-direction:column}
+.mb-lb-head{display:flex;align-items:center;gap:12px;padding:calc(var(--safe-t) + 10px) 12px 10px;flex:0 0 auto}
+.mb-lb-cap{flex:1;font-size:13.5px;font-weight:800;color:var(--dim);letter-spacing:.5px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mb-lb-stage{flex:1;position:relative;overflow:hidden;touch-action:none;display:grid;place-items:center;
+  background:#fff;overscroll-behavior:contain}
+.mb-lb-img{max-width:100%;max-height:100%;will-change:transform;user-select:none;-webkit-user-drag:none;
+  pointer-events:none}
+.mb-lb-dots{display:flex;justify-content:center;gap:8px;padding:12px 0 4px;flex:0 0 auto}
+.mb-lb-dot{width:9px;height:9px;border-radius:50%;background:var(--line);cursor:pointer}
+.mb-lb-dot.on{background:var(--amber)}
+.mb-lb-hint{text-align:center;font-size:11.5px;font-weight:700;color:var(--dimmer);
+  text-transform:uppercase;letter-spacing:.9px;padding:4px 0 calc(var(--safe-b) + 12px)}

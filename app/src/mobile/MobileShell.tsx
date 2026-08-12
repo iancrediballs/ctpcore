@@ -114,6 +114,7 @@ export default function MobileShell() {
   const [sheetOpen, setSheetOpen] = useState(false);
   const [counterOpen, setCounterOpen] = useState(false);
   const [toast, setToast] = useState<Toast | null>(null);
+  const [viewer, setViewer] = useState<{ items: { path: string; label: string }[]; idx: number } | null>(null);
   const toastTimer = useRef<number | undefined>(undefined);
 
   // ── data loads (all local SQLite via PowerSync — cheap to re-run) ──
@@ -336,7 +337,14 @@ export default function MobileShell() {
           </div>
           <div className="mb-sbody">
             {hero && (
-              <div className="mb-hero"><img src={assetUrl(hero)} alt={d.name} /></div>
+              <div className="mb-hero" role="button"
+                onClick={() => setViewer({
+                  items: d.images.map((i, n) => ({ path: i.path, label: `${d.sku} · photo ${n + 1} of ${d.images.length}` })),
+                  idx: Math.max(0, d.images.findIndex((i) => i.path === hero)),
+                })}>
+                <img src={assetUrl(hero)} alt={d.name} />
+                <span className="mb-zoomtag">⤢</span>
+              </div>
             )}
             <h1 className="mb-pname">{d.name}</h1>
             <div className="mb-psku mb-mono">
@@ -357,8 +365,13 @@ export default function MobileShell() {
             </div>
 
             {d.diagram_image && (
-              <div className="mb-dgm">
+              <div className="mb-dgm" role="button"
+                onClick={() => setViewer({
+                  items: [{ path: d.diagram_image!, label: `${d.drawing_no ?? d.category_name ?? "Diagram"}${d.diagram_item ? ` · item ${d.diagram_item}` : ""}` }],
+                  idx: 0,
+                })}>
                 <img src={assetUrl(d.diagram_image)} alt="Section diagram" loading="lazy" />
+                <span className="mb-zoomtag">⤢</span>
                 <div className="mb-dgm-cap">
                   {d.diagram_item && <span className="mb-itembdg">{d.diagram_item}</span>}
                   <span>
@@ -419,6 +432,9 @@ export default function MobileShell() {
     <div className="mb-root">
       {tab === "info" ? infoView : listView}
       {sheet}
+      {viewer && (
+        <Lightbox items={viewer.items} start={viewer.idx} onClose={() => setViewer(null)} />
+      )}
 
       {toast && (
         <div className={"mb-toast" + (toast.err ? " err" : "")}
@@ -446,6 +462,158 @@ export default function MobileShell() {
           <TabInfo />Info
         </button>
       </nav>
+    </div>
+  );
+}
+
+// ─── the lightbox ────────────────────────────────────────────────────────────
+// Fullscreen viewer for photos and diagrams. Hand-rolled gestures, no deps:
+//   pinch = zoom (1×–6×) · one finger = pan when zoomed, swipe to change photo
+//   at 1× · double-tap = zoom in on that spot / back out · mouse wheel on PC.
+//
+// The transform model: the image sits centred in the stage with
+// `translate(x,y) scale(s)` (origin centre), so a screen point q and an image
+// point c relate as q = c·s + T. Every gesture below is just solving that for
+// T while holding some c fixed — the point under your fingers stays under
+// your fingers.
+
+function Lightbox({ items, start, onClose }: {
+  items: { path: string; label: string }[];
+  start: number;
+  onClose: () => void;
+}) {
+  const [idx, setIdx] = useState(Math.min(Math.max(start, 0), items.length - 1));
+  const stageRef = useRef<HTMLDivElement>(null);
+  const imgRef = useRef<HTMLImageElement>(null);
+  const t = useRef({ s: 1, x: 0, y: 0 });
+  const ptrs = useRef(new Map<number, { x: number; y: number }>());
+  const pinch = useRef<{ d0: number; s0: number; cx: number; cy: number } | null>(null);
+  const drag = useRef<{ px: number; py: number; x0: number; y0: number; moved: boolean } | null>(null);
+  const lastTap = useRef(0);
+  const [zoomed, setZoomed] = useState(false);
+
+  const apply = (animate = false) => {
+    const el = imgRef.current;
+    if (!el) return;
+    el.style.transition = animate ? "transform .18s ease-out" : "none";
+    el.style.transform = `translate(${t.current.x}px, ${t.current.y}px) scale(${t.current.s})`;
+    setZoomed(t.current.s > 1.01);
+  };
+  const resetView = (animate = false) => { t.current = { s: 1, x: 0, y: 0 }; apply(animate); };
+
+  /** Pointer position relative to the stage centre. */
+  const rel = (e: { clientX: number; clientY: number }) => {
+    const r = stageRef.current!.getBoundingClientRect();
+    return { x: e.clientX - r.left - r.width / 2, y: e.clientY - r.top - r.height / 2 };
+  };
+
+  /** Keep the image from being panned out of reach. */
+  const clampPan = (animate: boolean) => {
+    const img = imgRef.current, stage = stageRef.current;
+    if (!img || !stage) return;
+    const mx = Math.max(0, (img.offsetWidth * t.current.s - stage.clientWidth) / 2);
+    const my = Math.max(0, (img.offsetHeight * t.current.s - stage.clientHeight) / 2);
+    t.current.x = Math.min(mx, Math.max(-mx, t.current.x));
+    t.current.y = Math.min(my, Math.max(-my, t.current.y));
+    apply(animate);
+  };
+
+  const zoomAt = (p: { x: number; y: number }, sNew: number) => {
+    const { s, x, y } = t.current;
+    const c = { x: (p.x - x) / s, y: (p.y - y) / s };
+    t.current = { s: sNew, x: p.x - c.x * sNew, y: p.y - c.y * sNew };
+    if (sNew <= 1.01) t.current = { s: 1, x: 0, y: 0 };
+    clampPan(true);
+  };
+
+  const onDown = (e: React.PointerEvent) => {
+    stageRef.current?.setPointerCapture(e.pointerId);
+    ptrs.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (ptrs.current.size === 2) {
+      const [a, b] = [...ptrs.current.values()];
+      const d0 = Math.hypot(a.x - b.x, a.y - b.y);
+      const m = rel({ clientX: (a.x + b.x) / 2, clientY: (a.y + b.y) / 2 });
+      const { s, x, y } = t.current;
+      pinch.current = { d0: Math.max(d0, 1), s0: s, cx: (m.x - x) / s, cy: (m.y - y) / s };
+      drag.current = null;
+    } else if (ptrs.current.size === 1) {
+      const now = Date.now();
+      if (now - lastTap.current < 300) {
+        // double-tap: zoom into that spot, or all the way back out
+        zoomAt(rel(e), t.current.s > 1.01 ? 1 : 2.6);
+        lastTap.current = 0;
+        return;
+      }
+      lastTap.current = now;
+      drag.current = { px: e.clientX, py: e.clientY, x0: t.current.x, y0: t.current.y, moved: false };
+    }
+  };
+
+  const onMove = (e: React.PointerEvent) => {
+    if (!ptrs.current.has(e.pointerId)) return;
+    ptrs.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pinch.current && ptrs.current.size >= 2) {
+      const [a, b] = [...ptrs.current.values()];
+      const d = Math.max(Math.hypot(a.x - b.x, a.y - b.y), 1);
+      const m = rel({ clientX: (a.x + b.x) / 2, clientY: (a.y + b.y) / 2 });
+      const s = Math.min(6, Math.max(1, pinch.current.s0 * (d / pinch.current.d0)));
+      t.current = { s, x: m.x - pinch.current.cx * s, y: m.y - pinch.current.cy * s };
+      apply();
+    } else if (drag.current) {
+      const dx = e.clientX - drag.current.px, dy = e.clientY - drag.current.py;
+      if (Math.abs(dx) + Math.abs(dy) > 6) drag.current.moved = true;
+      if (t.current.s > 1.01) {
+        t.current.x = drag.current.x0 + dx;
+        t.current.y = drag.current.y0 + dy;
+        apply();
+      }
+    }
+  };
+
+  const onUp = (e: React.PointerEvent) => {
+    const wasDrag = drag.current;
+    ptrs.current.delete(e.pointerId);
+    if (ptrs.current.size < 2) pinch.current = null;
+    if (ptrs.current.size === 0) {
+      if (t.current.s > 1.01) {
+        clampPan(true);
+      } else if (wasDrag && wasDrag.moved && items.length > 1) {
+        // swipe left/right at 1× flips through the photos
+        const dx = e.clientX - wasDrag.px;
+        if (dx < -60 && idx < items.length - 1) { setIdx(idx + 1); resetView(); }
+        else if (dx > 60 && idx > 0) { setIdx(idx - 1); resetView(); }
+      }
+      drag.current = null;
+    }
+  };
+
+  const onWheel = (e: React.WheelEvent) => {
+    zoomAt(rel(e), Math.min(6, Math.max(1, t.current.s * (e.deltaY < 0 ? 1.18 : 0.85))));
+  };
+
+  const item = items[idx];
+  return (
+    <div className="mb-lb">
+      <div className="mb-lb-head">
+        <button className="mb-back" onClick={onClose}>✕</button>
+        <span className="mb-lb-cap">{item.label}</span>
+        {zoomed && <button className="mb-chip" onClick={() => resetView(true)}>Fit</button>}
+      </div>
+      <div ref={stageRef} className="mb-lb-stage"
+        onPointerDown={onDown} onPointerMove={onMove}
+        onPointerUp={onUp} onPointerCancel={onUp} onWheel={onWheel}>
+        <img ref={imgRef} className="mb-lb-img" src={assetUrl(item.path)} alt={item.label}
+          draggable={false} onLoad={() => resetView()} />
+      </div>
+      {items.length > 1 && (
+        <div className="mb-lb-dots">
+          {items.map((_, n) => (
+            <span key={n} className={"mb-lb-dot" + (n === idx ? " on" : "")}
+              onClick={() => { setIdx(n); resetView(); }} />
+          ))}
+        </div>
+      )}
+      {!zoomed && <div className="mb-lb-hint">pinch or double-tap to zoom{items.length > 1 ? " · swipe for more" : ""}</div>}
     </div>
   );
 }
