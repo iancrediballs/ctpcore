@@ -2,9 +2,22 @@ import React, { Suspense } from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
 import "./styles.css";
-import { AUTH_ENABLED } from "./sync/config";
+import { AUTH_ENABLED, SUPABASE_URL } from "./sync/config";
 
 const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+
+// The faint logo watermark behind everything (styles.css, body::before).
+// Resolved here rather than in CSS because only runtime knows the surface:
+// inside Tauri the file ships in the bundle, on the web it comes from the
+// asset bucket. Same rule as assetUrl(), done without importing the data seam
+// into the entry point. SVG is not an accepted upload type on the bucket
+// (sensible — SVG can carry script), so the hosted copy is a PNG.
+document.documentElement.style.setProperty(
+  "--ctp-watermark",
+  isTauri
+    ? "url('/assets/brand/ctp_logo_light.svg')"
+    : `url('${SUPABASE_URL}/storage/v1/object/public/ctp-assets/assets/brand/ctp_logo_light_v1.png')`
+);
 
 // Which root renders:
 //   * Tauri desktop, AUTH_ENABLED=false — the plain App, exactly as before.

@@ -334,7 +334,11 @@ body{margin:0;background:radial-gradient(1200px 600px at 50% -10%,#0f1620,#0a0e1
 /* ── faint animated logo watermark behind everything ──────────────────────── */
 body::before{
   content:""; position:fixed; inset:0; z-index:0; pointer-events:none;
-  background:url('/assets/brand/ctp_logo_light.svg') no-repeat center center;
+  /* Set at runtime by main.tsx — a stylesheet cannot ask which surface it is
+     on, and this path only exists inside the desktop bundle. Hard-coding it
+     404'd on every web page load for a decoration nobody could see.
+     Falls back to `none`, so a missing variable costs a watermark, not a bug. */
+  background:var(--ctp-watermark,none) no-repeat center center;
   background-size:min(1150px,118vw);
   opacity:.05;
   animation:wmbreathe 30s ease-in-out infinite;

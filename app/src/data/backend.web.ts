@@ -162,9 +162,11 @@ const PART_DETAIL_SQL = `
 // section view and 122 carry a diagram_ref, so the DATA gaps are closed. What
 // remains is not data.
 const GAPS = [
-  "image + diagram + .glb PATHS resolve to /assets/… which only exists in the " +
-    "desktop bundle. A hosted web build 404s every one until the files move to " +
-    "Supabase Storage and an assetUrl() resolver lands (mobile plan M2)",
+  "3D models (.glb) are desktop-only — 37MB is not a thing to hand a phone. " +
+    "Photos and diagrams DO resolve on web: they come from the ctp-assets " +
+    "bucket via assetUrl(). (This line used to say images were broken on the " +
+    "web. They were, until M2; leaving that text in sent the next person " +
+    "hunting a bug that had already been fixed.)",
   "jefrey_learn / jefrey_forget — part_alias syncs now, but these are WRITES " +
     "and the PowerSync upload path is not ported yet (M0.3)",
 ];
