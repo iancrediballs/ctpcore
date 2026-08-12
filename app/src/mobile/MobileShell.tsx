@@ -78,7 +78,7 @@ const timeAgo = (iso: string): string => {
 };
 
 // The brand mark lives in the same bucket as every other asset.
-const LOGO = "assets/brand/ctp_logo.png";
+const LOGO = "assets/brand/ctp_logo_dark.png";
 
 // ─── icons (inline so the shell has zero icon deps) ──────────────────────────
 
