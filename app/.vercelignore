@@ -1,0 +1,6 @@
+# Web deploys must NOT ship the local asset library.
+# On the web every image resolves to the Supabase ctp-assets bucket
+# (src/assets.ts); these 215MB exist only for the desktop build.
+public/assets
+src-tauri
+dist
