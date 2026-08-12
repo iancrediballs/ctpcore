@@ -85,7 +85,25 @@ const timeAgo = (iso: string): string => {
 };
 
 // The brand mark lives in the same bucket as every other asset.
-const LOGO = "assets/brand/ctp_logo_dark.png";
+//
+// It ships as TWO layers on one shared canvas — the wordmark + stripes, and
+// the truck alone — so the truck can drive off and back without the rest of
+// the logo moving. Same dimensions, stacked, so there is no alignment maths:
+// see .mb-brand in mobile.css.
+const LOGO_BODY = "assets/brand/ctp_logo_body_v1.png";
+const LOGO_TRUCK = "assets/brand/ctp_truck_v1.png";
+
+/** The logo, with a truck that occasionally goes for a drive. */
+function Brand() {
+  return (
+    <span className="mb-brand" aria-label="China Truck Parts">
+      <img className="mb-brand-body" src={assetUrl(LOGO_BODY)} alt=""
+        onError={(e) => { e.currentTarget.style.display = "none"; }} />
+      <img className="mb-brand-truck" src={assetUrl(LOGO_TRUCK)} alt="" aria-hidden="true"
+        onError={(e) => { e.currentTarget.style.display = "none"; }} />
+    </span>
+  );
+}
 
 /**
  * The `user_role` claim out of the access token, or null.
@@ -271,8 +289,7 @@ export default function MobileShell() {
     <div className="mb-view">
       <div className="mb-top">
         <div className="mb-brandrow">
-          <img className="mb-logo" src={assetUrl(LOGO)} alt="CTP"
-            onError={(e) => { e.currentTarget.style.display = "none"; }} />
+          <Brand />
           <span className="mb-vlabel">Catalogue</span>
           <span className={"mb-sync" + (connected ? "" : " off")}>
             <span className="mb-dot" />{connected ? "synced" : "offline"}
@@ -322,8 +339,7 @@ export default function MobileShell() {
     <div className="mb-view">
       <div className="mb-top">
         <div className="mb-brandrow">
-          <img className="mb-logo" src={assetUrl(LOGO)} alt="CTP"
-            onError={(e) => { e.currentTarget.style.display = "none"; }} />
+          <Brand />
           <span className="mb-vlabel">{tab === "shelf" ? "Shelf walk" : "Warehouse"}</span>
           <span className={"mb-sync" + (connected ? "" : " off")}>
             <span className="mb-dot" />{connected ? "synced" : "offline"}
@@ -411,8 +427,7 @@ export default function MobileShell() {
     <div className="mb-view">
       <div className="mb-top">
         <div className="mb-brandrow">
-          <img className="mb-logo" src={assetUrl(LOGO)} alt="CTP"
-            onError={(e) => { e.currentTarget.style.display = "none"; }} />
+          <Brand />
           <span className="mb-vlabel">This device</span>
           <span className={"mb-sync" + (connected ? "" : " off")}>
             <span className="mb-dot" />{connected ? "synced" : "offline"}
