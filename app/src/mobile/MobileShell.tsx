@@ -293,6 +293,7 @@ export default function MobileShell() {
           <span className="mb-secall-t">All parts</span>
           <span className="mb-secall-n">{parts.length} in the catalogue →</span>
         </button>
+        <div className="mb-secgrid">
         {sections.filter((s) => s.parts > 0).map((s) => (
           <button key={s.id} className="mb-seccard" onClick={() => openSection(s.code)}>
             <img className="mb-secimg" src={assetUrl(s.image)} alt="" loading="lazy"
@@ -312,6 +313,7 @@ export default function MobileShell() {
             </span>
           </button>
         ))}
+        </div>
       </div>
     </div>
   );

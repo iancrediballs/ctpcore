@@ -501,7 +501,12 @@ async function listSections(): Promise<unknown[]> {
     id: numId(r["id"], "category.id"),
     code: str(r["code"]),
     name: str(r["name"]),
-    image: `assets/sections/${str(r["code"])}.png`,
+    // `_v2` is a cache-buster, not decoration: the bucket serves
+    // `immutable, max-age=1y` and the service worker caches images
+    // first-hit-wins, so a redrawn locator MUST arrive under a new key or
+    // phones keep the old one forever. make_sections.py's SUFFIX and this
+    // string move together.
+    image: `assets/sections/${str(r["code"])}_v2.png`,
     diagram: nstr(r["diagram"]),
     parts: Number(r["parts"]),
   }));

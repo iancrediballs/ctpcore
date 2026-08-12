@@ -17,7 +17,13 @@ from PIL import Image, ImageDraw, ImageFilter
 
 MASK = "truck_mask.png"          # ink alpha, produced from Logo Main.svg
 OUT = "sections"
-W, H = 1200, 780                 # card image size (fits the 2:1-ish card well)
+# The canvas deliberately matches the drawing's own proportions (1083x874),
+# so the truck fills its frame instead of floating in letterbox bars. The home
+# page shows these two-up in near-square tiles; anything wider wasted the width.
+W, H = 1080, 880
+SUFFIX = "_v2"                   # bucket keys are immutable + SW-cached: a
+                                 # changed image needs a NEW key, never a
+                                 # silent overwrite. Bump this on every redraw.
 
 DIM = (86, 100, 116)             # unlit line colour
 HOT = (255, 138, 31)             # CTP amber — the lit region
@@ -69,7 +75,7 @@ def build(code, box):
     ink = Image.open(MASK).convert("L")
     # fit the drawing into the card with a little breathing room
     canvas = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    pad = 0.055
+    pad = 0.03
     fit = min(W * (1 - 2 * pad) / ink.width, H * (1 - 2 * pad) / ink.height)
     iw, ih = int(ink.width * fit), int(ink.height * fit)
     ink = ink.resize((iw, ih), Image.LANCZOS)
@@ -98,7 +104,7 @@ def build(code, box):
     canvas.alpha_composite(tint(lit.filter(ImageFilter.GaussianBlur(2)), HOT, 0.55))
 
     os.makedirs(OUT, exist_ok=True)
-    path = f"{OUT}/{code}.png"
+    path = f"{OUT}/{code}{SUFFIX}.png"
     canvas.save(path, "PNG", optimize=True)
     return path, os.path.getsize(path)
 

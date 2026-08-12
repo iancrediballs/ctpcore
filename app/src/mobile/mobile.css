@@ -151,14 +151,21 @@
 .mb-secall:active{transform:scale(.985)}
 .mb-secall-t{font-size:21px;font-weight:900;letter-spacing:-.3px;color:var(--amber)}
 .mb-secall-n{font-size:13px;font-weight:750;color:var(--dim)}
+/* Two up. Squarer tiles fit ~4 sections on a screen instead of 1.5, and the
+   locator art is drawn at the truck's own proportions so it fills the tile
+   rather than floating in letterbox bars. */
+.mb-secgrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
 .mb-seccard{display:block;width:100%;padding:0;text-align:left;cursor:pointer;overflow:hidden;
-  background:var(--surf);border:1.5px solid var(--line);border-radius:var(--r);margin-bottom:12px}
+  background:var(--surf);border:1.5px solid var(--line);border-radius:var(--r)}
 .mb-seccard:active{transform:scale(.985)}
 /* the locator art is transparent-on-dark, so NO white plate behind it; the
    OEM-diagram fallback is black-on-white line art and does need one. */
-.mb-secimg{display:block;width:100%;height:190px;object-fit:contain;background:transparent;padding:6px}
+.mb-secimg{display:block;width:100%;aspect-ratio:1080/880;height:auto;object-fit:contain;
+  background:transparent;padding:4px}
 .mb-secimg.dgm{background:#fff}
 .mb-secimg.ph{display:grid;place-items:center;background:var(--surf2)}
-.mb-secbar{display:flex;align-items:center;gap:10px;padding:13px 15px}
-.mb-secname{flex:1;font-size:17px;font-weight:850;color:var(--txt);line-height:1.2}
-.mb-seccount{font-size:12px;font-weight:850;color:var(--amber);white-space:nowrap;text-transform:uppercase;letter-spacing:.5px}
+.mb-secbar{display:flex;flex-direction:column;gap:3px;padding:10px 12px 12px}
+.mb-secname{font-size:15px;font-weight:850;color:var(--txt);line-height:1.2}
+.mb-seccount{font-size:11px;font-weight:850;color:var(--amber);text-transform:uppercase;letter-spacing:.5px}
+/* one wide column on anything tablet-sized and up */
+@media (min-width:620px){.mb-secgrid{grid-template-columns:repeat(3,minmax(0,1fr))}}
