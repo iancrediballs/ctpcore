@@ -5,16 +5,16 @@
 // rather than failing silently, so a half-ported build is obvious in the console
 // instead of showing blanks.
 //
-// Ported (Tier 1 reads):
-//   search_parts, part_detail, list_parts, list_categories, list_locations,
-//   jefrey_catalogue, get_company
+// Ported:
+//   Reads:  search_parts, part_detail, list_parts, list_categories,
+//           list_locations, jefrey_catalogue, get_company
+//   Writes: post_movement — the first write through the PowerSync upload path
+//           (local INSERT → crud queue → SupabaseConnector → Postgres).
 //
 // Still to port:
-//   Tier 1: jefrey_aliases (read), jefrey_learn / jefrey_forget (writes).
-//     part_alias now syncs (stream ctp_staff), so the read is unblocked and is
-//     a small job. The two writes need the PowerSync upload path, which no
-//     command uses yet — that is mobile-plan item M0.3.
-//   Tier 2 (counter): post_movement, save_part_image
+//   Tier 1: jefrey_aliases (read), jefrey_learn / jefrey_forget (writes —
+//     the upload path now exists; copy the post_movement pattern).
+//   Tier 2 (counter): save_part_image
 //   Tier 3 (sales):   list_customers, list_orders, get_order, create_order,
 //     add_line, update_line_qty, remove_line, set_status, fulfill_order, set_tax_rate
 //
@@ -49,6 +49,7 @@
 //    that, so if ids ever become UUIDs this fails loudly instead of quietly
 //    returning part 0.
 import type { Backend } from "./backend";
+import { makeUuid } from "./uuid";
 import { powerSync } from "../sync/system";
 
 type Row = Record<string, unknown>;
@@ -208,6 +209,13 @@ const SEARCH_SQL = `
     (SELECT pr.amount_minor FROM price pr
       WHERE pr.part_id = p.id AND pr.tier = 'list' AND pr.deleted_at IS NULL
       ORDER BY pr.valid_from DESC LIMIT 1) AS price_cents,
+    -- The two extra columns the mobile cards need. The desktop Hit type does
+    -- not carry them (Rust search_parts predates the mobile shell); extra
+    -- fields on a returned row are invisible to callers that don't read them.
+    (SELECT sp.bin FROM stock_policy sp WHERE sp.part_id = p.id LIMIT 1) AS bin,
+    (SELECT pi.path FROM part_image pi
+      WHERE pi.part_id = p.id AND pi.deleted_at IS NULL
+      ORDER BY pi.is_primary DESC, pi.sort_order LIMIT 1) AS thumb,
     (SELECT x.xref_type || ' # ' || x.xref_number FROM part_xref x
       WHERE x.part_id = p.id AND instr(lower(x.xref_number), ?) > 0 LIMIT 1) AS matched_xref,
     (SELECT group_concat(x2.xref_number || ' ' || COALESCE(x2.xref_brand, ''), ' ')
@@ -289,6 +297,8 @@ async function searchParts(query: string): Promise<unknown[]> {
       on_hand: Number(r["on_hand"]),
       price_cents: nnum(r["price_cents"]),
       matched_on: matched_on ?? `part ${sku}`,
+      bin: nstr(r["bin"]),
+      thumb: nstr(r["thumb"]),
     };
   });
 }
@@ -326,11 +336,15 @@ async function partDetail(partId: number): Promise<unknown> {
     [pid, pid]
   );
 
+  // Order by timestamp, not id. Locally-posted movements carry a UUID id until
+  // the server acknowledges them and syncs back the bigint row; CAST(uuid AS
+  // INTEGER) is 0, which would pin every fresh movement to the BOTTOM of the
+  // ledger — exactly the row the person is looking for.
   const ledger = await all(
     `SELECT m.id, l.code AS location_code, m.delta, m.reason, m.created_at
        FROM stock_movement m JOIN location l ON l.id = m.location_id
       WHERE m.part_id = ?
-      ORDER BY CAST(m.id AS INTEGER) DESC LIMIT 25`,
+      ORDER BY m.created_at DESC, m.id DESC LIMIT 25`,
     [pid]
   );
 
@@ -379,13 +393,20 @@ async function partDetail(partId: number): Promise<unknown> {
     list_price_minor: nnum(d["list_price_minor"]),
     total_on_hand: stockLines.reduce((t, s) => t + s.on_hand, 0),
     stock: stockLines,
-    ledger: ledger.map((m) => ({
-      id: numId(m["id"], "stock_movement.id"),
-      location_code: str(m["location_code"]),
-      delta: Number(m["delta"]),
-      reason: str(m["reason"]),
-      created_at: str(m["created_at"]),
-    })),
+    // numId() would THROW on the UUID a locally-posted movement carries before
+    // its round-trip — taking the whole part sheet down for the seconds (or
+    // offline hours) the row sits in the upload queue. Ledger ids are display
+    // keys, nothing more, so an unsynced row gets a stable negative stand-in.
+    ledger: ledger.map((m, i) => {
+      const n = Number(m["id"]);
+      return {
+        id: Number.isInteger(n) ? n : -(i + 1),
+        location_code: str(m["location_code"]),
+        delta: Number(m["delta"]),
+        reason: str(m["reason"]),
+        created_at: str(m["created_at"]),
+      };
+    }),
     images: images.map((i) => ({
       id: numId(i["id"], "part_image.id"),
       path: str(i["path"]),
@@ -429,6 +450,9 @@ async function listParts(): Promise<unknown[]> {
     qty_on_hand: Number(r["qty_on_hand"]),
     bin: nstr(r["bin"]),
     price_cents: nnum(r["list_row_minor"]) ?? nnum(r["list_price_minor"]),
+    // The mobile cards want the actual thumbnail path, not just the boolean.
+    // Desktop list_parts has no such field; extra fields are invisible to it.
+    image: nstr(r["primary_image"]),
     has_photo: r["primary_image"] != null,
     has_diagram: r["diagram_image"] != null,
     has_model: r["model_3d"] != null,
@@ -499,6 +523,65 @@ async function getCompany(): Promise<unknown> {
   };
 }
 
+// ─── the first write: post_movement ──────────────────────────────────────────
+//
+// Mirrors the Rust command's contract exactly:
+//   * sign policy lives HERE, not in the UI: receipt/return force +|delta|,
+//     sale forces -|delta|, adjustment takes the delta as given. A UI bug can
+//     therefore never book a sale that ADDS stock.
+//   * zero-delta movements are refused — an empty ledger row is noise.
+//   * client_uuid is the idempotency key. The row is INSERTed locally with a
+//     generated UUID id; PowerSync queues it, SupabaseConnector uploads it
+//     WITHOUT that id (Postgres assigns the bigint identity) and with
+//     ON CONFLICT (client_uuid) DO NOTHING, so a retry after a dropped
+//     connection can never double-book stock. The ledger is append-only —
+//     mistakes are corrected by posting the inverse, never by editing.
+//
+// Reads pick the local row up instantly (on_hand is SUM(delta) over the local
+// table), so the UI updates offline and the sync happens when it happens.
+const MOVEMENT_REASONS = ["receipt", "sale", "return", "adjustment"] as const;
+
+async function postMovement(a: Record<string, unknown>): Promise<unknown> {
+  const partId = numId(a["partId"], "partId");
+  const locationId = numId(a["locationId"], "locationId");
+  const raw = Number(a["delta"]);
+  const reason = str(a["reason"]);
+  const clientUuid = str(a["clientUuid"]);
+  const actorId = a["actorId"] == null ? null : String(a["actorId"]);
+
+  if (!Number.isInteger(raw) || raw === 0) {
+    throw new Error(`[CTP web] post_movement: delta must be a non-zero integer, got "${String(a["delta"])}".`);
+  }
+  if (!(MOVEMENT_REASONS as readonly string[]).includes(reason)) {
+    throw new Error(`[CTP web] post_movement: reason "${reason}" is not one of ${MOVEMENT_REASONS.join("/")}.`);
+  }
+  if (!clientUuid) {
+    throw new Error("[CTP web] post_movement: clientUuid is required (it is the idempotency key).");
+  }
+
+  const delta =
+    reason === "sale" ? -Math.abs(raw)
+    : reason === "receipt" || reason === "return" ? Math.abs(raw)
+    : raw;
+
+  await ready();
+  await powerSync.execute(
+    `INSERT INTO stock_movement (id, part_id, location_id, delta, reason, client_uuid, actor_id, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      makeUuid(),
+      String(partId),
+      String(locationId),
+      delta,
+      reason,
+      clientUuid,
+      actorId,
+      new Date().toISOString(),
+    ]
+  );
+  return delta;
+}
+
 // ─── registry ────────────────────────────────────────────────────────────────
 
 const PORTED: Record<string, Handler> = {
@@ -509,6 +592,7 @@ const PORTED: Record<string, Handler> = {
   list_locations: () => listLocations(),
   jefrey_catalogue: () => jefreyCatalogue(),
   get_company: () => getCompany(),
+  post_movement: (a) => postMovement(a),
 };
 
 export const webBackend: Backend = {
