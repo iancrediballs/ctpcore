@@ -51,6 +51,7 @@
 import type { Backend } from "./backend";
 import { makeUuid } from "./uuid";
 import { powerSync } from "../sync/system";
+import { supabase } from "../sync/supabase";
 
 type Row = Record<string, unknown>;
 type Handler = (args: Record<string, unknown>) => Promise<unknown>;
@@ -612,6 +613,39 @@ async function postMovement(a: Record<string, unknown>): Promise<unknown> {
   return delta;
 }
 
+// ─── a customer asking for parts ─────────────────────────────────────────────
+//
+// The ONE write in this file that does not go through PowerSync. Migration
+// 0020's `request_parts` creates the order and its lines in a single server
+// transaction, because a request is a parent row plus children that reference
+// it, and PowerSync does not map a local id onto the server-assigned one — the
+// lines would point at an order id that no longer exists after upload.
+//
+// The trade is that this needs signal. That is the right trade here and the
+// wrong one for the stock counter, which is why they are built differently:
+// nobody submits a parts enquiry from a dead spot in the warehouse, but people
+// count stock there all day.
+async function requestParts(a: Record<string, unknown>): Promise<unknown> {
+  const raw = Array.isArray(a["items"]) ? (a["items"] as unknown[]) : [];
+  const items = raw
+    .map((it) => {
+      const o = (it ?? {}) as Record<string, unknown>;
+      return { part_id: Number(o["part_id"]), qty: Number(o["qty"] ?? 1) };
+    })
+    .filter((i) => Number.isInteger(i.part_id) && i.qty > 0);
+
+  if (items.length === 0) throw new Error("[CTP web] request_parts: nothing to request.");
+
+  const note = a["note"] == null ? null : String(a["note"]).slice(0, 2000);
+  const { data, error } = await supabase.rpc("request_parts", { items, note });
+  if (error) {
+    // The function raises readable messages for the cases that matter (no
+    // customer link, unknown part). Surface them rather than a generic failure.
+    throw new Error(`[CTP web] request failed: ${error.message}`);
+  }
+  return data;
+}
+
 // ─── registry ────────────────────────────────────────────────────────────────
 
 const PORTED: Record<string, Handler> = {
@@ -624,6 +658,7 @@ const PORTED: Record<string, Handler> = {
   jefrey_catalogue: () => jefreyCatalogue(),
   get_company: () => getCompany(),
   post_movement: (a) => postMovement(a),
+  request_parts: (a) => requestParts(a),
 };
 
 export const webBackend: Backend = {

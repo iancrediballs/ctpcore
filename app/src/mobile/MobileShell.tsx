@@ -150,6 +150,9 @@ const TabFind = () => (
 const TabShelf = () => (
   <svg viewBox="0 0 24 24"><path d="M3 4h18M3 12h18M3 20h18M6 4v8M14 4v8M10 12v8M17 12v8"/></svg>
 );
+const TabCart = () => (
+  <svg viewBox="0 0 24 24"><path d="M4 5h2l2.2 9.5a2 2 0 0 0 2 1.5h6.4a2 2 0 0 0 2-1.5L20.5 8H7"/><circle cx="10" cy="20" r="1"/><circle cx="18" cy="20" r="1"/></svg>
+);
 const TabInfo = () => (
   <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8v.01"/></svg>
 );
@@ -160,7 +163,7 @@ export default function MobileShell() {
   const status = useStatus();
   const { session, signOut } = useAuth();
 
-  const [tab, setTab] = useState<"home" | "find" | "shelf" | "info">("home");
+  const [tab, setTab] = useState<"home" | "find" | "shelf" | "cart" | "info">("home");
   const [parts, setParts] = useState<PartRow[]>([]);
   const [cats, setCats] = useState<Cat[]>([]);
   const [sections, setSections] = useState<Section[]>([]);
@@ -172,7 +175,21 @@ export default function MobileShell() {
   const [counterOpen, setCounterOpen] = useState(false);
   const [toast, setToast] = useState<Toast | null>(null);
   const [viewer, setViewer] = useState<{ items: { path: string; label: string }[]; idx: number } | null>(null);
+  const [cart, setCart] = useState<{ id: number; sku: string; name: string; qty: number }[]>([]);
+  const [note, setNote] = useState("");
+  const [sending, setSending] = useState(false);
   const toastTimer = useRef<number | undefined>(undefined);
+
+  // ── who is this? ──
+  //
+  // The TOKEN's role, not the app_user read, because the token is what decides
+  // which sync stream fed this device — so it is also the honest answer to
+  // "what is this person allowed to see?". A customer's phone has no prices,
+  // no bins and no stock movements in its database at all; the UI below hides
+  // those fields to match, but hiding them is cosmetic. The stream is the
+  // control. Anything not gated there is not protected by this.
+  const role = tokenRole(session?.access_token);
+  const isClient = role === "customer";
 
   // ── data loads (all local SQLite via PowerSync — cheap to re-run) ──
   const refresh = useCallback(() => {
@@ -245,6 +262,46 @@ export default function MobileShell() {
       showToast({ text: "Post failed — nothing was booked.", err: true });
     }
   }, [showToast, reloadDetail]);
+
+  // ── the request basket (clients only) ──
+  const inCart = (id: number) => cart.find((c) => c.id === id)?.qty ?? 0;
+  const addToCart = (d: Detail, n = 1) =>
+    setCart((c) => {
+      const at = c.findIndex((x) => x.id === d.id);
+      if (at < 0) return [...c, { id: d.id, sku: d.sku, name: d.name, qty: Math.max(1, n) }];
+      const next = [...c];
+      const qty = next[at].qty + n;
+      if (qty <= 0) return next.filter((x) => x.id !== d.id);
+      next[at] = { ...next[at], qty: Math.min(999, qty) };
+      return next;
+    });
+  const setCartQty = (id: number, qty: number) =>
+    setCart((c) => (qty <= 0 ? c.filter((x) => x.id !== id)
+      : c.map((x) => (x.id === id ? { ...x, qty: Math.min(999, qty) } : x))));
+
+  const submitRequest = useCallback(async () => {
+    if (cart.length === 0 || sending) return;
+    setSending(true);
+    try {
+      const res = await api.requestParts<{ number?: string; lines?: number }>(
+        cart.map((c) => ({ part_id: c.id, qty: c.qty })),
+        note.trim() || null
+      );
+      setCart([]);
+      setNote("");
+      showToast({ text: `Request ${res?.number ?? "sent"} — we'll come back to you with prices.` });
+      setTab("home");
+    } catch (e) {
+      console.error(e);
+      // The server refuses for readable reasons (login not linked to a
+      // customer, unknown part). Show them: "something went wrong" would send
+      // the person round in circles.
+      const msg = e instanceof Error ? e.message.replace(/^\[CTP web\] request failed: /, "") : "Could not send.";
+      showToast({ text: msg, err: true });
+    } finally {
+      setSending(false);
+    }
+  }, [cart, note, sending, showToast]);
 
   /** "Issue 1": one unit out of the first location that has stock. */
   const issueOne = useCallback((d: Detail) => {
@@ -402,12 +459,17 @@ export default function MobileShell() {
             <span className="mb-cbody">
               <span className="mb-cname">{p.name}</span>
               <span className="mb-csku mb-mono">{p.sku}</span>
-              <span className="mb-cmeta">
-                {p.bin && <span className="mb-bin"><IcPin />{p.bin}</span>}
-                <span className={"mb-qty" + qtyClass(p.qty_on_hand)}>
-                  {p.qty_on_hand <= 0 ? "out" : `${p.qty_on_hand} on hand`}
+              {/* A client's device holds no bins and no stock movements, so
+                  these would not merely be private — they would be WRONG
+                  (every count would read zero). Omitted, not blanked. */}
+              {!isClient && (
+                <span className="mb-cmeta">
+                  {p.bin && <span className="mb-bin"><IcPin />{p.bin}</span>}
+                  <span className={"mb-qty" + qtyClass(p.qty_on_hand)}>
+                    {p.qty_on_hand <= 0 ? "out" : `${p.qty_on_hand} on hand`}
+                  </span>
                 </span>
-              </span>
+              )}
             </span>
           </button>
         ))}
@@ -470,6 +532,65 @@ export default function MobileShell() {
     </div>
   );
 
+  const cartView = (
+    <div className="mb-view">
+      <div className="mb-top">
+        <div className="mb-brandrow">
+          <Brand />
+          <span className="mb-vlabel">Your request</span>
+          <span className={"mb-sync" + (connected ? "" : " off")}>
+            <span className="mb-dot" />{connected ? "online" : "offline"}
+          </span>
+        </div>
+      </div>
+      <div className="mb-body">
+        {cart.length === 0 ? (
+          <div className="mb-empty">
+            <h3>Nothing in your request yet</h3>
+            <p>Find the parts you need and tap <b>Add to request</b>. Send the
+              lot in one go and we'll come back to you with prices and
+              availability.</p>
+          </div>
+        ) : (
+          <>
+            <div className="mb-count">{cart.length} part{cart.length === 1 ? "" : "s"}</div>
+            <div className="mb-rows">
+              {cart.map((c) => (
+                <div className="mb-row" key={c.id}>
+                  <span style={{ flex: 1, minWidth: 0 }}>
+                    <div className="mb-cname">{c.name}</div>
+                    <div className="mb-csku mb-mono">{c.sku}</div>
+                  </span>
+                  <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <button className="mb-chip" onClick={() => setCartQty(c.id, c.qty - 1)}>−</button>
+                    <b style={{ minWidth: 24, textAlign: "center" }}>{c.qty}</b>
+                    <button className="mb-chip" onClick={() => setCartQty(c.id, c.qty + 1)}>+</button>
+                  </span>
+                </div>
+              ))}
+            </div>
+            <textarea className="mb-note-in" rows={3} value={note} maxLength={2000}
+              placeholder="Anything else we should know? Vehicle, urgency, delivery…"
+              onChange={(e) => setNote(e.target.value)} />
+            <div className="mb-note">
+              We'll price this and come back to you. Nothing is ordered or
+              charged by sending it.
+            </div>
+          </>
+        )}
+      </div>
+      {cart.length > 0 && (
+        <div className="mb-actions">
+          <button className="mb-btn s" style={{ flex: "0 0 96px" }}
+            onClick={() => setCart([])} disabled={sending}>Clear</button>
+          <button className="mb-btn p" onClick={() => { void submitRequest(); }} disabled={sending}>
+            {sending ? "Sending…" : `Send request (${cart.length})`}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+
   // ─── part sheet ────────────────────────────────────────────────────────────
 
   const d = detail;
@@ -500,18 +621,26 @@ export default function MobileShell() {
               {d.sku}{d.locator ? `  ·  ${d.locator}` : ""}
             </div>
 
-            <div className="mb-2col">
-              <div className="mb-box hi">
-                <div className="mb-k">Bin</div>
-                <div className="mb-v">{mainBin ?? "—"}</div>
-                {d.stock.length > 1 && <div className="mb-sub">{d.stock.length} locations</div>}
-              </div>
+            {isClient ? (
               <div className="mb-box">
-                <div className="mb-k">On hand</div>
-                <div className={"mb-v" + (d.total_on_hand <= 0 ? " z" : " g")}>{d.total_on_hand}</div>
-                <div className="mb-sub">{fmtR(d.price_cents)} list</div>
+                <div className="mb-k">Part number</div>
+                <div className="mb-v mono-pn">{d.catalogue_pn ?? d.sku}</div>
+                <div className="mb-sub">Add it to your request and we'll quote you</div>
               </div>
-            </div>
+            ) : (
+              <div className="mb-2col">
+                <div className="mb-box hi">
+                  <div className="mb-k">Bin</div>
+                  <div className="mb-v">{mainBin ?? "—"}</div>
+                  {d.stock.length > 1 && <div className="mb-sub">{d.stock.length} locations</div>}
+                </div>
+                <div className="mb-box">
+                  <div className="mb-k">On hand</div>
+                  <div className={"mb-v" + (d.total_on_hand <= 0 ? " z" : " g")}>{d.total_on_hand}</div>
+                  <div className="mb-sub">{fmtR(d.price_cents)} list</div>
+                </div>
+              </div>
+            )}
 
             {d.diagram_image && (
               <div className="mb-dgm" role="button"
@@ -536,16 +665,16 @@ export default function MobileShell() {
               {d.inventory_pn && d.inventory_pn !== d.catalogue_pn &&
                 <div className="mb-row"><span className="mb-rk">Received as</span><span className="mb-rv mb-mono">{d.inventory_pn}</span></div>}
               {d.brand && <div className="mb-row"><span className="mb-rk">Brand</span><span className="mb-rv">{d.brand}</span></div>}
-              {d.stock.filter((s) => s.on_hand !== 0 || s.bin).map((s) => (
+              {!isClient && d.stock.filter((s) => s.on_hand !== 0 || s.bin).map((s) => (
                 <div className="mb-row" key={s.location_id}>
                   <span className="mb-rk">{s.location_code}</span>
                   <span className="mb-rv">{s.on_hand} on hand{s.bin ? ` · bin ${s.bin}` : ""}</span>
                 </div>
               ))}
-              {d.notes && <div className="mb-row"><span className="mb-rk">Notes</span><span className="mb-rv">{d.notes}</span></div>}
+              {!isClient && d.notes && <div className="mb-row"><span className="mb-rk">Notes</span><span className="mb-rv">{d.notes}</span></div>}
             </div>
 
-            {d.ledger.length > 0 && (
+            {!isClient && d.ledger.length > 0 && (
               <>
                 <div className="mb-count">Recent movements</div>
                 <div className="mb-rows">
@@ -566,10 +695,25 @@ export default function MobileShell() {
           </div>
 
           <div className="mb-actions">
-            <button className="mb-btn p" onClick={() => issueOne(d)}
-              disabled={d.stock.length === 0}>Issue 1</button>
-            <button className="mb-btn s" onClick={() => setCounterOpen(true)}
-              disabled={d.stock.length === 0}>Count / receive</button>
+            {isClient ? (
+              inCart(d.id) > 0 ? (
+                <>
+                  <button className="mb-btn s" onClick={() => addToCart(d, -1)}>−</button>
+                  <button className="mb-btn s" style={{ flex: "0 0 96px" }}
+                    onClick={() => setTab("cart")}>{inCart(d.id)} in list</button>
+                  <button className="mb-btn p" onClick={() => addToCart(d, 1)}>+</button>
+                </>
+              ) : (
+                <button className="mb-btn p" onClick={() => addToCart(d, 1)}>Add to request</button>
+              )
+            ) : (
+              <>
+                <button className="mb-btn p" onClick={() => issueOne(d)}
+                  disabled={d.stock.length === 0}>Issue 1</button>
+                <button className="mb-btn s" onClick={() => setCounterOpen(true)}
+                  disabled={d.stock.length === 0}>Count / receive</button>
+              </>
+            )}
           </div>
         </>
       )}
@@ -579,7 +723,10 @@ export default function MobileShell() {
 
   return (
     <div className="mb-root">
-      {tab === "home" ? homeView : tab === "info" ? infoView : listView}
+      {tab === "home" ? homeView
+        : tab === "info" ? infoView
+        : tab === "cart" ? cartView
+        : listView}
       {sheet}
       {viewer && (
         <Lightbox items={viewer.items} start={viewer.idx} onClose={() => setViewer(null)} />
@@ -606,10 +753,21 @@ export default function MobileShell() {
           onClick={() => { setTab("find"); setSheetOpen(false); }}>
           <TabFind />Find
         </button>
-        <button className={"mb-tab" + (tab === "shelf" ? " on" : "")}
-          onClick={() => { setTab("shelf"); setQ(""); setSheetOpen(false); }}>
-          <TabShelf />Shelf
-        </button>
+        {isClient ? (
+          <button className={"mb-tab" + (tab === "cart" ? " on" : "")}
+            onClick={() => { setTab("cart"); setSheetOpen(false); }}>
+            <span className="mb-tabwrap">
+              <TabCart />
+              {cart.length > 0 && <span className="mb-tabbadge">{cart.length}</span>}
+            </span>
+            Request
+          </button>
+        ) : (
+          <button className={"mb-tab" + (tab === "shelf" ? " on" : "")}
+            onClick={() => { setTab("shelf"); setQ(""); setSheetOpen(false); }}>
+            <TabShelf />Shelf
+          </button>
+        )}
         <button className={"mb-tab" + (tab === "info" ? " on" : "")}
           onClick={() => { setTab("info"); setSheetOpen(false); }}>
           <TabInfo />Info

@@ -70,6 +70,11 @@ export const postMovement = <T>(
   reason: string, clientUuid: string, actorId: number | null
 ) => call<T>("post_movement", { partId, locationId, delta, reason, clientUuid, actorId });
 
+// ─── customer requests (web-only) ────────────────────────────────────────
+/** A signed-in customer asks for parts. Creates a quote-status order server-side. */
+export const requestParts = <T>(items: { part_id: number; qty: number }[], note: string | null) =>
+  call<T>("request_parts", { items, note });
+
 // ─── sales ───────────────────────────────────────────────────────────────
 export const listCustomers = <T>() => call<T>("list_customers");
 export const listOrders = <T>() => call<T>("list_orders");
