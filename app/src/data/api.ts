@@ -77,6 +77,11 @@ export const deviceAudit = <T>() => call<T>("device_audit");
 /** A signed-in customer asks for parts. Creates a quote-status order server-side. */
 export const requestParts = <T>(items: { part_id: number; qty: number }[], note: string | null) =>
   call<T>("request_parts", { items, note });
+/** A client's own requests/quotes, newest first, with their lines. */
+export const myRequests = <T>() => call<T>("my_requests");
+/** Accept or decline one of your own quotes. */
+export const respondToQuote = <T>(orderId: number, accept: boolean) =>
+  call<T>("respond_to_quote", { orderId, accept });
 
 // ─── sales ───────────────────────────────────────────────────────────────
 export const listCustomers = <T>() => call<T>("list_customers");

@@ -65,6 +65,17 @@ type Detail = {
 
 type Toast = { text: string; err?: boolean; undo?: () => void };
 
+type MyLine = {
+  id: number; qty: number; unit_price_minor: number | null;
+  sku: string; name: string; catalogue_pn: string | null;
+};
+type MyRequest = {
+  id: number; number: string; status: string; currency: string;
+  notes: string | null; created_at: string;
+  client_response: string | null; client_responded_at: string | null;
+  priced: boolean; total_minor: number; lines: MyLine[];
+};
+
 // ─── tiny helpers ────────────────────────────────────────────────────────────
 
 const fmtR = (cents: number | null | undefined): string =>
@@ -179,6 +190,8 @@ export default function MobileShell() {
   const [note, setNote] = useState("");
   const [sending, setSending] = useState(false);
   const [audit, setAudit] = useState<{ table: string; rows: number }[] | null>(null);
+  const [mine, setMine] = useState<MyRequest[] | null>(null);
+  const [answering, setAnswering] = useState<number | null>(null);
   const toastTimer = useRef<number | undefined>(undefined);
 
   // ── who is this? ──
@@ -280,6 +293,32 @@ export default function MobileShell() {
     setCart((c) => (qty <= 0 ? c.filter((x) => x.id !== id)
       : c.map((x) => (x.id === id ? { ...x, qty: Math.min(999, qty) } : x))));
 
+  const loadMine = useCallback(() => {
+    if (!isClient) return;
+    api.myRequests<MyRequest[]>().then(setMine).catch(console.error);
+  }, [isClient]);
+  // Refresh when sync lands: the moment staff price the quote, it appears.
+  useEffect(() => { if (isClient) loadMine(); }, [isClient, lastSynced, loadMine]);
+
+  const answerQuote = useCallback(async (r: MyRequest, accept: boolean) => {
+    setAnswering(r.id);
+    try {
+      await api.respondToQuote(r.id, accept);
+      showToast({ text: accept
+        ? `${r.number} accepted — we'll get it ready.`
+        : `${r.number} declined.` });
+      loadMine();
+    } catch (e) {
+      console.error(e);
+      const msg = e instanceof Error
+        ? e.message.replace(/^\[CTP web\] could not send your answer: /, "")
+        : "Could not send your answer.";
+      showToast({ text: msg, err: true });
+    } finally {
+      setAnswering(null);
+    }
+  }, [showToast, loadMine]);
+
   const submitRequest = useCallback(async () => {
     if (cart.length === 0 || sending) return;
     setSending(true);
@@ -291,7 +330,7 @@ export default function MobileShell() {
       setCart([]);
       setNote("");
       showToast({ text: `Request ${res?.number ?? "sent"} — we'll come back to you with prices.` });
-      setTab("home");
+      loadMine();
     } catch (e) {
       console.error(e);
       // The server refuses for readable reasons (login not linked to a
@@ -581,12 +620,19 @@ export default function MobileShell() {
       </div>
       <div className="mb-body">
         {cart.length === 0 ? (
-          <div className="mb-empty">
-            <h3>Nothing in your request yet</h3>
-            <p>Find the parts you need and tap <b>Add to request</b>. Send the
-              lot in one go and we'll come back to you with prices and
-              availability.</p>
-          </div>
+          // The full pitch only when there is nothing else on this screen —
+          // with quotes listed below it, a big "nothing here" panel reads as
+          // if their history had vanished.
+          (mine && mine.length > 0) ? (
+            <div className="mb-count">Nothing new in your basket</div>
+          ) : (
+            <div className="mb-empty">
+              <h3>Nothing in your request yet</h3>
+              <p>Find the parts you need and tap <b>Add to request</b>. Send the
+                lot in one go and we'll come back to you with prices and
+                availability.</p>
+            </div>
+          )
         ) : (
           <>
             <div className="mb-count">{cart.length} part{cart.length === 1 ? "" : "s"}</div>
@@ -612,6 +658,62 @@ export default function MobileShell() {
               We'll price this and come back to you. Nothing is ordered or
               charged by sending it.
             </div>
+          </>
+        )}
+
+        {/* Everything they have already sent, and any quote waiting on them. */}
+        {mine && mine.length > 0 && (
+          <>
+            <div className="mb-count" style={{ marginTop: 22 }}>Sent to us</div>
+            {mine.map((r) => {
+              const awaiting = r.status === "quote" && r.priced;
+              return (
+                <div className="mb-rows" key={r.id} style={{ marginBottom: 12 }}>
+                  <div className="mb-row">
+                    <span className="mb-rk mb-mono" style={{ flex: "0 0 auto" }}>{r.number}</span>
+                    <span className="mb-rv">
+                      {awaiting ? <b style={{ color: "var(--amber)" }}>Quote ready</b>
+                        : r.status === "quote" ? "With us for pricing"
+                        : r.status === "confirmed" ? <b style={{ color: "var(--green)" }}>Accepted</b>
+                        : r.status === "cancelled" ? "Declined"
+                        : r.status === "fulfilled" ? "Ready for collection"
+                        : r.status === "invoiced" ? "Invoiced"
+                        : r.status}
+                    </span>
+                  </div>
+                  {r.lines.map((l) => (
+                    <div className="mb-row" key={l.id}>
+                      <span style={{ flex: 1, minWidth: 0 }}>
+                        <div className="mb-cname">{l.qty} × {l.name}</div>
+                        <div className="mb-csku mb-mono">{l.catalogue_pn ?? l.sku}</div>
+                      </span>
+                      {/* Only ever their OWN quoted price — never the price list */}
+                      {(l.unit_price_minor ?? 0) > 0 && (
+                        <span className="mb-rv">{fmtR((l.unit_price_minor ?? 0) * l.qty)}</span>
+                      )}
+                    </div>
+                  ))}
+                  {r.priced && (
+                    <div className="mb-row">
+                      <span className="mb-rk">Total</span>
+                      <span className="mb-rv"><b>{fmtR(r.total_minor)}</b> excl VAT</span>
+                    </div>
+                  )}
+                  {awaiting && (
+                    <div className="mb-row" style={{ gap: 10 }}>
+                      <button className="mb-btn s" style={{ height: 46 }}
+                        disabled={answering === r.id}
+                        onClick={() => { void answerQuote(r, false); }}>Decline</button>
+                      <button className="mb-btn p" style={{ height: 46 }}
+                        disabled={answering === r.id}
+                        onClick={() => { void answerQuote(r, true); }}>
+                        {answering === r.id ? "Sending…" : "Accept quote"}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </>
         )}
       </div>

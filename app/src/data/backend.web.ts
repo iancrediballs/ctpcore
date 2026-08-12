@@ -615,6 +615,71 @@ async function postMovement(a: Record<string, unknown>): Promise<unknown> {
   return delta;
 }
 
+// ─── a client's own requests and quotes ──────────────────────────────────────
+//
+// Reads the local database, so it works offline and updates itself the moment
+// staff price the quote server-side. Only the client's own orders are here at
+// all — the ctp_client_orders bucket is parameterised on their customer row —
+// so this needs no WHERE on identity, and must not pretend to be a security
+// boundary by adding one.
+async function myRequests(): Promise<unknown[]> {
+  const orders = await all(
+    `SELECT id, number, status, currency, notes, created_at,
+            client_response, client_responded_at
+       FROM sales_order
+      WHERE deleted_at IS NULL
+      ORDER BY created_at DESC, CAST(id AS INTEGER) DESC
+      LIMIT 50`
+  );
+  const out = [];
+  for (const o of orders) {
+    const lines = await all(
+      `SELECT sl.id, sl.qty, sl.unit_price_minor, p.sku, p.name, p.catalogue_pn
+         FROM sales_line sl LEFT JOIN part p ON p.id = sl.part_id
+        WHERE sl.order_id = ? AND sl.deleted_at IS NULL
+        ORDER BY CAST(sl.id AS INTEGER)`,
+      [String(o["id"])]
+    );
+    const mapped = lines.map((l) => ({
+      id: numId(l["id"], "sales_line.id"),
+      qty: Number(l["qty"]),
+      unit_price_minor: nnum(l["unit_price_minor"]),
+      sku: str(l["sku"]),
+      // A line whose part has not synced still has to render — it is their
+      // order either way, and a blank row reads as data loss.
+      name: nstr(l["name"]) ?? "(part unavailable)",
+      catalogue_pn: nstr(l["catalogue_pn"]),
+    }));
+    const priced = mapped.length > 0 && mapped.every((l) => (l.unit_price_minor ?? 0) > 0);
+    out.push({
+      id: numId(o["id"], "sales_order.id"),
+      number: str(o["number"]),
+      status: str(o["status"]),
+      currency: str(o["currency"]),
+      notes: nstr(o["notes"]),
+      created_at: str(o["created_at"]),
+      client_response: nstr(o["client_response"]),
+      client_responded_at: nstr(o["client_responded_at"]),
+      priced,
+      total_minor: mapped.reduce((t, l) => t + (l.unit_price_minor ?? 0) * l.qty, 0),
+      lines: mapped,
+    });
+  }
+  return out;
+}
+
+/** Accept or decline a quote. All the rules live in the database (0021). */
+async function respondToQuote(a: Record<string, unknown>): Promise<unknown> {
+  const orderId = numId(a["orderId"], "orderId");
+  const accept = a["accept"] === true;
+  const { data, error } = await supabase.rpc("respond_to_quote", {
+    order_id: orderId,
+    accept,
+  });
+  if (error) throw new Error(`[CTP web] could not send your answer: ${error.message}`);
+  return data;
+}
+
 // ─── what is actually on this device ─────────────────────────────────────────
 //
 // Counts rows in the local database, table by table. This exists because of a
@@ -697,6 +762,8 @@ const PORTED: Record<string, Handler> = {
   get_company: () => getCompany(),
   post_movement: (a) => postMovement(a),
   request_parts: (a) => requestParts(a),
+  my_requests: () => myRequests(),
+  respond_to_quote: (a) => respondToQuote(a),
   device_audit: () => deviceAudit(),
 };
 

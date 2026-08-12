@@ -127,22 +127,30 @@ bucket_definitions:
       - SELECT * FROM hotspot
       - SELECT * FROM company
 
-  # ══ CLIENT — their own requests: NOT YET ════════════════════════════════
-  # Deliberately absent, and the reason is structural rather than a decision.
+  # ══ CLIENT — their own requests and quotes ══════════════════════════════
+  # Parameterised on the customer row that points at this login, so a client
+  # sees their own orders and nobody else's. Safe before any client exists:
+  # with no matching customer row the parameter query returns nothing and the
+  # bucket does not exist for that device.
   #
-  # `sales_order` alone would be easy — parameterise on the customer row that
-  # points at this login and filter `customer_id = bucket.customer_id`. But
-  # `sales_line` carries only `order_id`, so reaching the customer needs a JOIN,
-  # and edition 2 DATA queries are single-table: no joins. An order header with
-  # no lines is worse than nothing ("you asked for something, we won't say
-  # what"), so neither ships.
+  # `sales_line.customer_id` is denormalised onto the line by a trigger (0021)
+  # because edition-2 data queries cannot JOIN — the line knows its order, and
+  # the customer is one hop further than a data query can reach.
   #
-  # Two honest ways forward when this matters:
-  #   a. denormalise — add `customer_id` to `sales_line`, maintained by the
-  #      request RPC and by the desktop's add_line. One redundant column, but
-  #      it makes the bucket trivial and the filter exact.
-  #   b. leave it out — a customer submits through the app and hears back from
-  #      Ian. That is how the business already works, and it ships today.
-  #
-  # Until one is chosen, a submitted request simply does not come back down to
-  # the client's device. `request_parts` still works: it writes server-side.
+  # unit_price_minor IS included, and that is not a leak: it is the price WE
+  # quoted THEM, on their own order. It is not the price list — `price` and
+  # `part_cost` remain staff-only.
+  ctp_client_orders:
+    parameters: |
+      SELECT id AS customer_id FROM customer
+       WHERE auth_user_id = request.user_id()
+    data:
+      - SELECT id, number, customer_id, status, currency, notes, tax_rate_bps,
+               client_response, client_responded_at,
+               rev, created_at, updated_at, deleted_at
+          FROM sales_order
+         WHERE customer_id = bucket.customer_id
+      - SELECT id, order_id, part_id, qty, unit_price_minor, customer_id,
+               rev, updated_at, deleted_at
+          FROM sales_line
+         WHERE customer_id = bucket.customer_id

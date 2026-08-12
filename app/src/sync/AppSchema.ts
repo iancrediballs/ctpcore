@@ -78,6 +78,8 @@ const customer = new Table({
 const sales_order = new Table({
   number: column.text, customer_id: column.text, location_id: column.text, status: column.text,
   currency: column.text, notes: column.text, fulfilled_at: column.text, tax_rate_bps: column.integer,
+  // what the CUSTOMER did, kept apart from `status`, which staff own (0021)
+  client_response: column.text, client_responded_at: column.text,
   rev: column.integer, created_at: column.text, updated_at: column.text,
   deleted_at: column.text, origin: column.text,
 }, { indexes: { customer: ["customer_id"], status: ["status"] } });
@@ -85,8 +87,12 @@ const sales_order = new Table({
 const sales_line = new Table({
   order_id: column.text, part_id: column.text, qty: column.integer,
   unit_price_minor: column.integer, tier_at_add: column.text,
+  // Denormalised from the order by a database trigger (0021). Sync rules
+  // cannot join, so without this a client's own lines are unreachable —
+  // sales_line knows its order, and the customer is one hop past that.
+  customer_id: column.text,
   rev: column.integer, updated_at: column.text, deleted_at: column.text, origin: column.text,
-}, { indexes: { order: ["order_id"] } });
+}, { indexes: { order: ["order_id"], customer: ["customer_id"] } });
 
 const company = new Table({
   name: column.text, address: column.text, phone: column.text, email: column.text,
