@@ -615,6 +615,42 @@ async function postMovement(a: Record<string, unknown>): Promise<unknown> {
   return delta;
 }
 
+// ─── what is actually on this device ─────────────────────────────────────────
+//
+// Counts rows in the local database, table by table. This exists because of a
+// specific failure mode: sync rules are the ONLY thing keeping cost and margin
+// off a customer's phone (PowerSync replicates as powersync_role, which
+// bypasses RLS), and a rule that syncs nothing looks exactly like a rule that
+// was never written. You cannot tell from the dashboard. You can tell from
+// here.
+//
+// Deliberately NOT a generic "run this SQL" hole — the table list is fixed and
+// only counts are returned, so this can answer "did cost reach me?" without
+// ever becoming a way to read what it contains.
+const AUDIT_TABLES = [
+  "part", "part_image", "diagram", "category",     // expected on every device
+  "part_cost", "price", "price_tier",              // money — staff only
+  "stock_policy", "stock_movement", "location",    // bins + movements — staff only
+  "customer", "sales_order", "sales_line",         // other people's business
+  "part_alias",
+] as const;
+
+async function deviceAudit(): Promise<unknown[]> {
+  await ready();
+  const out: { table: string; rows: number }[] = [];
+  for (const t of AUDIT_TABLES) {
+    try {
+      const r = await powerSync.getOptional<{ n: number }>(`SELECT count(*) AS n FROM ${t}`);
+      out.push({ table: t, rows: Number(r?.n ?? 0) });
+    } catch {
+      // table absent from the local schema entirely — also an answer, and a
+      // safer one than a missing row.
+      out.push({ table: t, rows: -1 });
+    }
+  }
+  return out;
+}
+
 // ─── a customer asking for parts ─────────────────────────────────────────────
 //
 // The ONE write in this file that does not go through PowerSync. Migration
@@ -661,6 +697,7 @@ const PORTED: Record<string, Handler> = {
   get_company: () => getCompany(),
   post_movement: (a) => postMovement(a),
   request_parts: (a) => requestParts(a),
+  device_audit: () => deviceAudit(),
 };
 
 export const webBackend: Backend = {

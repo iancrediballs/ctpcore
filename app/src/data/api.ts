@@ -70,6 +70,9 @@ export const postMovement = <T>(
   reason: string, clientUuid: string, actorId: number | null
 ) => call<T>("post_movement", { partId, locationId, delta, reason, clientUuid, actorId });
 
+/** Web-only: row counts per table in THIS device's local database. */
+export const deviceAudit = <T>() => call<T>("device_audit");
+
 // ─── customer requests (web-only) ────────────────────────────────────────
 /** A signed-in customer asks for parts. Creates a quote-status order server-side. */
 export const requestParts = <T>(items: { part_id: number; qty: number }[], note: string | null) =>

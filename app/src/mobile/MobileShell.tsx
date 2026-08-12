@@ -178,6 +178,7 @@ export default function MobileShell() {
   const [cart, setCart] = useState<{ id: number; sku: string; name: string; qty: number }[]>([]);
   const [note, setNote] = useState("");
   const [sending, setSending] = useState(false);
+  const [audit, setAudit] = useState<{ table: string; rows: number }[] | null>(null);
   const toastTimer = useRef<number | undefined>(undefined);
 
   // ── who is this? ──
@@ -512,7 +513,42 @@ export default function MobileShell() {
           <div className="mb-row"><span className="mb-rk">Catalogue</span>
             <span className="mb-rv">{parts.length} parts</span></div>
         </div>
-        <button className="mb-btn s" style={{ width: "100%" }} onClick={() => { void signOut(); }}>
+        {/* What this device actually holds. The sync rules are the only thing
+            keeping cost and margin off a customer's phone, and a rule that
+            syncs nothing is indistinguishable from a rule that was never
+            written — except from here. */}
+        <div className="mb-count">Data on this device</div>
+        {audit === null ? (
+          <button className="mb-btn s" style={{ width: "100%" }}
+            onClick={() => { api.deviceAudit<{ table: string; rows: number }[]>()
+              .then(setAudit).catch((e) => { console.error(e); setAudit([]); }); }}>
+            Check what synced
+          </button>
+        ) : (
+          <div className="mb-rows">
+            {audit.map((a) => {
+              // On a client device these must be zero. Anything else is a leak,
+              // so it is coloured like one rather than left to be noticed.
+              const shouldBeEmpty = isClient && [
+                "part_cost", "price", "price_tier", "stock_policy", "stock_movement",
+                "location", "customer", "sales_order", "sales_line", "part_alias",
+              ].includes(a.table);
+              const bad = shouldBeEmpty && a.rows > 0;
+              return (
+                <div className="mb-row" key={a.table}>
+                  <span className="mb-rk mb-mono" style={{ flex: 1 }}>{a.table}</span>
+                  <span className="mb-rv" style={{
+                    color: bad ? "var(--red)" : a.rows > 0 ? "var(--green)" : "var(--dimmer)",
+                  }}>
+                    {a.rows < 0 ? "not synced" : a.rows}{bad ? "  ⚠ should be 0" : ""}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+        <button className="mb-btn s" style={{ width: "100%", marginTop: 14 }}
+          onClick={() => { void signOut(); }}>
           Sign out
         </button>
         <div className="mb-note">
