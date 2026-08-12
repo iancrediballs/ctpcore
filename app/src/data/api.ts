@@ -30,6 +30,8 @@ export const searchParts = <T>(query: string) => call<T>("search_parts", { query
 export const partDetail = <T>(partId: number) => call<T>("part_detail", { partId });
 export const listParts = <T>() => call<T>("list_parts");
 export const listCategories = <T>() => call<T>("list_categories");
+/** Web-only: category cards with SEC diagram + part count for the mobile home page. */
+export const listSections = <T>() => call<T>("list_sections");
 export const createPart = (name: string, categoryId: number) =>
   call<number>("create_part", { name, categoryId });
 export const updatePart = (partId: number, patch: Record<string, unknown>) =>

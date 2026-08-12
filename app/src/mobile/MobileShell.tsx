@@ -25,6 +25,13 @@ import "./mobile.css";
 
 type Cat = { id: number; code: string; name: string };
 
+type Section = {
+  id: number; code: string; name: string;
+  image: string | null;    // truck locator (section lit up)
+  diagram: string | null;  // OEM exploded view — fallback + shown on the section page
+  parts: number;
+};
+
 type PartRow = {
   id: number; sku: string; name: string; category_code: string | null;
   qty_on_hand: number; bin: string | null; price_cents: number | null;
@@ -88,6 +95,9 @@ const IcSearch = () => (
 const IcPin = () => (
   <svg viewBox="0 0 24 24"><path d="M12 2a7 7 0 0 0-7 7c0 5.25 7 13 7 13s7-7.75 7-13a7 7 0 0 0-7-7zm0 9.5A2.5 2.5 0 1 1 14.5 9 2.5 2.5 0 0 1 12 11.5z"/></svg>
 );
+const TabHome = () => (
+  <svg viewBox="0 0 24 24"><path d="M3 10.5 12 3l9 7.5M5 9.5V21h14V9.5M9.5 21v-6h5v6"/></svg>
+);
 const TabFind = () => (
   <svg viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.5 15.5 5 5"/></svg>
 );
@@ -104,9 +114,10 @@ export default function MobileShell() {
   const status = useStatus();
   const { session, signOut } = useAuth();
 
-  const [tab, setTab] = useState<"find" | "shelf" | "info">("find");
+  const [tab, setTab] = useState<"home" | "find" | "shelf" | "info">("home");
   const [parts, setParts] = useState<PartRow[]>([]);
   const [cats, setCats] = useState<Cat[]>([]);
+  const [sections, setSections] = useState<Section[]>([]);
   const [q, setQ] = useState("");
   const [hits, setHits] = useState<Hit[] | null>(null); // null = not searching
   const [chip, setChip] = useState<string | null>(null);
@@ -120,10 +131,12 @@ export default function MobileShell() {
   // ── data loads (all local SQLite via PowerSync — cheap to re-run) ──
   const refresh = useCallback(() => {
     api.listParts<PartRow[]>().then(setParts).catch(console.error);
+    api.listSections<Section[]>().then(setSections).catch(console.error);
   }, []);
   useEffect(() => {
     refresh();
     api.listCategories<Cat[]>().then(setCats).catch(console.error);
+    api.listSections<Section[]>().then(setSections).catch(console.error);
   }, [refresh]);
 
   // Re-pull the catalogue when sync completes a cycle, so counts posted by
@@ -217,6 +230,64 @@ export default function MobileShell() {
 
   // ─── views ─────────────────────────────────────────────────────────────────
 
+  // The front page: every section of the truck as a big card — the SEC
+  // exploded-view drawing IS the picture of "this part of the truck" — plus
+  // one search box and an All-parts card. Tap a section → the list, filtered.
+  const openSection = (code: string | null) => {
+    setChip(code);
+    setQ("");
+    setTab("find");
+  };
+
+  const homeView = (
+    <div className="mb-view">
+      <div className="mb-top">
+        <div className="mb-brandrow">
+          <img className="mb-logo" src={assetUrl(LOGO)} alt="CTP"
+            onError={(e) => { e.currentTarget.style.display = "none"; }} />
+          <span className="mb-vlabel">Catalogue</span>
+          <span className={"mb-sync" + (connected ? "" : " off")}>
+            <span className="mb-dot" />{connected ? "synced" : "offline"}
+          </span>
+        </div>
+        <div className="mb-searchwrap">
+          <div className="mb-sbox">
+            <IcSearch />
+            <input className="mb-q" value={q} inputMode="search" enterKeyHint="search"
+              placeholder="Search everything…"
+              onFocus={() => setTab("find")}
+              onChange={(e) => { setQ(e.target.value); setTab("find"); }} />
+          </div>
+        </div>
+      </div>
+      <div className="mb-body">
+        <button className="mb-secall" onClick={() => openSection(null)}>
+          <span className="mb-secall-t">All parts</span>
+          <span className="mb-secall-n">{parts.length} in the catalogue →</span>
+        </button>
+        {sections.filter((s) => s.parts > 0).map((s) => (
+          <button key={s.id} className="mb-seccard" onClick={() => openSection(s.code)}>
+            <img className="mb-secimg" src={assetUrl(s.image)} alt="" loading="lazy"
+              onError={(e) => {
+                // locator missing (new category, nothing generated yet) → the
+                // OEM drawing still says more than an empty box does
+                const el = e.currentTarget;
+                if (s.diagram && !el.dataset.fell) {
+                  el.dataset.fell = "1";
+                  el.classList.add("dgm");   // white plate: the OEM art is black-on-white
+                  el.src = assetUrl(s.diagram);
+                } else el.style.visibility = "hidden";
+              }} />
+            <span className="mb-secbar">
+              <span className="mb-secname">{s.name}</span>
+              <span className="mb-seccount">{s.parts} parts</span>
+            </span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+
   const listView = (
     <div className="mb-view">
       <div className="mb-top">
@@ -254,6 +325,26 @@ export default function MobileShell() {
       )}
 
       <div className="mb-body">
+        {/* Came in from a section card: lead with that section's exploded view,
+            tappable into the zoom viewer. This is the "and then it breaks
+            down" half of the home page. */}
+        {!hits && chip && (() => {
+          const s = sections.find((x) => x.code === chip);
+          if (!s?.diagram) return null;
+          return (
+            <div className="mb-dgm" role="button" style={{ marginTop: 4 }}
+              onClick={() => setViewer({ items: [{ path: s.diagram!, label: s.name }], idx: 0 })}>
+              <img src={assetUrl(s.diagram)} alt={s.name} loading="lazy" />
+              <span className="mb-zoomtag">⤢</span>
+              <div className="mb-dgm-cap">
+                <span>
+                  <div className="mb-dgm-k">Section</div>
+                  <div className="mb-dgm-v">{s.name}</div>
+                </span>
+              </div>
+            </div>
+          );
+        })()}
         <div className="mb-count">
           {hits ? `${cards.length} match${cards.length === 1 ? "" : "es"}` : `${cards.length} parts`}
         </div>
@@ -430,7 +521,7 @@ export default function MobileShell() {
 
   return (
     <div className="mb-root">
-      {tab === "info" ? infoView : listView}
+      {tab === "home" ? homeView : tab === "info" ? infoView : listView}
       {sheet}
       {viewer && (
         <Lightbox items={viewer.items} start={viewer.idx} onClose={() => setViewer(null)} />
@@ -449,6 +540,10 @@ export default function MobileShell() {
       )}
 
       <nav className="mb-tabs">
+        <button className={"mb-tab" + (tab === "home" ? " on" : "")}
+          onClick={() => { setTab("home"); setQ(""); setChip(null); setSheetOpen(false); }}>
+          <TabHome />Home
+        </button>
         <button className={"mb-tab" + (tab === "find" ? " on" : "")}
           onClick={() => { setTab("find"); setSheetOpen(false); }}>
           <TabFind />Find
