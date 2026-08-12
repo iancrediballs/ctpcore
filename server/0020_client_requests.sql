@@ -63,7 +63,12 @@ BEGIN
       SELECT (i->>'part_id')::bigint AS part_id,
              SUM(GREATEST(1, LEAST(999, COALESCE((i->>'qty')::int, 1))))::int AS qty
         FROM jsonb_array_elements(items) AS i
-       GROUP BY 1
+       -- Grouped by the EXPRESSION, not `GROUP BY 1`. A positional group-by is
+       -- one stray keystroke away from pointing at the SUM instead of the id,
+       -- and the failure ("aggregate functions are not allowed in GROUP BY")
+       -- surfaces at request time, not at deploy time. It happened once here;
+       -- spelling it out costs nothing and cannot drift.
+       GROUP BY (i->>'part_id')::bigint
     ) t;
 
   IF jsonb_array_length(v_lines) > 50 THEN
