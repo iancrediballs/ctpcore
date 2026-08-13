@@ -325,16 +325,55 @@ export default function MobileShell() {
   }, [isClient]);
   useEffect(() => { if (!isClient) loadOrders(); }, [isClient, lastSynced, loadOrders]);
 
+  /**
+   * "1850", "1850.50", "1 850,50", "R1,850.50" — all of them are money here.
+   * South African keyboards produce the decimal COMMA, and Number("1850,00")
+   * is NaN, which the first version silently dropped and then reported as
+   * "no prices to save" — a message about a different problem than the one
+   * the person actually had. When both separators appear, whichever comes
+   * last is the decimal point; the other is thousands.
+   */
+  const parseRand = (s: string): number => {
+    const t = s.replace(/[Rr\s]/g, "");
+    if (t === "") return NaN;
+    if (t.includes(",") && t.includes(".")) {
+      return t.lastIndexOf(",") > t.lastIndexOf(".")
+        ? Number(t.replace(/\./g, "").replace(",", "."))
+        : Number(t.replace(/,/g, ""));
+    }
+    if (t.includes(",")) {
+      // Only a comma is ambiguous: "1850,50" is cents, "1,850" is thousands.
+      // A comma followed by exactly three digits reads as a thousands mark;
+      // one or two digits after it read as cents.
+      return /,\d{3}(,\d{3})*$/.test(t)
+        ? Number(t.replace(/,/g, ""))
+        : Number(t.replace(/,/g, "."));
+    }
+    return Number(t);
+  };
+
   const savePrices = useCallback(async (o: StaffOrder) => {
+    // Resolve every line BEFORE talking to the server, and if any is missing,
+    // say which — an early clear message beats a late vague one.
+    const resolved = o.lines.map((l) => {
+      const typed = draftPrices[l.id];
+      const rand = typed == null || typed === ""
+        ? l.unit_price_minor / 100
+        : parseRand(typed);
+      return { line: l, minor: Number.isFinite(rand) ? Math.round(rand * 100) : 0 };
+    });
+    const missing = resolved.filter((r) => r.minor <= 0);
+    if (missing.length > 0) {
+      showToast({
+        text: `Type a price for every line first — missing: ${missing
+          .map((m) => m.line.sku).slice(0, 3).join(", ")}${missing.length > 3 ? "…" : ""}`,
+        err: true,
+      });
+      return;
+    }
     setSavingOrder(true);
     try {
-      const lines = o.lines
-        .map((l) => {
-          const typed = draftPrices[l.id];
-          const rand = typed == null || typed === "" ? l.unit_price_minor / 100 : Number(typed);
-          return { line_id: l.id, unit_price_minor: Math.round(rand * 100) };
-        })
-        .filter((l) => l.unit_price_minor > 0);
+      const lines = resolved.map((r) => ({ line_id: r.line.id, unit_price_minor: r.minor }));
       const res = await api.priceQuote<{ unpriced_left?: number; total_minor?: number }>(o.id, lines);
       const left = Number(res?.unpriced_left ?? 0);
       showToast({ text: left > 0
