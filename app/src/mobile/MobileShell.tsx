@@ -353,6 +353,15 @@ export default function MobileShell() {
   };
 
   const savePrices = useCallback(async (o: StaffOrder) => {
+    // "Every line must have a price" is TRUE of an order with no lines — the
+    // check passes vacuously and the server then rejects the empty list with a
+    // message about prices, which is not the problem the person is looking at.
+    // (Found live: SO-1001, an old empty demo quote.) Say what is actually
+    // wrong instead.
+    if (o.lines.length === 0) {
+      showToast({ text: `${o.number} has no lines — there is nothing to price.`, err: true });
+      return;
+    }
     // Resolve every line BEFORE talking to the server, and if any is missing,
     // say which — an early clear message beats a late vague one.
     const resolved = o.lines.map((l) => {
@@ -780,14 +789,23 @@ export default function MobileShell() {
                           </div>
                         ))}
                         {o.stage === "to_price" && (
-                          <div className="mb-row" style={{ gap: 10 }}>
-                            <button className="mb-btn s" style={{ height: 46 }} disabled={savingOrder}
-                              onClick={() => { void fillList(o); }}>Fill from list</button>
-                            <button className="mb-btn p" style={{ height: 46 }} disabled={savingOrder}
-                              onClick={() => { void savePrices(o); }}>
-                              {savingOrder ? "Saving…" : "Send quote"}
-                            </button>
-                          </div>
+                          o.lines.length === 0 ? (
+                            <div className="mb-row">
+                              <span className="mb-rk">Empty</span>
+                              <span className="mb-rv" style={{ color: "var(--warn)" }}>
+                                no lines on this order — nothing to price
+                              </span>
+                            </div>
+                          ) : (
+                            <div className="mb-row" style={{ gap: 10 }}>
+                              <button className="mb-btn s" style={{ height: 46 }} disabled={savingOrder}
+                                onClick={() => { void fillList(o); }}>Fill from list</button>
+                              <button className="mb-btn p" style={{ height: 46 }} disabled={savingOrder}
+                                onClick={() => { void savePrices(o); }}>
+                                {savingOrder ? "Saving…" : "Send quote"}
+                              </button>
+                            </div>
+                          )
                         )}
                         {o.stage === "with_customer" && (
                           <div className="mb-row">
