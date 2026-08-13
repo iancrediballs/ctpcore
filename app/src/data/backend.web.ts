@@ -761,6 +761,71 @@ async function respondToQuote(a: Record<string, unknown>): Promise<unknown> {
   return data;
 }
 
+// ─── staff photo admin ───────────────────────────────────────────────────────
+//
+// Same doctrine as the order RPCs: the phone holds no table write grants, so
+// each of these is a SECURITY DEFINER function (0024) that checks is_staff()
+// against the app_user ROW. Hiding the buttons from clients is cosmetic; the
+// function is the control.
+//
+// Deleting touches two worlds in a fixed order: the ROW first (soft delete —
+// every reader filters deleted_at, so the photo vanishes from all devices on
+// the next sync pass), then the storage OBJECT, best-effort. A row without a
+// file is invisible; a file without a row is merely untidy. The reverse order
+// could leave a broken image on every phone if the second step failed.
+
+async function adminDeletePhoto(a: Record<string, unknown>): Promise<unknown> {
+  const imageId = numId(a["imageId"], "imageId");
+  const { data, error } = await supabase.rpc("admin_delete_photo", { image_id: imageId });
+  if (error) throw new Error(`[CTP web] could not delete the photo: ${error.message}`);
+  const path = (data as Record<string, unknown> | null)?.["path"];
+  if (typeof path === "string" && path.startsWith("assets/photos/")) {
+    const { error: se } = await supabase.storage.from("ctp-assets").remove([path]);
+    if (se) console.warn("[CTP web] photo row retired but the file stayed behind:", se.message);
+  }
+  return data;
+}
+
+async function adminSetPrimaryPhoto(a: Record<string, unknown>): Promise<unknown> {
+  const imageId = numId(a["imageId"], "imageId");
+  const { data, error } = await supabase.rpc("admin_set_primary_photo", { image_id: imageId });
+  if (error) throw new Error(`[CTP web] could not set the primary photo: ${error.message}`);
+  return data;
+}
+
+// Upload the FILE first, then register the ROW — the opposite order would
+// leave every device rendering a broken image while the upload ran. Keys
+// follow the same pattern the desktop sync uses (p{part}_{ms}_{name}) and a
+// fresh timestamp every time, because the bucket caches immutably for a year:
+// there is no such thing as replacing a key, only minting a new one.
+async function adminAddPhoto(a: Record<string, unknown>): Promise<unknown> {
+  const partId = numId(a["partId"], "partId");
+  const blob = a["blob"];
+  if (!(blob instanceof Blob) || blob.size === 0) {
+    throw new Error("[CTP web] no image to upload.");
+  }
+  const stem = String(a["filename"] ?? "photo")
+    .replace(/\.[^.]*$/, "")
+    .replace(/[^A-Za-z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 40) || "photo";
+  const ext = blob.type === "image/png" ? "png" : "jpg";
+  const path = `assets/photos/p${partId}_${Date.now()}_${stem}.${ext}`;
+
+  const { error: ue } = await supabase.storage.from("ctp-assets")
+    .upload(path, blob, { contentType: blob.type || "image/jpeg", cacheControl: "31536000" });
+  if (ue) throw new Error(`[CTP web] upload failed: ${ue.message}`);
+
+  const { data, error } = await supabase.rpc("admin_add_photo", { part_id: partId, path });
+  if (error) {
+    // The file made it up but the row didn't. Sweep the orphan so a retry
+    // doesn't collide with a half-registered key.
+    await supabase.storage.from("ctp-assets").remove([path]).catch(() => undefined);
+    throw new Error(`[CTP web] could not register the photo: ${error.message}`);
+  }
+  return data;
+}
+
 // ─── what is actually on this device ─────────────────────────────────────────
 //
 // Counts rows in the local database, table by table. This exists because of a
@@ -849,6 +914,9 @@ const PORTED: Record<string, Handler> = {
   price_quote: (a) => priceQuote(a),
   fill_quote_from_list: (a) => fillFromList(a),
   device_audit: () => deviceAudit(),
+  admin_delete_photo: (a) => adminDeletePhoto(a),
+  admin_set_primary_photo: (a) => adminSetPrimaryPhoto(a),
+  admin_add_photo: (a) => adminAddPhoto(a),
 };
 
 export const webBackend: Backend = {

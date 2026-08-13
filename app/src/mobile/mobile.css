@@ -212,3 +212,46 @@
   font-weight:800;outline:none}
 .mb-price-in:focus{border-color:var(--amber)}
 .mb-price-in::placeholder{color:var(--dimmer);font-weight:600}
+/* staff photo manager — thumbnails with star/delete, plus an add tile */
+.mb-padmin{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-bottom:14px}
+.mb-pcell{position:relative;background:#fff;border:1.5px solid var(--line);border-radius:10px;
+  overflow:hidden;aspect-ratio:1}
+.mb-pcell img{width:100%;height:100%;object-fit:contain;padding:4px;display:block;cursor:zoom-in}
+.mb-pcell.star{border-color:var(--amber);box-shadow:0 0 0 1.5px var(--amber)}
+.mb-pops{position:absolute;left:0;right:0;bottom:0;display:flex;justify-content:space-between;padding:4px}
+.mb-pop{width:34px;height:34px;border:0;border-radius:9px;background:rgba(11,13,16,.62);color:#fff;
+  font-size:15px;cursor:pointer;display:grid;place-items:center}
+.mb-pop.on{color:var(--amber)}
+.mb-pop.del{color:#FF9B8A}
+.mb-pop:disabled{opacity:.4}
+.mb-pcell.add{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;
+  background:var(--surf);color:var(--dim);border-style:dashed;cursor:pointer;
+  font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.5px}
+.mb-pcell.add:disabled{opacity:.5}
+.mb-addplus{font-size:26px;line-height:1;color:var(--amber);font-weight:400}
+/* segmented control (settings) */
+.mb-seg{display:inline-flex;background:var(--surf2);border:1.5px solid var(--line);border-radius:11px;
+  padding:3px;gap:2px;margin-left:auto}
+.mb-segbtn{border:0;background:none;color:var(--dim);height:32px;padding:0 13px;border-radius:8px;
+  font-size:13px;font-weight:800;cursor:pointer}
+.mb-segbtn.on{background:var(--amber);color:#12161A}
+/* ── light theme ─────────────────────────────────────────────────────────────
+   Same skeleton, swapped variables. Amber is DARKER here on purpose: brand
+   #FF8A1F reads fine on near-black but fails contrast as text on white.
+   Elements that are dark by their content keep a dark plate: the brand logo
+   and the truck locator art are light-on-transparent artwork, so in light
+   mode they sit on a small dark chip instead of vanishing. The lightbox
+   stays dark in both themes — photos belong on a dark stage. */
+.mb-root.light{
+  --bg:#EEF1F5;--surf:#FFFFFF;--surf2:#E7EBF1;--line:#D2D9E2;
+  --txt:#151A20;--dim:#57636F;--dimmer:#8C98A6;
+  --amber:#D96B00;--green:#178A54;--warn:#8A6400;--red:#C43214;
+}
+.mb-root.light .mb-tabs{background:rgba(255,255,255,.93)}
+.mb-root.light .mb-brand{background:#12161A;border-radius:8px;box-shadow:0 0 0 5px #12161A}
+.mb-root.light .mb-secimg{background:#12161A}
+.mb-root.light .mb-secimg.dgm{background:#fff}
+.mb-root.light .mb-secimg.ph{background:var(--surf2)}
+.mb-root.light .mb-toast{box-shadow:0 10px 30px rgba(30,40,50,.22)}
+.mb-root.light .mb-chip.on,.mb-root.light .mb-btn.p,.mb-root.light .mb-segbtn.on,
+.mb-root.light .mb-itembdg,.mb-root.light .mb-tabbadge{color:#fff}

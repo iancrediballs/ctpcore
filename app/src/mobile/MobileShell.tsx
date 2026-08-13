@@ -158,6 +158,57 @@ function tokenRole(accessToken: string | undefined): string | null {
   }
 }
 
+// ─── appearance ──────────────────────────────────────────────────────────────
+//
+// One device-local preference: "auto" follows the phone's own light/dark
+// setting live (sunset flips the app with the OS), the other two pin it.
+// localStorage rather than the database on purpose — which THEME a device
+// draws is that device's business, needs no sync, and must work signed-out.
+type ThemePref = "auto" | "light" | "dark";
+const THEME_KEY = "ctp.theme";
+
+function loadThemePref(): ThemePref {
+  try {
+    const v = localStorage.getItem(THEME_KEY);
+    return v === "light" || v === "dark" ? v : "auto";
+  } catch {
+    return "auto";
+  }
+}
+
+// ─── camera → bucket-sized image ─────────────────────────────────────────────
+//
+// A phone camera hands over 8–12MB; the catalogue needs ~200KB. Longest side
+// capped at 1600px and re-encoded as JPEG on a WHITE canvas — every surface
+// (thumbs, hero, lightbox) renders photos on white, so transparency would
+// only ever turn into surprise black in some other viewer.
+async function shrinkImage(file: File, maxSide = 1600): Promise<Blob> {
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await new Promise<HTMLImageElement>((res, rej) => {
+      const el = new Image();
+      el.onload = () => res(el);
+      el.onerror = () => rej(new Error("That file is not an image this phone can read."));
+      el.src = url;
+    });
+    const scale = Math.min(1, maxSide / Math.max(img.naturalWidth, img.naturalHeight));
+    const w = Math.max(1, Math.round(img.naturalWidth * scale));
+    const h = Math.max(1, Math.round(img.naturalHeight * scale));
+    const cv = document.createElement("canvas");
+    cv.width = w; cv.height = h;
+    const cx = cv.getContext("2d");
+    if (!cx) throw new Error("Could not process the photo on this device.");
+    cx.fillStyle = "#fff";
+    cx.fillRect(0, 0, w, h);
+    cx.drawImage(img, 0, 0, w, h);
+    const blob = await new Promise<Blob | null>((res) => cv.toBlob(res, "image/jpeg", 0.85));
+    if (!blob) throw new Error("Could not encode the photo.");
+    return blob;
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
 // ─── icons (inline so the shell has zero icon deps) ──────────────────────────
 
 const IcSearch = () => (
@@ -210,7 +261,33 @@ export default function MobileShell() {
   const [openOrder, setOpenOrder] = useState<number | null>(null);
   const [draftPrices, setDraftPrices] = useState<Record<number, string>>({});
   const [savingOrder, setSavingOrder] = useState(false);
+  const [photoBusy, setPhotoBusy] = useState(false);
+  const fileRef = useRef<HTMLInputElement | null>(null);
   const toastTimer = useRef<number | undefined>(undefined);
+
+  // ── appearance ──
+  const [themePref, setThemePref] = useState<ThemePref>(loadThemePref);
+  const [sysLight, setSysLight] = useState<boolean>(
+    () => window.matchMedia?.("(prefers-color-scheme: light)").matches ?? false
+  );
+  useEffect(() => {
+    const mq = window.matchMedia?.("(prefers-color-scheme: light)");
+    if (!mq) return;
+    const onChange = (e: MediaQueryListEvent) => setSysLight(e.matches);
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
+  }, []);
+  const light = themePref === "light" || (themePref === "auto" && sysLight);
+  const pickTheme = (t: ThemePref) => {
+    setThemePref(t);
+    try { localStorage.setItem(THEME_KEY, t); } catch { /* private mode: lives for the session */ }
+  };
+  // Keep the browser chrome (status bar, PWA title bar) the same colour as
+  // the app behind it, or light mode gets a black cap on every screen.
+  useEffect(() => {
+    document.querySelector('meta[name="theme-color"]')
+      ?.setAttribute("content", light ? "#EEF1F5" : "#0B0D10");
+  }, [light]);
 
   // ── who is this? ──
   //
@@ -257,6 +334,82 @@ export default function MobileShell() {
     setToast(t);
     toastTimer.current = window.setTimeout(() => setToast(null), 6000);
   }, []);
+
+  // ── staff photo admin ──
+  //
+  // Every change is a server-side RPC; what this device shows only updates
+  // when the changed row comes BACK down the sync stream. So after each call,
+  // re-read the local part detail until the change is visible (a second or
+  // two), instead of optimistically drawing a state the database hasn't
+  // confirmed. The catalogue lists refresh at the end for the same reason.
+  const reloadDetailUntil = useCallback(async (
+    partId: number, done: (d: Detail) => boolean
+  ): Promise<void> => {
+    for (let i = 0; i < 8; i++) {
+      await new Promise((r) => window.setTimeout(r, i === 0 ? 500 : 1000));
+      try {
+        const fresh = await api.partDetail<Detail>(partId);
+        setDetail(fresh);
+        if (done(fresh)) return;
+      } catch {
+        return; // part unreadable mid-sync; the next pass will settle it
+      }
+    }
+  }, []);
+
+  const makePrimary = async (imageId: number) => {
+    const dd = detail;
+    if (!dd || photoBusy) return;
+    setPhotoBusy(true);
+    try {
+      await api.adminSetPrimaryPhoto(imageId);
+      await reloadDetailUntil(dd.id, (f) => f.images.find((i) => i.id === imageId)?.is_primary === true);
+      showToast({ text: "Primary photo updated." });
+      refresh();
+    } catch (e) {
+      console.error(e);
+      showToast({ text: e instanceof Error ? e.message : "Could not update the photo.", err: true });
+    } finally {
+      setPhotoBusy(false);
+    }
+  };
+
+  const deletePhoto = async (imageId: number) => {
+    const dd = detail;
+    if (!dd || photoBusy) return;
+    if (!window.confirm("Delete this photo? It disappears from every phone. (The desktop app keeps its own local copy.)")) return;
+    setPhotoBusy(true);
+    try {
+      await api.adminDeletePhoto(imageId);
+      await reloadDetailUntil(dd.id, (f) => !f.images.some((i) => i.id === imageId));
+      showToast({ text: "Photo deleted." });
+      refresh();
+    } catch (e) {
+      console.error(e);
+      showToast({ text: e instanceof Error ? e.message : "Could not delete the photo.", err: true });
+    } finally {
+      setPhotoBusy(false);
+    }
+  };
+
+  const addPhoto = async (file: File) => {
+    const dd = detail;
+    if (!dd || photoBusy) return;
+    setPhotoBusy(true);
+    try {
+      const blob = await shrinkImage(file);
+      const before = dd.images.length;
+      await api.adminAddPhoto(dd.id, blob, file.name);
+      showToast({ text: "Photo uploaded — syncing…" });
+      await reloadDetailUntil(dd.id, (f) => f.images.length > before);
+      refresh();
+    } catch (e) {
+      console.error(e);
+      showToast({ text: e instanceof Error ? e.message : "Upload failed.", err: true });
+    } finally {
+      setPhotoBusy(false);
+    }
+  };
 
   const openPart = useCallback(async (partId: number) => {
     try {
@@ -669,6 +822,28 @@ export default function MobileShell() {
           <div className="mb-row"><span className="mb-rk">Catalogue</span>
             <span className="mb-rv">{parts.length} parts</span></div>
         </div>
+        {/* Device-local settings. "Auto" tracks the phone's own light/dark
+            switch live; the choice never syncs — it is this device's alone. */}
+        <div className="mb-count">Appearance</div>
+        <div className="mb-rows">
+          <div className="mb-row">
+            <span className="mb-rk">Theme</span>
+            <span className="mb-seg">
+              {(["auto", "light", "dark"] as const).map((t) => (
+                <button key={t} className={"mb-segbtn" + (themePref === t ? " on" : "")}
+                  onClick={() => pickTheme(t)}>
+                  {t === "auto" ? "Auto" : t === "light" ? "Light" : "Dark"}
+                </button>
+              ))}
+            </span>
+          </div>
+          {themePref === "auto" && (
+            <div className="mb-row">
+              <span className="mb-rk">Following</span>
+              <span className="mb-rv">{sysLight ? "phone · light" : "phone · dark"}</span>
+            </div>
+          )}
+        </div>
         {/* What this device actually holds. The sync rules are the only thing
             keeping cost and margin off a customer's phone, and a rule that
             syncs nothing is indistinguishable from a rule that was never
@@ -1049,6 +1224,49 @@ export default function MobileShell() {
               {!isClient && d.notes && <div className="mb-row"><span className="mb-rk">Notes</span><span className="mb-rv">{d.notes}</span></div>}
             </div>
 
+            {/* Staff photo manager. Buttons hidden from clients, but the RPCs
+                behind them check is_staff() server-side — the hiding is UX,
+                the function is the control. */}
+            {!isClient && (
+              <>
+                <div className="mb-count">
+                  Photos{d.images.length > 0 ? ` · ${d.images.length}` : ""}
+                </div>
+                <div className="mb-padmin">
+                  {d.images.map((i, n) => (
+                    <div className={"mb-pcell" + (i.is_primary ? " star" : "")} key={i.id}>
+                      <img src={assetUrl(i.path)} alt="" loading="lazy"
+                        onClick={() => setViewer({
+                          items: d.images.map((im, m) => ({ path: im.path, label: `${d.sku} · photo ${m + 1} of ${d.images.length}` })),
+                          idx: n,
+                        })} />
+                      <div className="mb-pops">
+                        <button className={"mb-pop" + (i.is_primary ? " on" : "")}
+                          aria-label="Make primary" disabled={photoBusy || i.is_primary}
+                          onClick={() => { void makePrimary(i.id); }}>★</button>
+                        <button className="mb-pop del" aria-label="Delete photo"
+                          disabled={photoBusy}
+                          onClick={() => { void deletePhoto(i.id); }}>✕</button>
+                      </div>
+                    </div>
+                  ))}
+                  <button className="mb-pcell add" disabled={photoBusy}
+                    onClick={() => fileRef.current?.click()}>
+                    <span className="mb-addplus">＋</span>
+                    <span>{photoBusy ? "Working…" : "Add photo"}</span>
+                  </button>
+                </div>
+                {/* No `capture` attribute on purpose: without it the phone
+                    offers camera AND gallery; with it, camera only. */}
+                <input ref={fileRef} type="file" accept="image/*" hidden
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    e.target.value = "";
+                    if (f) void addPhoto(f);
+                  }} />
+              </>
+            )}
+
             {!isClient && d.ledger.length > 0 && (
               <>
                 <div className="mb-count">Recent movements</div>
@@ -1097,7 +1315,7 @@ export default function MobileShell() {
   );
 
   return (
-    <div className="mb-root">
+    <div className={"mb-root" + (light ? " light" : "")}>
       {tab === "home" ? homeView
         : tab === "info" ? infoView
         : tab === "cart" ? (isClient ? cartView : ordersView)

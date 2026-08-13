@@ -73,6 +73,17 @@ export const postMovement = <T>(
 /** Web-only: row counts per table in THIS device's local database. */
 export const deviceAudit = <T>() => call<T>("device_audit");
 
+// ─── staff photo admin (web-only) ────────────────────────────────────────
+/** Retire a photo everywhere: soft-deletes the row, then removes the file. */
+export const adminDeletePhoto = <T>(imageId: number) =>
+  call<T>("admin_delete_photo", { imageId });
+/** Make this photo the part's face. */
+export const adminSetPrimaryPhoto = <T>(imageId: number) =>
+  call<T>("admin_set_primary_photo", { imageId });
+/** Upload an (already resized) image and register it against the part. */
+export const adminAddPhoto = <T>(partId: number, blob: Blob, filename: string) =>
+  call<T>("admin_add_photo", { partId, blob, filename });
+
 // ─── customer requests (web-only) ────────────────────────────────────────
 /** A signed-in customer asks for parts. Creates a quote-status order server-side. */
 export const requestParts = <T>(items: { part_id: number; qty: number }[], note: string | null) =>
