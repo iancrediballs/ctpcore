@@ -206,3 +206,9 @@
 .mb-seccount{font-size:11px;font-weight:850;color:var(--amber);text-transform:uppercase;letter-spacing:.5px}
 /* one wide column on anything tablet-sized and up */
 @media (min-width:620px){.mb-secgrid{grid-template-columns:repeat(3,minmax(0,1fr))}}
+/* staff order desk */
+.mb-price-in{width:96px;flex:0 0 auto;height:40px;padding:0 10px;border-radius:10px;text-align:right;
+  background:var(--surf2);border:1.5px solid var(--line);color:var(--txt);font:inherit;font-size:16px;
+  font-weight:800;outline:none}
+.mb-price-in:focus{border-color:var(--amber)}
+.mb-price-in::placeholder{color:var(--dimmer);font-weight:600}

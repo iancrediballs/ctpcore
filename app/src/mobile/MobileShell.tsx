@@ -69,6 +69,20 @@ type MyLine = {
   id: number; qty: number; unit_price_minor: number | null;
   sku: string; name: string; catalogue_pn: string | null;
 };
+type StaffLine = {
+  id: number; part_id: number; qty: number; unit_price_minor: number;
+  sku: string; name: string; catalogue_pn: string | null;
+};
+type StaffOrder = {
+  id: number; number: string; status: string;
+  customer_name: string; customer_contact: string | null;
+  notes: string | null; created_at: string;
+  client_response: string | null; client_responded_at: string | null;
+  unpriced: number; total_minor: number;
+  stage: "to_price" | "with_customer" | "to_pick" | string;
+  lines: StaffLine[];
+};
+
 type MyRequest = {
   id: number; number: string; status: string; currency: string;
   notes: string | null; created_at: string;
@@ -192,6 +206,10 @@ export default function MobileShell() {
   const [audit, setAudit] = useState<{ table: string; rows: number }[] | null>(null);
   const [mine, setMine] = useState<MyRequest[] | null>(null);
   const [answering, setAnswering] = useState<number | null>(null);
+  const [orders, setOrders] = useState<StaffOrder[] | null>(null);
+  const [openOrder, setOpenOrder] = useState<number | null>(null);
+  const [draftPrices, setDraftPrices] = useState<Record<number, string>>({});
+  const [savingOrder, setSavingOrder] = useState(false);
   const toastTimer = useRef<number | undefined>(undefined);
 
   // ── who is this? ──
@@ -299,6 +317,57 @@ export default function MobileShell() {
   }, [isClient]);
   // Refresh when sync lands: the moment staff price the quote, it appears.
   useEffect(() => { if (isClient) loadMine(); }, [isClient, lastSynced, loadMine]);
+
+  // ── staff order desk ──
+  const loadOrders = useCallback(() => {
+    if (isClient) return;
+    api.staffOrders<StaffOrder[]>().then(setOrders).catch(console.error);
+  }, [isClient]);
+  useEffect(() => { if (!isClient) loadOrders(); }, [isClient, lastSynced, loadOrders]);
+
+  const savePrices = useCallback(async (o: StaffOrder) => {
+    setSavingOrder(true);
+    try {
+      const lines = o.lines
+        .map((l) => {
+          const typed = draftPrices[l.id];
+          const rand = typed == null || typed === "" ? l.unit_price_minor / 100 : Number(typed);
+          return { line_id: l.id, unit_price_minor: Math.round(rand * 100) };
+        })
+        .filter((l) => l.unit_price_minor > 0);
+      const res = await api.priceQuote<{ unpriced_left?: number; total_minor?: number }>(o.id, lines);
+      const left = Number(res?.unpriced_left ?? 0);
+      showToast({ text: left > 0
+        ? `Saved — ${left} line${left === 1 ? "" : "s"} still without a price, so ${o.number} can't be accepted yet.`
+        : `${o.number} priced: ${fmtR(Number(res?.total_minor ?? 0))}. It's on their phone now.` });
+      setDraftPrices({});
+      loadOrders();
+    } catch (e) {
+      console.error(e);
+      const msg = e instanceof Error ? e.message.replace(/^\[CTP web\] could not save prices: /, "") : "Could not save.";
+      showToast({ text: msg, err: true });
+    } finally {
+      setSavingOrder(false);
+    }
+  }, [draftPrices, showToast, loadOrders]);
+
+  const fillList = useCallback(async (o: StaffOrder) => {
+    setSavingOrder(true);
+    try {
+      const res = await api.fillQuoteFromList<{ unpriced_left?: number; total_minor?: number }>(o.id);
+      const left = Number(res?.unpriced_left ?? 0);
+      showToast({ text: left > 0
+        ? `Filled from list — ${left} part${left === 1 ? " has" : "s have"} no list price, fill by hand.`
+        : `Filled from list: ${fmtR(Number(res?.total_minor ?? 0))}.` });
+      setDraftPrices({});
+      loadOrders();
+    } catch (e) {
+      console.error(e);
+      showToast({ text: e instanceof Error ? e.message : "Could not fill.", err: true });
+    } finally {
+      setSavingOrder(false);
+    }
+  }, [showToast, loadOrders]);
 
   const answerQuote = useCallback(async (r: MyRequest, accept: boolean) => {
     setAnswering(r.id);
@@ -607,6 +676,117 @@ export default function MobileShell() {
     </div>
   );
 
+  // ─── staff: the order desk ─────────────────────────────────────────────────
+  const STAGES: { key: string; label: string; hint: string }[] = [
+    { key: "to_price",      label: "Needs pricing",   hint: "came in from a customer" },
+    { key: "with_customer", label: "With the customer", hint: "quoted, waiting on their answer" },
+    { key: "to_pick",       label: "Ready to pick",   hint: "accepted — pull the stock" },
+  ];
+
+  const ordersView = (
+    <div className="mb-view">
+      <div className="mb-top">
+        <div className="mb-brandrow">
+          <Brand />
+          <span className="mb-vlabel">Orders</span>
+          <span className={"mb-sync" + (connected ? "" : " off")}>
+            <span className="mb-dot" />{connected ? "synced" : "offline"}
+          </span>
+        </div>
+      </div>
+      <div className="mb-body">
+        {orders === null && <div className="mb-count">Loading…</div>}
+        {orders && STAGES.map((s) => {
+          const inStage = orders.filter((o) => o.stage === s.key);
+          if (inStage.length === 0) return null;
+          return (
+            <div key={s.key}>
+              <div className="mb-count">{s.label} · {inStage.length} — {s.hint}</div>
+              {inStage.map((o) => {
+                const open = openOrder === o.id;
+                return (
+                  <div className="mb-rows" key={o.id} style={{ marginBottom: 12 }}>
+                    <button className="mb-row" style={{ width: "100%", background: "none", border: 0, textAlign: "left" }}
+                      onClick={() => { setOpenOrder(open ? null : o.id); setDraftPrices({}); }}>
+                      <span style={{ flex: 1, minWidth: 0 }}>
+                        <div className="mb-cname">{o.customer_name}</div>
+                        <div className="mb-csku mb-mono">{o.number} · {o.lines.length} line{o.lines.length === 1 ? "" : "s"}</div>
+                      </span>
+                      <span className="mb-rv">
+                        {o.total_minor > 0 ? fmtR(o.total_minor) : <span style={{ color: "var(--warn)" }}>no price</span>}
+                      </span>
+                    </button>
+
+                    {open && (
+                      <>
+                        {o.notes && (
+                          <div className="mb-row">
+                            <span className="mb-rk">Their note</span>
+                            <span className="mb-rv">{o.notes}</span>
+                          </div>
+                        )}
+                        {o.lines.map((l) => (
+                          <div className="mb-row" key={l.id}>
+                            <span style={{ flex: 1, minWidth: 0 }}>
+                              <div className="mb-cname">{l.qty} × {l.name}</div>
+                              <div className="mb-csku mb-mono">{l.catalogue_pn ?? l.sku}</div>
+                            </span>
+                            {o.stage === "to_price" ? (
+                              <input className="mb-price-in" inputMode="decimal" placeholder="0.00"
+                                value={draftPrices[l.id] ?? (l.unit_price_minor > 0 ? String(l.unit_price_minor / 100) : "")}
+                                onChange={(e) => setDraftPrices((d) => ({ ...d, [l.id]: e.target.value }))} />
+                            ) : (
+                              <span className="mb-rv">{fmtR(l.unit_price_minor * l.qty)}</span>
+                            )}
+                          </div>
+                        ))}
+                        {o.stage === "to_price" && (
+                          <div className="mb-row" style={{ gap: 10 }}>
+                            <button className="mb-btn s" style={{ height: 46 }} disabled={savingOrder}
+                              onClick={() => { void fillList(o); }}>Fill from list</button>
+                            <button className="mb-btn p" style={{ height: 46 }} disabled={savingOrder}
+                              onClick={() => { void savePrices(o); }}>
+                              {savingOrder ? "Saving…" : "Send quote"}
+                            </button>
+                          </div>
+                        )}
+                        {o.stage === "with_customer" && (
+                          <div className="mb-row">
+                            <span className="mb-rk">Waiting</span>
+                            <span className="mb-rv">sent {timeAgo(o.created_at)} · they see it on their phone</span>
+                          </div>
+                        )}
+                        {o.stage === "to_pick" && (
+                          <div className="mb-row">
+                            <span className="mb-rk">Accepted</span>
+                            <span className="mb-rv" style={{ color: "var(--green)" }}>
+                              {o.client_responded_at ? timeAgo(o.client_responded_at) : "by the customer"}
+                            </span>
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })}
+        {orders && orders.length === 0 && (
+          <div className="mb-empty">
+            <h3>No orders yet</h3>
+            <p>Customer requests land here the moment they're sent.</p>
+          </div>
+        )}
+        <div className="mb-note">
+          Pricing here writes to the cloud, so the customer sees it. The desktop
+          app keeps its own separate database — pricing there does <b>not</b>
+          reach anyone's phone.
+        </div>
+      </div>
+    </div>
+  );
+
   const cartView = (
     <div className="mb-view">
       <div className="mb-top">
@@ -863,7 +1043,7 @@ export default function MobileShell() {
     <div className="mb-root">
       {tab === "home" ? homeView
         : tab === "info" ? infoView
-        : tab === "cart" ? cartView
+        : tab === "cart" ? (isClient ? cartView : ordersView)
         : listView}
       {sheet}
       {viewer && (
@@ -901,10 +1081,25 @@ export default function MobileShell() {
             Request
           </button>
         ) : (
-          <button className={"mb-tab" + (tab === "shelf" ? " on" : "")}
-            onClick={() => { setTab("shelf"); setQ(""); setSheetOpen(false); }}>
-            <TabShelf />Shelf
-          </button>
+          <>
+            <button className={"mb-tab" + (tab === "shelf" ? " on" : "")}
+              onClick={() => { setTab("shelf"); setQ(""); setSheetOpen(false); }}>
+              <TabShelf />Shelf
+            </button>
+            <button className={"mb-tab" + (tab === "cart" ? " on" : "")}
+              onClick={() => { setTab("cart"); setSheetOpen(false); }}>
+              <span className="mb-tabwrap">
+                <TabCart />
+                {/* Only what is waiting on US — a badge for someone else's
+                    homework is noise you learn to ignore. */}
+                {(() => {
+                  const n = (orders ?? []).filter((o) => o.stage === "to_price" || o.stage === "to_pick").length;
+                  return n > 0 ? <span className="mb-tabbadge">{n}</span> : null;
+                })()}
+              </span>
+              Orders
+            </button>
+          </>
         )}
         <button className={"mb-tab" + (tab === "info" ? " on" : "")}
           onClick={() => { setTab("info"); setSheetOpen(false); }}>

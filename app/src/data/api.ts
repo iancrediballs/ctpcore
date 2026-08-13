@@ -79,6 +79,16 @@ export const requestParts = <T>(items: { part_id: number; qty: number }[], note:
   call<T>("request_parts", { items, note });
 /** A client's own requests/quotes, newest first, with their lines. */
 export const myRequests = <T>() => call<T>("my_requests");
+// ─── staff order desk (web-only) ─────────────────────────────────────────
+/** Every order, grouped by what it is waiting on. */
+export const staffOrders = <T>() => call<T>("staff_orders");
+/** Set line prices on a quote. Staff only; rules enforced in the database. */
+export const priceQuote = <T>(orderId: number, lines: { line_id: number; unit_price_minor: number }[]) =>
+  call<T>("price_quote", { orderId, lines });
+/** Fill every line from the current list price. */
+export const fillQuoteFromList = <T>(orderId: number) =>
+  call<T>("fill_quote_from_list", { orderId });
+
 /** Accept or decline one of your own quotes. */
 export const respondToQuote = <T>(orderId: number, accept: boolean) =>
   call<T>("respond_to_quote", { orderId, accept });

@@ -668,6 +668,87 @@ async function myRequests(): Promise<unknown[]> {
   return out;
 }
 
+// ─── the staff order desk ────────────────────────────────────────────────────
+//
+// Reads from the local database, which for staff carries every order via the
+// ctp_data bucket. Grouped by what the order is WAITING ON rather than by its
+// status name, because "quote" means two different jobs depending on whether
+// anyone has priced it: one is ours, one is the customer's.
+async function staffOrders(): Promise<unknown[]> {
+  const orders = await all(
+    `SELECT so.id, so.number, so.status, so.currency, so.notes, so.created_at,
+            so.client_response, so.client_responded_at,
+            c.name AS customer_name, c.contact AS customer_contact
+       FROM sales_order so LEFT JOIN customer c ON c.id = so.customer_id
+      WHERE so.deleted_at IS NULL
+      ORDER BY so.created_at DESC, CAST(so.id AS INTEGER) DESC
+      LIMIT 60`
+  );
+  const out = [];
+  for (const o of orders) {
+    const lines = await all(
+      `SELECT sl.id, sl.qty, sl.unit_price_minor, sl.part_id,
+              p.sku, p.name, p.catalogue_pn
+         FROM sales_line sl LEFT JOIN part p ON p.id = sl.part_id
+        WHERE sl.order_id = ? AND sl.deleted_at IS NULL
+        ORDER BY CAST(sl.id AS INTEGER)`,
+      [String(o["id"])]
+    );
+    const mapped = lines.map((l) => ({
+      id: numId(l["id"], "sales_line.id"),
+      part_id: numId(l["part_id"], "part_id"),
+      qty: Number(l["qty"]),
+      unit_price_minor: Number(l["unit_price_minor"] ?? 0),
+      sku: str(l["sku"]),
+      name: nstr(l["name"]) ?? "(part unavailable)",
+      catalogue_pn: nstr(l["catalogue_pn"]),
+    }));
+    const status = str(o["status"]);
+    const unpriced = mapped.filter((l) => l.unit_price_minor <= 0).length;
+    out.push({
+      id: numId(o["id"], "sales_order.id"),
+      number: str(o["number"]),
+      status,
+      customer_name: nstr(o["customer_name"]) ?? "—",
+      customer_contact: nstr(o["customer_contact"]),
+      notes: nstr(o["notes"]),
+      created_at: str(o["created_at"]),
+      client_response: nstr(o["client_response"]),
+      client_responded_at: nstr(o["client_responded_at"]),
+      unpriced,
+      total_minor: mapped.reduce((t, l) => t + l.unit_price_minor * l.qty, 0),
+      // The queue this order sits in. Derived here so every surface agrees.
+      stage:
+        status === "quote" && (unpriced > 0 || mapped.length === 0) ? "to_price"
+        : status === "quote" ? "with_customer"
+        : status === "confirmed" ? "to_pick"
+        : status,
+      lines: mapped,
+    });
+  }
+  return out;
+}
+
+async function priceQuote(a: Record<string, unknown>): Promise<unknown> {
+  const orderId = numId(a["orderId"], "orderId");
+  const raw = Array.isArray(a["lines"]) ? (a["lines"] as unknown[]) : [];
+  const lines = raw.map((it) => {
+    const o = (it ?? {}) as Record<string, unknown>;
+    return { line_id: Number(o["line_id"]), unit_price_minor: Math.round(Number(o["unit_price_minor"])) };
+  }).filter((l) => Number.isInteger(l.line_id) && l.unit_price_minor > 0);
+  if (lines.length === 0) throw new Error("[CTP web] no prices to save.");
+  const { data, error } = await supabase.rpc("price_quote", { order_id: orderId, lines });
+  if (error) throw new Error(`[CTP web] could not save prices: ${error.message}`);
+  return data;
+}
+
+async function fillFromList(a: Record<string, unknown>): Promise<unknown> {
+  const orderId = numId(a["orderId"], "orderId");
+  const { data, error } = await supabase.rpc("fill_quote_from_list", { order_id: orderId });
+  if (error) throw new Error(`[CTP web] could not fill prices: ${error.message}`);
+  return data;
+}
+
 /** Accept or decline a quote. All the rules live in the database (0021). */
 async function respondToQuote(a: Record<string, unknown>): Promise<unknown> {
   const orderId = numId(a["orderId"], "orderId");
@@ -764,6 +845,9 @@ const PORTED: Record<string, Handler> = {
   request_parts: (a) => requestParts(a),
   my_requests: () => myRequests(),
   respond_to_quote: (a) => respondToQuote(a),
+  staff_orders: () => staffOrders(),
+  price_quote: (a) => priceQuote(a),
+  fill_quote_from_list: (a) => fillFromList(a),
   device_audit: () => deviceAudit(),
 };
 
