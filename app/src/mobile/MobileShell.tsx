@@ -109,22 +109,26 @@ const timeAgo = (iso: string): string => {
   return new Date(t).toLocaleDateString("en-ZA");
 };
 
-// The brand mark lives in the same bucket as every other asset.
+// The brand mark ships IN the app bundle (public/brand/), not the asset
+// bucket — the logo should draw even before the first sync or with no signal,
+// and bundling it means a redeploy updates it with no bucket credentials.
+// v2 (2026-08-13): rebuilt from the refined "Logo Main.svg" — spill specks
+// removed, slashes re-cut as clean geometry, edges smoothed.
 //
 // It ships as TWO layers on one shared canvas — the wordmark + stripes, and
 // the truck alone — so the truck can drive off and back without the rest of
 // the logo moving. Same dimensions, stacked, so there is no alignment maths:
 // see .mb-brand in mobile.css.
-const LOGO_BODY = "assets/brand/ctp_logo_body_v1.png";
-const LOGO_TRUCK = "assets/brand/ctp_truck_v1.png";
+const LOGO_BODY = "/brand/ctp_logo_body_v2.png";
+const LOGO_TRUCK = "/brand/ctp_truck_v2.png";
 
 /** The logo, with a truck that occasionally goes for a drive. */
 function Brand() {
   return (
     <span className="mb-brand" aria-label="China Truck Parts">
-      <img className="mb-brand-body" src={assetUrl(LOGO_BODY)} alt=""
+      <img className="mb-brand-body" src={LOGO_BODY} alt=""
         onError={(e) => { e.currentTarget.style.display = "none"; }} />
-      <img className="mb-brand-truck" src={assetUrl(LOGO_TRUCK)} alt="" aria-hidden="true"
+      <img className="mb-brand-truck" src={LOGO_TRUCK} alt="" aria-hidden="true"
         onError={(e) => { e.currentTarget.style.display = "none"; }} />
     </span>
   );
