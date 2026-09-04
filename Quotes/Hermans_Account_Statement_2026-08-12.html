@@ -1,0 +1,140 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Hermans Panel Beaters — Account Statement</title>
+<style>
+:root{--ink:#14181d;--dim:#5b6672;--line:#d9dee4;--amber:#c25e00;--amberbg:#fff3e6;
+      --red:#b3261e;--redbg:#fdecea;--green:#0a7d47}
+*{box-sizing:border-box}
+body{margin:0;background:#eef1f4;color:var(--ink);
+ font:400 14px/1.45 -apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif}
+.page{max-width:860px;margin:24px auto;background:#fff;padding:40px 44px;box-shadow:0 2px 18px rgba(0,0,0,.08)}
+@media print{body{background:#fff}.page{margin:0;box-shadow:none;padding:10mm 12mm}}
+.mono{font-family:ui-monospace,Consolas,Menlo,monospace}
+h1{font-size:21px;margin:0;letter-spacing:-.2px}
+h2{font-size:13px;text-transform:uppercase;letter-spacing:1.2px;color:var(--amber);
+   border-bottom:2px solid var(--amber);padding-bottom:6px;margin:30px 0 12px}
+.head{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid var(--ink);padding-bottom:16px}
+.brand{font-weight:900;font-size:17px}.brand span{color:var(--amber)}
+.meta{text-align:right;font-size:12.5px;color:var(--dim)}
+.meta b{color:var(--ink)}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{font-size:11px;text-transform:uppercase;letter-spacing:.8px;color:var(--dim);
+   text-align:left;padding:7px 8px;border-bottom:2px solid var(--line)}
+td{padding:6px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+.r{text-align:right;white-space:nowrap}
+.tot td{font-weight:800;border-top:2px solid var(--ink);border-bottom:0;font-size:14px}
+.flag{background:var(--amberbg);border-left:4px solid var(--amber);padding:10px 14px;margin:8px 0;font-size:13px}
+.flag.red{background:var(--redbg);border-color:var(--red)}
+.flag b{display:block;margin-bottom:2px}
+.zero{background:var(--redbg)}
+.zero .r{color:var(--red);font-weight:800}
+.osub td{font-weight:700;background:#f6f8fa}
+.badge{display:inline-block;font-size:10px;font-weight:800;letter-spacing:.6px;padding:2px 7px;
+       border-radius:4px;background:#e7f6ee;color:var(--green);text-transform:uppercase}
+.badge.warn{background:var(--redbg);color:var(--red)}
+.small{font-size:12px;color:var(--dim)}
+</style></head><body><div class="page">
+
+<div class="head">
+  <div>
+    <div class="brand">CHINA TRUCK <span>PARTS</span></div>
+    <div class="small">6 Daae Park · Imbonini Industrial Park · Shakas Head · KZN</div>
+    <h1 style="margin-top:14px">Account Statement — Hermans Panel Beaters</h1>
+    <div class="small">1 York Place, New Germany, Pinetown, KZN · Contact: Denver · +27 83 733 5904 · Acc HERMANS / HER001</div>
+  </div>
+  <div class="meta">Generated <b>12 Aug 2026</b><br>Source <b>CTP Core</b><br>Currency <b>ZAR, excl VAT</b></div>
+</div>
+
+<h2>Orders on account</h2>
+<table>
+<tr><th>Order</th><th>Date</th><th>Captured from</th><th class="r">Lines</th><th class="r">Unpriced</th><th class="r">Value excl VAT</th></tr>
+<tr><td class="mono">INV-26072403</td><td>24 Jul 2026</td><td>Signed invoice 26072403 · PO 21261</td><td class="r">7</td><td class="r">—</td><td class="r">R 10 771.32</td></tr>
+<tr><td class="mono">SO-1003</td><td>collected, backdated</td><td>Collection list 1</td><td class="r">6</td><td class="r">1</td><td class="r">R 18 291.32</td></tr>
+<tr><td class="mono">SO-1004</td><td>collected, backdated</td><td>Collection list 2</td><td class="r">3</td><td class="r">1</td><td class="r">R 2 876.00</td></tr>
+<tr><td class="mono">SO-1005</td><td>collected, backdated</td><td>Collection list 3</td><td class="r">17</td><td class="r">2</td><td class="r">R 39 201.27</td></tr>
+<tr class="tot"><td colspan="3">Total invoiced to date</td><td class="r">33</td><td class="r">4</td><td class="r">R 71 139.91</td></tr>
+</table>
+<p class="small">VAT at 15% is recorded on every order. Total is <b>understated</b> — four lines are on the system at R0 pending prices (flagged below).</p>
+
+<h2>Flagged — needs a decision</h2>
+<div class="flag red"><b>4 lines invoiced at R0 — prices outstanding</b>
+Front Door Assembly R/H <span class="mono">6100010-H02</span> ×2 (SO-1003, SO-1005) ·
+Top Cover Welding Assembly <span class="mono">5700010-B45</span> (SO-1004) ·
+Front Fog Lamp R/H <span class="mono">3732020-1063-C00</span> (SO-1005).
+Corrected prices expected from Ian; totals update the moment they land.</div>
+
+<div class="flag red"><b>Price list vs invoiced prices disagree broadly</b>
+Invoice 26072403 charged 35–50% of the loaded Retail Price List on every overlapping part
+(e.g. L/H Bumper: invoiced R 2 162.96 vs list R 6 360.62). SO-1003/4/5 were priced off the list and are
+therefore <b>likely overstated</b> until the corrected Hermans pricing is applied.</div>
+
+<div class="flag"><b>Possible double-count — confirm with Denver</b>
+R/H Bumper Bracket <span class="mono">2803650B1063</span> and Head Lamp R/H <span class="mono">3711020-1544</span>
+appear on BOTH invoice 26072403 (24 Jul) and collection list 3 (SO-1005). If collected once, not twice,
+one unit of each must be reversed.</div>
+
+<div class="flag"><b>CAB COMPLETE — R 380 000 in the order book, not on the invoice</b>
+The handwritten July order (PO 21261) opens with “1× CAB COMPLETE R380 000”. The printed invoice's line
+numbering starts at 2 — line 1 was removed or invoiced separately. Not captured in CTP Core. R380k question.</div>
+
+<div class="flag"><b>Radiator Grille shows −1 on hand</b>
+Pre-existing artifact of the demo data (demo order sold 4, only 3 ever received) — predates the Hermans
+capture. Needs a stock count adjustment.</div>
+
+<h2>Stock after Hermans collections</h2>
+<table>
+<tr><th>Part</th><th class="mono">OEM PN</th><th class="r">On hand</th><th></th></tr>
+<tr><td>Top Cover Welding Assembly</td><td class="mono">5700010-B45</td><td class="r">1</td><td><span class="badge warn">Low</span></td></tr>
+<tr><td>R/H Side Outer Panel Assembly</td><td class="mono">5400020-H02</td><td class="r">1</td><td><span class="badge warn">Low</span></td></tr>
+<tr><td>Roof Sun Visor · R/H Deflector · Lower Deflector R/H · Mirror R/H Base Cover</td><td class="mono">—</td><td class="r">2 each</td><td><span class="badge warn">Low</span></td></tr>
+<tr><td>Front Door Assembly R/H · Door Lower Trim R/H · Fenders R/H · R/H Bracket · Head Lamp R/H</td><td class="mono">—</td><td class="r">3 each</td><td><span class="badge">OK</span></td></tr>
+<tr><td>All other collected parts</td><td class="mono">—</td><td class="r">≥ 4</td><td><span class="badge">OK</span></td></tr>
+</table>
+
+<h2>Line detail</h2>
+<table>
+<tr><th>Order</th><th>Description (as ordered)</th><th class="mono">Part number</th><th class="r">Qty</th><th class="r">Price</th></tr>
+<tr class="osub"><td colspan="5">INV-26072403 — 24 Jul 2026 (prices as invoiced)</td></tr>
+<tr><td class="mono">26072403</td><td>Front Bumper L/H Spoiler</td><td class="mono">2803721B1063-G</td><td class="r">1</td><td class="r">R 432.22</td></tr>
+<tr><td class="mono">26072403</td><td>Front Bumper L/H</td><td class="mono">2803035B1063-DQ</td><td class="r">1</td><td class="r">R 2 162.96</td></tr>
+<tr><td class="mono">26072403</td><td>Front Bumper L/H Decorative Panel</td><td class="mono">2803031B1063-G</td><td class="r">1</td><td class="r">R 350.00</td></tr>
+<tr><td class="mono">26072403</td><td>Front Bumper L/H Bracket Assembly</td><td class="mono">2803645B1063</td><td class="r">1</td><td class="r">R 1 440.00</td></tr>
+<tr><td class="mono">26072403</td><td>Head Lamp L/H</td><td class="mono">3711015-1544</td><td class="r">1</td><td class="r">R 2 473.48</td></tr>
+<tr><td class="mono">26072403</td><td>Head Lamp R/H</td><td class="mono">3711020-1544</td><td class="r">1</td><td class="r">R 2 472.66</td></tr>
+<tr><td class="mono">26072403</td><td>Front Bumper R/H Bracket Assembly</td><td class="mono">2803650B1063</td><td class="r">1</td><td class="r">R 1 440.00</td></tr>
+<tr class="osub"><td colspan="5">SO-1003 — collection 1 (list prices pending correction)</td></tr>
+<tr><td class="mono">SO-1003</td><td>R/H Cab Aerokit Upright Deflector</td><td class="mono">5704222CB45-G</td><td class="r">1</td><td class="r">R 2 038.40</td></tr>
+<tr><td class="mono">SO-1003</td><td>R/H Cab Side Panel Outer Skin</td><td class="mono">5400020-H02</td><td class="r">1</td><td class="r">R 8 000.00</td></tr>
+<tr><td class="mono">SO-1003</td><td>R/H Cab Fender Extension</td><td class="mono">5103132-B45-G</td><td class="r">1</td><td class="r">R 869.06</td></tr>
+<tr><td class="mono">SO-1003</td><td>R/H Upper Stepbox</td><td class="mono">5103122-B45-G</td><td class="r">1</td><td class="r">R 2 865.33</td></tr>
+<tr><td class="mono">SO-1003</td><td>R/H Door Extension (Door Lower Trim Panel R/H)</td><td class="mono">6101590-B83</td><td class="r">1</td><td class="r">R 4 518.53</td></tr>
+<tr class="zero"><td class="mono">SO-1003</td><td>Door Assembly R/H</td><td class="mono">6100010-H02</td><td class="r">1</td><td class="r">R 0.00</td></tr>
+<tr class="osub"><td colspan="5">SO-1004 — collection 2</td></tr>
+<tr><td class="mono">SO-1004</td><td>R/H Windscreen Post Outer Trim</td><td class="mono">5302720-H02</td><td class="r">1</td><td class="r">R 601.59</td></tr>
+<tr><td class="mono">SO-1004</td><td>Outer Sunvisor</td><td class="mono">5704011-B45</td><td class="r">1</td><td class="r">R 2 274.41</td></tr>
+<tr class="zero"><td class="mono">SO-1004</td><td>Dome Panel Centre &amp; Sides</td><td class="mono">5700010-B45</td><td class="r">1</td><td class="r">R 0.00</td></tr>
+<tr class="osub"><td colspan="5">SO-1005 — collection 3</td></tr>
+<tr class="zero"><td class="mono">SO-1005</td><td>R/H Foglight</td><td class="mono">3732020-1063-C00</td><td class="r">1</td><td class="r">R 0.00</td></tr>
+<tr><td class="mono">SO-1005</td><td>R/H Bumper End Trim</td><td class="mono">2803032B1063-G</td><td class="r">1</td><td class="r">R 452.81</td></tr>
+<tr><td class="mono">SO-1005</td><td>R/H Mirror Arm Lower Cover</td><td class="mono">8202062-B45-C00-G</td><td class="r">1</td><td class="r">R 232.88</td></tr>
+<tr><td class="mono">SO-1005</td><td>R/H Upper Stepbox</td><td class="mono">5103122-B45-G</td><td class="r">1</td><td class="r">R 2 865.33</td></tr>
+<tr><td class="mono">SO-1005</td><td>R/H Lower Stepbox</td><td class="mono">5103022-1544-G</td><td class="r">1</td><td class="r">R 1 401.80</td></tr>
+<tr><td class="mono">SO-1005</td><td>Lower Grille</td><td class="mono">2803015B1063-G</td><td class="r">1</td><td class="r">R 4 647.05</td></tr>
+<tr><td class="mono">SO-1005</td><td>Centre Bumper</td><td class="mono">2803010B1063-DQ</td><td class="r">1</td><td class="r">R 4 642.52</td></tr>
+<tr><td class="mono">SO-1005</td><td>R/H H/Lamp <span class="badge">priced from invoice</span></td><td class="mono">3711020-1544</td><td class="r">1</td><td class="r">R 2 472.66</td></tr>
+<tr><td class="mono">SO-1005</td><td>R/H Door Hinge Cover Panel</td><td class="mono">5302842-B45-G</td><td class="r">1</td><td class="r">R 454.84</td></tr>
+<tr><td class="mono">SO-1005</td><td>R/H Bumper Bracket / Frame</td><td class="mono">2803650B1063</td><td class="r">1</td><td class="r">R 2 856.41</td></tr>
+<tr><td class="mono">SO-1005</td><td>R/H Mirror Assy</td><td class="mono">8202020-H02-C00</td><td class="r">1</td><td class="r">R 2 983.39</td></tr>
+<tr><td class="mono">SO-1005</td><td>R/H Fender Extension</td><td class="mono">5103132-B45-G</td><td class="r">1</td><td class="r">R 869.06</td></tr>
+<tr><td class="mono">SO-1005</td><td>Centre Bumper R/H Ext Trim Centre</td><td class="mono">2803382B1063</td><td class="r">1</td><td class="r">R 14.36</td></tr>
+<tr><td class="mono">SO-1005</td><td>R/H Bonnet Deflector</td><td class="mono">5302622-B45-G</td><td class="r">1</td><td class="r">R 1 564.56</td></tr>
+<tr><td class="mono">SO-1005</td><td>R/H Bumper</td><td class="mono">2803040B1063-DQ</td><td class="r">1</td><td class="r">R 9 225.07</td></tr>
+<tr class="zero"><td class="mono">SO-1005</td><td>R/H Door</td><td class="mono">6100010-H02</td><td class="r">1</td><td class="r">R 0.00</td></tr>
+<tr><td class="mono">SO-1005</td><td>R/H Door Extension (Door Lower Trim Panel R/H)</td><td class="mono">6101590-B83</td><td class="r">1</td><td class="r">R 4 518.53</td></tr>
+</table>
+
+<p class="small" style="margin-top:26px">Every line is backed by an append-only stock movement in CTP Core and reverses cleanly if corrected.
+“R/H Door Extension” is confirmed as Door Lower Trim Panel R/H <span class="mono">6101590-B83</span> per Ian, 12 Aug 2026.
+R 14.36 on the Centre Lower Panel is the loaded list price and looks wrong — included in the pending price correction.</p>
+
+</div></body></html>
