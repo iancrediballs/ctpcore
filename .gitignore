@@ -33,3 +33,6 @@ Master_Cutouts_White/
 
 # ── generated output (rebuild with catalogue_gen.py) ────────
 CTP_Parts_Catalogue.html
+
+# cloud migration artifacts
+_cloud_migration/
