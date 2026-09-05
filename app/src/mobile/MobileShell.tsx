@@ -241,7 +241,7 @@ const TabInfo = () => (
 
 export default function MobileShell() {
   const status = useStatus();
-  const { session, signOut } = useAuth();
+  const { session, role: dbRole, signOut } = useAuth();
 
   const [tab, setTab] = useState<"home" | "find" | "shelf" | "cart" | "info">("home");
   const [parts, setParts] = useState<PartRow[]>([]);
@@ -262,6 +262,11 @@ export default function MobileShell() {
   const [mine, setMine] = useState<MyRequest[] | null>(null);
   const [answering, setAnswering] = useState<number | null>(null);
   const [orders, setOrders] = useState<StaffOrder[] | null>(null);
+  // A load that fails must say so. Before this, a rejected promise left `orders`
+  // at null forever and the view sat on "Loading…" with no way out — one bad row
+  // anywhere in the batch silently took down the whole order desk.
+  const [ordersErr, setOrdersErr] = useState<string | null>(null);
+  const [mineErr, setMineErr] = useState<string | null>(null);
   const [openOrder, setOpenOrder] = useState<number | null>(null);
   const [draftPrices, setDraftPrices] = useState<Record<number, string>>({});
   const [savingOrder, setSavingOrder] = useState(false);
@@ -301,8 +306,19 @@ export default function MobileShell() {
   // no bins and no stock movements in its database at all; the UI below hides
   // those fields to match, but hiding them is cosmetic. The stream is the
   // control. Anything not gated there is not protected by this.
-  const role = tokenRole(session?.access_token);
-  const isClient = role === "customer";
+  //
+  // Two sources, deliberately ordered. The token claim is authoritative when it
+  // is there, because it is what actually selected this device's sync stream.
+  // When it is absent — the access-token hook not enabled yet, or a session
+  // minted before it was — fall back to the app_user row AuthProvider read.
+  //
+  // The order matters less than the ending: an unknown role resolves to the
+  // CLIENT view, never the staff one. Getting this backwards means a device we
+  // cannot identify is shown the staff interface — bins, cost, margin, the
+  // order desk. Least privilege is the only safe default for a value that can
+  // legitimately be missing.
+  const role = tokenRole(session?.access_token) ?? dbRole;
+  const isClient = role == null || role === "customer";
 
   // ── data loads (all local SQLite via PowerSync — cheap to re-run) ──
   const refresh = useCallback(() => {
@@ -470,7 +486,14 @@ export default function MobileShell() {
 
   const loadMine = useCallback(() => {
     if (!isClient) return;
-    api.myRequests<MyRequest[]>().then(setMine).catch(console.error);
+    setMineErr(null);
+    api.myRequests<MyRequest[]>()
+      .then((r) => { setMine(r); setMineErr(null); })
+      .catch((e) => {
+        console.error(e);
+        setMine([]);
+        setMineErr(e?.message ? String(e.message) : "Could not load your requests.");
+      });
   }, [isClient]);
   // Refresh when sync lands: the moment staff price the quote, it appears.
   useEffect(() => { if (isClient) loadMine(); }, [isClient, lastSynced, loadMine]);
@@ -478,7 +501,14 @@ export default function MobileShell() {
   // ── staff order desk ──
   const loadOrders = useCallback(() => {
     if (isClient) return;
-    api.staffOrders<StaffOrder[]>().then(setOrders).catch(console.error);
+    setOrdersErr(null);
+    api.staffOrders<StaffOrder[]>()
+      .then((r) => { setOrders(r); setOrdersErr(null); })
+      .catch((e) => {
+        console.error(e);
+        setOrders([]);
+        setOrdersErr(e?.message ? String(e.message) : "Could not load the order desk.");
+      });
   }, [isClient]);
   useEffect(() => { if (!isClient) loadOrders(); }, [isClient, lastSynced, loadOrders]);
 
@@ -922,7 +952,18 @@ export default function MobileShell() {
         </div>
       </div>
       <div className="mb-body">
-        {orders === null && <div className="mb-count">Loading…</div>}
+        {orders === null && !ordersErr && <div className="mb-count">Loading…</div>}
+        {ordersErr && (
+          <div className="mb-empty">
+            <div>Could not load the order desk.</div>
+            <div className="mb-csku" style={{ marginTop: 6 }}>{ordersErr}</div>
+            <button className="mb-btn s" style={{ marginTop: 14, maxWidth: 220, margin: "14px auto 0" }}
+              onClick={loadOrders}>Try again</button>
+          </div>
+        )}
+        {orders !== null && !ordersErr && orders.length === 0 && (
+          <div className="mb-empty">No orders on the desk.</div>
+        )}
         {orders && STAGES.map((s) => {
           const inStage = orders.filter((o) => o.stage === s.key);
           if (inStage.length === 0) return null;
@@ -1078,6 +1119,14 @@ export default function MobileShell() {
         )}
 
         {/* Everything they have already sent, and any quote waiting on them. */}
+        {mineErr && (
+          <div className="mb-empty">
+            <div>Could not load your quotes.</div>
+            <div className="mb-csku" style={{ marginTop: 6 }}>{mineErr}</div>
+            <button className="mb-btn s" style={{ marginTop: 14, maxWidth: 220, margin: "14px auto 0" }}
+              onClick={loadMine}>Try again</button>
+          </div>
+        )}
         {mine && mine.length > 0 && (
           <>
             <div className="mb-count" style={{ marginTop: 22 }}>Sent to us</div>

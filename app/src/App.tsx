@@ -103,7 +103,16 @@ type PostResult = {
   duplicate: boolean;
 };
 
-export const money = (c: number | null) => (c == null ? "—" : "$" + (c / 100).toFixed(2));
+// Every price in this database is South African rand, held as integer cents.
+// This read "$" until 2026-09-05 — a leftover from the seed data, and wrong on
+// every screen in the app: the counter, part detail, the order desk, and the
+// accounting export queue all print through here. Thousands are spaced rather
+// than comma'd, which is the SA convention and keeps R1 234 567,89-scale
+// numbers scannable on a warehouse screen.
+export const money = (c: number | null) =>
+  c == null ? "—" : "R" + (c / 100).toLocaleString("en-ZA", {
+    minimumFractionDigits: 2, maximumFractionDigits: 2,
+  });
 export const stockClass = (n: number) => (n <= 0 ? "s-out" : n <= 5 ? "s-low" : "s-ok");
 
 type View = "counter" | "parts" | "sales" | "accounting" | "diagrams" | "explorer" | "jefrey";

@@ -125,6 +125,15 @@ fn init_db(path: &PathBuf) -> rusqlite::Result<Connection> {
     if ver < 12 {
         conn.execute_batch(include_str!("../migrations/0013_pricing_reset.sql"))?;
         conn.execute_batch("PRAGMA user_version = 12;")?;
+        ver = 12;
+    }
+
+    // v12 -> v13: real company identity on the letterhead (0005 shipped a
+    // placeholder Chinese company and USD; this business is South African and
+    // trades in rand).
+    if ver < 13 {
+        conn.execute_batch(include_str!("../migrations/0014_company_identity.sql"))?;
+        conn.execute_batch("PRAGMA user_version = 13;")?;
     }
 
     Ok(conn)
@@ -714,9 +723,42 @@ fn list_parts(db: State<Db>) -> Result<Vec<PartRow>, String> {
 //  under app/public/assets (dev path via CARGO_MANIFEST_DIR); image bytes come
 //  from the webview as a Vec<u8> so no fs/dialog plugin is needed.
 // =========================================================================
+//
+// Where uploaded photos and diagrams land.
+//
+// This used to be `env!("CARGO_MANIFEST_DIR")/../public/assets`, which is baked
+// in AT COMPILE TIME and points at the developer's own source tree. In `tauri
+// dev` that happens to be the folder Vite serves, so it worked. In a packaged
+// .msi it is a path that does not exist on the machine — so every photo upload
+// failed to write, and anything that had been written could never be served,
+// because the installed app serves its bundled dist/ instead.
+//
+// Runtime resolution instead: use the source tree when it is actually there
+// (dev, where hot-reload is the point), otherwise the per-user app-data dir
+// alongside the database. OnceLock so the probe runs once, not per upload.
+fn assets_root() -> &'static std::path::PathBuf {
+    static ROOT: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+    ROOT.get_or_init(|| {
+        let dev = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..").join("public").join("assets");
+        if dev.is_dir() {
+            return dev;
+        }
+        // Packaged: mirror the DB location, which Tauri guarantees is writable.
+        // Falls back to the executable's own folder only if even that fails.
+        std::env::var_os("APPDATA")
+            .map(std::path::PathBuf::from)
+            .map(|p| p.join("net.chinatruckparts.fleetview").join("assets"))
+            .or_else(|| {
+                std::env::current_exe().ok()
+                    .and_then(|p| p.parent().map(|d| d.join("assets")))
+            })
+            .unwrap_or_else(|| std::path::PathBuf::from("assets"))
+    })
+}
+
 fn assets_dir(sub: &str) -> std::path::PathBuf {
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("..").join("public").join("assets").join(sub)
+    assets_root().join(sub)
 }
 fn now_stamp() -> u128 {
     std::time::SystemTime::now()
@@ -2069,10 +2111,43 @@ fn open_url(url: String) -> Result<(), String> {
 fn main() {
     tauri::Builder::default()
         .setup(|app| {
-            let dir = app.path().app_data_dir().expect("no app data dir");
+            let dir = app.path().app_data_dir()
+                .map_err(|e| format!("Could not locate the application data folder.\n\n{e}"))?;
             std::fs::create_dir_all(&dir).ok();
             let db_path = dir.join("fleetview.db");
-            let conn = init_db(&db_path).expect("db init failed");
+
+            // A release build has no console (windows_subsystem = "windows"), so a
+            // panic here used to mean the process simply vanished — no window, no
+            // message, nothing to act on. Anyone hitting a locked or corrupted
+            // database saw an app that "does not open". Report it instead, with
+            // the path, so the problem is at least nameable.
+            let conn = match init_db(&db_path) {
+                Ok(c) => c,
+                Err(e) => {
+                    let msg = format!(
+                        "CTP Core could not open its local database.\n\n\
+                         {e}\n\n\
+                         Database file:\n{}\n\n\
+                         If this persists, close any other copy of CTP Core that is \
+                         running. The cloud database is unaffected — nothing has been lost.",
+                        db_path.display()
+                    );
+                    eprintln!("{msg}");
+                    #[cfg(target_os = "windows")]
+                    {
+                        // A message box is the only channel a windowless build has.
+                        let _ = std::process::Command::new("mshta")
+                            .arg(format!(
+                                "javascript:var s=new ActiveXObject('WScript.Shell');\
+                                 s.Popup({:?},0,'CTP Core',16);close()",
+                                msg
+                            ))
+                            .spawn()
+                            .and_then(|mut c| c.wait());
+                    }
+                    return Err(msg.into());
+                }
+            };
             app.manage(Db(Mutex::new(conn)));
             // cache remote (rusauto) diagrams to local disk in the background
             std::thread::spawn(move || cache_supplier_diagrams(db_path));

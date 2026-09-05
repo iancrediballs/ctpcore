@@ -24,10 +24,19 @@ Thumbs.db
 # ── temporary preview scratch ───────────────────────────────
 /_*.png
 
-# ── large binary assets: moving to Supabase Storage in M2, and regenerable ──
-# (kept OUT of git so commits stay fast; back these up separately)
+# ── large binary assets: the Supabase `ctp-assets` bucket is the system of ──
+# record for all of these. Kept OUT of git so commits stay fast.
+#
+# They are NOT lost by being ignored — restore the whole set (421 files,
+# 116 MB) on any machine with:
+#     node tools/pull_assets.mjs
+# tools/manifest.txt is tracked, so the list of what should exist IS in git
+# even though the bytes are not.
 app/public/assets/photos/
 app/public/assets/models/
+app/public/assets/diagrams/
+app/public/assets/sections/
+app/public/assets/brand/
 Master_Cutouts_White/
 *.CR2
 

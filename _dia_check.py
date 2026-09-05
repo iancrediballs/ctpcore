@@ -1,6 +1,6 @@
 import os, sqlite3
 DB = os.path.join(os.environ["APPDATA"], "net.chinatruckparts.fleetview", "fleetview.db")
-ASSET = r"C:\Users\Rick\Claude\Projects\China Truck Parts ERP\app\public\assets\diagrams"
+ASSET = os.path.join(os.path.dirname(os.path.abspath(__file__)), "app", "public", "assets", "diagrams")
 con = sqlite3.connect(DB); con.row_factory = sqlite3.Row; cur = con.cursor()
 print("=== part_detail diagram resolution (sample) ===")
 rows = cur.execute("SELECT sku, diagram_image, diagram_item FROM part_detail WHERE diagram_image IS NOT NULL ORDER BY sku LIMIT 12").fetchall()

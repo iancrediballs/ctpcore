@@ -19,7 +19,14 @@ export type DocOrder = {
   subtotal_minor: number; tax_rate_bps: number; tax_minor: number; total_minor: number;
 };
 
-const SYMBOLS: Record<string, string> = { USD: "$", EUR: "€", GBP: "£", CNY: "¥", AED: "AED " };
+// ZAR is the one that matters — the company trades in rand — but the map is
+// keyed loosely because the company row has historically carried "Rand" as
+// well as "ZAR", and an unrecognised code used to fall through to the ugly
+// "ZAR 1234.56" form on a printed tax invoice.
+const SYMBOLS: Record<string, string> = {
+  ZAR: "R", RAND: "R", R: "R",
+  USD: "$", EUR: "€", GBP: "£", CNY: "¥", AED: "AED ",
+};
 
 function esc(s: string): string {
   return s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]!));
@@ -32,8 +39,10 @@ function docType(status: string, hasTax: boolean): string {
 }
 
 export function buildDocHTML(order: DocOrder, company: DocCompany): string {
-  const sym = SYMBOLS[company.currency] ?? company.currency + " ";
-  const m = (c: number) => sym + (c / 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const sym = SYMBOLS[(company.currency ?? "").trim().toUpperCase()] ?? company.currency + " ";
+  // Locale pinned rather than left to the machine: a printed tax invoice must
+  // not change its number formatting depending on whose PC produced it.
+  const m = (c: number) => sym + (c / 100).toLocaleString("en-ZA", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const date = (order.fulfilled_at ?? order.created_at).slice(0, 10);
   const title = docType(order.status, order.tax_rate_bps > 0);
 
