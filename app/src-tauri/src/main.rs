@@ -134,6 +134,15 @@ fn init_db(path: &PathBuf) -> rusqlite::Result<Connection> {
     if ver < 13 {
         conn.execute_batch(include_str!("../migrations/0014_company_identity.sql"))?;
         conn.execute_batch("PRAGMA user_version = 13;")?;
+        ver = 13;
+    }
+
+    // v13 -> v14: cross-reference and fitment for the real JH6 parts. Both
+    // tables held rows only for the demo parts 0012 retired; the cloud got the
+    // same fact set in its own migration 0027.
+    if ver < 14 {
+        conn.execute_batch(include_str!("../migrations/0015_xref_fitment.sql"))?;
+        conn.execute_batch("PRAGMA user_version = 14;")?;
     }
 
     Ok(conn)
