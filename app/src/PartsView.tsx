@@ -6,7 +6,7 @@ type PartRow = {
   id: number; sku: string; locator: string | null; name: string; side: string | null;
   category_code: string | null; catalogue_pn: string | null; inventory_pn: string | null;
   status: string | null; match_status: string | null; qty_on_hand: number; bin: string | null;
-  price_cents: number | null; has_photo: boolean; has_diagram: boolean; has_model: boolean;
+  price_cents: number | null; has_photo: boolean; has_diagram: boolean;
 };
 type SortKey = "sku" | "name" | "category_code" | "qty_on_hand" | "status";
 type Cat = { id: number; code: string; name: string };
@@ -219,7 +219,6 @@ export default function PartsView() {
                 <td className="media-ico">
                   <span className={r.has_photo ? "on" : ""} title="photo">▦</span>
                   <span className={r.has_diagram ? "on" : ""} title="diagram">◎</span>
-                  <span className={r.has_model ? "on" : ""} title="3D model">◳</span>
                 </td>
                 <td className="num mono">{money(r.price_cents)}</td>
                 <td className="rmcol">

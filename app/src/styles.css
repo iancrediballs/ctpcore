@@ -194,10 +194,6 @@ body{margin:0;background:radial-gradient(1200px 600px at 50% -10%,#0f1620,#0a0e1
 .thumbs{display:flex;gap:5px;flex-wrap:wrap}
 .thumb{width:34px;height:34px;object-fit:cover;border-radius:5px;border:1px solid var(--line);cursor:pointer;opacity:.6}
 .thumb.on,.thumb:hover{opacity:1;border-color:var(--accent)}
-.model3d{margin-top:10px;width:100%;font-family:var(--mono);font-weight:700;font-size:13px;
-  color:var(--accent2);background:rgba(31,111,235,.08);border:1px solid #243b63;border-radius:8px;
-  padding:10px;cursor:pointer;transition:.15s}
-.model3d:hover{background:rgba(31,111,235,.16);border-color:var(--accent2)}
 .pnote{margin-top:10px;color:var(--warn);font-size:12px;line-height:1.4;background:rgba(240,136,62,.08);
   border:1px solid rgba(240,136,62,.28);border-left:3px solid var(--warn);border-radius:6px;padding:8px 11px}
 @media(max-width:560px){.mediagrid{grid-template-columns:1fr}}
@@ -381,64 +377,6 @@ body::before{
   padding: 11px; font-weight: 700; font-size: 14px; cursor: pointer; }
 .login-btn:disabled { opacity: .5; cursor: default; }
 .login-err { color: #ff6b6b; font-size: 12.5px; }
-
-/* ═══ 3D Parts Explorer ═══ */
-.exp3d{display:flex;gap:0;height:calc(100vh - 132px);min-height:520px;border:1px solid var(--line);
-  border-radius:12px;overflow:hidden;background:#111316}
-.exp-stage{position:relative;flex:1;overflow:hidden}
-.exp-canvas{position:absolute;inset:0}
-.exp-canvas canvas{display:block}
-.exp-labels{position:absolute;inset:0;pointer-events:none;overflow:hidden}
-.exp-label{position:absolute;display:none;flex-direction:column;align-items:center;
-  transform:translate(-50%,calc(-100% - 10px));cursor:pointer;pointer-events:all;z-index:5}
-.exp-pill{background:rgba(22,27,34,.92);border:1px solid #30363d;color:#c9d1d9;padding:4px 11px;
-  border-radius:16px;font-size:10px;font-weight:600;white-space:nowrap;letter-spacing:.4px;
-  backdrop-filter:blur(6px);transition:all .15s}
-.exp-label:hover .exp-pill{border-color:#58a6ff;color:#e6edf3;transform:scale(1.06)}
-.exp-label.sel .exp-pill{border-color:#58a6ff;color:#58a6ff;background:rgba(13,31,56,.92)}
-.exp-count{font-size:9px;color:#6e7681;margin-top:2px}
-.exp-tip{position:absolute;display:none;background:rgba(18,22,28,.96);border:1px solid #30363d;
-  color:#e6edf3;padding:6px 14px;border-radius:16px;font-size:11px;font-weight:600;pointer-events:none;
-  z-index:15;white-space:nowrap;backdrop-filter:blur(8px);transform:translate(-50%,-150%)}
-.exp-tipsub{font-size:9px;color:#8b949e;margin-left:6px;font-weight:400}
-.exp-hint{position:absolute;bottom:22px;left:50%;transform:translateX(-50%);background:rgba(22,27,34,.9);
-  border:1px solid #30363d;padding:9px 20px;border-radius:22px;font-size:12px;color:#8b949e;
-  pointer-events:none;white-space:nowrap;backdrop-filter:blur(4px);z-index:10}
-.exp-hint b{color:#58a6ff;font-weight:600}
-.exp-back{position:absolute;top:14px;left:14px;background:rgba(22,27,34,.9);border:1px solid #30363d;
-  color:#e6edf3;padding:8px 14px;border-radius:8px;font-size:12px;cursor:pointer;backdrop-filter:blur(4px);z-index:20}
-.exp-back:hover{border-color:#58a6ff;color:#58a6ff}
-.exp-legend{position:absolute;top:14px;right:14px;background:rgba(22,27,34,.8);border:1px solid #30363d;
-  color:#8b949e;padding:6px 12px;border-radius:8px;font-size:11px;backdrop-filter:blur(4px);z-index:10}
-.exp-legval{font-weight:700;color:#e6edf3}
-.exp-loading{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;
-  justify-content:center;gap:14px;background:#0d1117;z-index:30}
-.exp-spin{width:36px;height:36px;border:3px solid #21262d;border-top-color:#58a6ff;border-radius:50%;
-  animation:expspin .75s linear infinite}
-@keyframes expspin{to{transform:rotate(360deg)}}
-.exp-loadtxt{font-size:11px;color:#8b949e;letter-spacing:2px;text-transform:uppercase}
-.exp-panel{width:0;flex-shrink:0;background:#161b22;border-left:1px solid #30363d;display:flex;
-  flex-direction:column;overflow:hidden;transition:width .28s cubic-bezier(.4,0,.2,1)}
-.exp-panel.open{width:360px}
-.exp-panel-bar{height:3px;flex-shrink:0}
-.exp-panel-hdr{padding:15px 18px;border-bottom:1px solid #30363d;display:flex;justify-content:space-between;
-  align-items:flex-start;flex-shrink:0}
-.exp-panel-title{font-size:15px;font-weight:700;color:#e6edf3}
-.exp-panel-meta{font-size:11px;color:#8b949e;margin-top:3px}
-.exp-x{background:none;border:none;color:#8b949e;cursor:pointer;font-size:16px;line-height:1;padding:2px 6px;border-radius:4px}
-.exp-x:hover{background:#21262d;color:#e6edf3}
-.exp-parts{flex:1;overflow-y:auto}
-.exp-pi{padding:11px 18px;border-bottom:1px solid #21262d;cursor:pointer;transition:background .12s}
-.exp-pi:hover{background:#1c2128}
-.exp-pi-top{display:flex;align-items:flex-start;gap:8px}
-.exp-pname{font-size:12.5px;font-weight:600;color:#e6edf3;line-height:1.4;flex:1}
-.exp-qty{font-size:11px;font-weight:700;font-family:var(--mono)}
-.exp-qty.s-out{color:#f85149}.exp-qty.s-low{color:#f0883e}.exp-qty.s-ok{color:#3fb950}
-.exp-ppn{font-size:10px;color:#58a6ff;margin-top:3px;font-family:var(--mono)}
-.exp-prow{display:flex;align-items:center;gap:6px;margin-top:6px;flex-wrap:wrap}
-.exp-side{font-size:9px;color:#8b949e;background:#21262d;padding:2px 6px;border-radius:4px}
-.exp-badge{font-size:9px;padding:2px 6px;border-radius:10px;font-weight:700;letter-spacing:.4px;border:1px solid}
-.exp-ico{font-size:11px;opacity:.75}
 
 /* ==========================================================================
    JEFREY — offline parts assistant. Tech-noir, high density, scannable.

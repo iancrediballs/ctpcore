@@ -42,13 +42,3 @@ export function assetUrl(path: string | null | undefined): string {
   const rel = path.replace(/^\/+/, "");
   return isTauri ? `/${rel}` : `${ASSET_BASE}/${rel}`;
 }
-
-/**
- * Should this surface load a 3D model at all?
- *
- * The one .glb in the catalogue is 37MB and the showroom truck is another. On a
- * phone that is a minute of someone's data to render a spinning object nobody
- * asked for, so models are desktop-only and sync_assets.py does not upload them
- * by default. Gate any model UI on this rather than hiding it in CSS.
- */
-export const supportsModels = isTauri;

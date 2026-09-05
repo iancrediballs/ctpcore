@@ -5,9 +5,8 @@ import SalesView from "./SalesView";
 import AccountingView from "./AccountingView";
 import DiagramsView from "./DiagramsView";
 import PartsView from "./PartsView";
-import ExplorerView from "./ExplorerView";
 import JefreyView from "./jefrey/JefreyView";
-import { assetUrl, supportsModels } from "./assets";
+import { assetUrl } from "./assets";
 
 export type Hit = {
   id: number;
@@ -115,7 +114,7 @@ export const money = (c: number | null) =>
   });
 export const stockClass = (n: number) => (n <= 0 ? "s-out" : n <= 5 ? "s-low" : "s-ok");
 
-type View = "counter" | "parts" | "sales" | "accounting" | "diagrams" | "explorer" | "jefrey";
+type View = "counter" | "parts" | "sales" | "accounting" | "diagrams" | "jefrey";
 
 type Company = {
   name: string; address: string | null; phone: string | null; email: string | null;
@@ -126,7 +125,7 @@ export default function App() {
   const [view, setView] = useState<View>("counter");
   const [settings, setSettings] = useState(false);
   return (
-    <div className={"wrap" + (view === "parts" || view === "diagrams" || view === "explorer" || view === "jefrey" ? " wide" : "")}>
+    <div className={"wrap" + (view === "parts" || view === "diagrams" || view === "jefrey" ? " wide" : "")}>
       <div className="brandbar">
         <img className="brandlogo" src="/assets/brand/ctp_logo_light.svg" alt="China Truck Parts" />
         <span className="corewm">Core</span>
@@ -136,10 +135,6 @@ export default function App() {
           <button className={"navbtn" + (view === "sales" ? " on" : "")} onClick={() => setView("sales")}>Sales</button>
           <button className={"navbtn" + (view === "accounting" ? " on" : "")} onClick={() => setView("accounting")}>Accounting</button>
           <button className={"navbtn" + (view === "diagrams" ? " on" : "")} onClick={() => setView("diagrams")}>Diagrams</button>
-          {/* 3D Explorer pulls a 37MB truck .glb. Desktop only — see assets.ts. */}
-          {supportsModels && (
-            <button className={"navbtn" + (view === "explorer" ? " on" : "")} onClick={() => setView("explorer")}>3D&nbsp;Explorer</button>
-          )}
           <button className={"navbtn" + (view === "jefrey" ? " on" : "")} onClick={() => setView("jefrey")}>Jefrey</button>
         </nav>
         <span className="kpi">local · offline-ready</span>
@@ -150,7 +145,6 @@ export default function App() {
       {view === "sales" && <SalesView />}
       {view === "accounting" && <AccountingView />}
       {view === "diagrams" && <DiagramsView />}
-      {view === "explorer" && supportsModels && <ExplorerView />}
       {view === "jefrey" && <JefreyView />}
       {settings && <SettingsModal onClose={() => setSettings(false)} />}
     </div>
@@ -375,12 +369,6 @@ function PartMedia({ detail, onChanged }: { detail: PartDetail; onChanged?: () =
             : <div className="mph">no diagram</div>}
         </div>
       </div>
-      {/* Models are desktop-only: the one .glb in the catalogue is 37MB and is
-          not uploaded to Storage, so on the web build this button would open a
-          404 after a long wait. See supportsModels in src/assets.ts. */}
-      {detail.model_3d && supportsModels && (
-        <button className="model3d" onClick={() => open(detail.model_3d)}>◳ 3D model — {detail.inventory_pn ?? detail.sku} ⇗</button>
-      )}
       {(detail.catalogue_pn || detail.inventory_pn) && (
         <button className="srcbtn" title="Look this part up on the supplier catalogue (rusauto43) — live price & isolated exploded view"
           onClick={() => api.openUrl("https://www.google.com/search?q=" +
