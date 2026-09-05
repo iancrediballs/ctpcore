@@ -18,7 +18,8 @@ import { useStatus } from "@powersync/react";
 import * as api from "../data/api";
 import { assetUrl } from "../assets";
 import { makeUuid } from "../data/uuid";
-import { useAuth } from "../auth/AuthProvider";
+import { useAuth, type Role } from "../auth/AuthProvider";
+import SettingsView from "../admin/SettingsView";
 import "./mobile.css";
 
 // ─── shapes (mirror backend.web.ts returns) ──────────────────────────────────
@@ -265,6 +266,7 @@ export default function MobileShell() {
   // A load that fails must say so. Before this, a rejected promise left `orders`
   // at null forever and the view sat on "Loading…" with no way out — one bad row
   // anywhere in the batch silently took down the whole order desk.
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [ordersErr, setOrdersErr] = useState<string | null>(null);
   const [mineErr, setMineErr] = useState<string | null>(null);
   const [openOrder, setOpenOrder] = useState<number | null>(null);
@@ -841,6 +843,15 @@ export default function MobileShell() {
         </div>
       </div>
       <div className="mb-body">
+        {!isClient && (role === "manager" || role === "admin") && (
+          <button className="mb-settings-cta" onClick={() => setSettingsOpen(true)}>
+            <span>
+              <b>Settings</b>
+              <small>Company details, order emails, staff, warehouses, pricing</small>
+            </span>
+            <span className="mb-chev">›</span>
+          </button>
+        )}
         <div className="mb-rows">
           <div className="mb-row"><span className="mb-rk">Signed in</span>
             <span className="mb-rv">{session?.user.email ?? "—"}</span></div>
@@ -1366,6 +1377,17 @@ export default function MobileShell() {
       {d && counterOpen && <Counter d={d} onPost={post} onClose={() => setCounterOpen(false)} />}
     </div>
   );
+
+  // Settings takes the whole screen rather than living inside a tab: it is a
+  // different mode of use (setting the business up) from everything else here
+  // (running it), and mixing the two invites a mis-tap on a live order desk.
+  if (settingsOpen) {
+    return (
+      <div className={"mb-root" + (light ? " light" : "")}>
+        <SettingsView role={role as Role} onClose={() => setSettingsOpen(false)} />
+      </div>
+    );
+  }
 
   return (
     <div className={"mb-root" + (light ? " light" : "")}>
