@@ -27,10 +27,10 @@
     "active": true,
     "targets": ["msi", "nsis"],
     "publisher": "China Truck Parts (Pty) Ltd",
-    "copyright": "© 2026 China Truck Parts (Pty) Ltd",
+    "copyright": "Copyright 2026 China Truck Parts (Pty) Ltd",
     "category": "Business",
     "shortDescription": "Truck parts catalogue, stock and sales",
-    "longDescription": "CTP Core — local-first parts catalogue, stock control, quoting and invoicing for commercial truck parts. Works offline; stock is an append-only ledger, so nothing is ever silently overwritten.",
+    "longDescription": "CTP Core - local-first parts catalogue, stock control, quoting and invoicing for commercial truck parts. Works offline; stock is an append-only ledger, so nothing is ever silently overwritten.",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
