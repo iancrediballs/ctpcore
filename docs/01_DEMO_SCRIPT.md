@@ -54,12 +54,23 @@ first two, you have still shown the thing that matters.
 **Then turn on aeroplane mode and search again.** It still works. This is the
 single most convincing five seconds in the demo and almost nobody expects it.
 
-⚠️ **Do not promise competitor cross-reference lookup.** The feature is built
-and the table is there, but it currently holds **zero rows** — no OEM or
-competitor numbers have been loaded yet. Search matches your own SKU, the
-manufacturer number, the part name and 24 learned aliases. If asked, the honest
-answer is: *"the mechanism is built, loading the interchange data is the next
-job."* Do not type a competitor number and hope.
+### The cross-reference bit — now real, with one boundary
+
+Cross-reference is **live**: 223 records covering all 161 parts. Type a **FAW
+catalogue number** and it finds your stock item, and the result line tells you
+*which* number matched. That includes the 62 parts where your own stock number
+carries a grade suffix (`-DQ`, `-G`) that the catalogue number does not — the
+exact case that used to need someone who knew the shelf.
+
+Worth doing live: search `2803035B1063` (the catalogue number) and show it
+returning your `2803035B1063-DQ`.
+
+⚠️ **The boundary, and hold it precisely.** This is **FAW catalogue**
+interchange. It is **not competitor** interchange — it will not turn an Isuzu
+or Mercedes part number into your equivalent, because that data isn't in the
+business yet. Those two things sound identical in a sentence and only one is
+true. If asked: *"catalogue interchange is in and working; competitor
+interchange is the next data job."*
 
 ---
 
@@ -103,6 +114,28 @@ it is worth more than any feature.
 
 ---
 
+## Move 3½ — Hand him the keys *(2 minutes, this is what makes it his)*
+
+This is the move that turns "Ian built a thing" into "we own a system". On the
+phone or a desktop browser: **Info → Settings**.
+
+Walk him through what *he* controls, without a developer:
+
+- **Company** — the letterhead on every invoice, the VAT number, the VAT rate,
+  banking details printed in the footer so customers can pay without asking.
+- **Order emails** — who gets told when a request comes in or a quote is
+  answered, which events send at all. **Press "Send a test email" in front of
+  him.** It arrives while he's watching.
+- **Staff & access** — invite someone, set their role, remove them. Say the
+  part that matters: *"the role is enforced by the database, not by hiding
+  buttons — a warehouse login physically cannot read cost prices."*
+- **Warehouses** and **Pricing tiers** — add locations, set the trade and
+  wholesale discounts and the margin floor.
+
+> "Nothing on this screen needs me. That was the point."
+
+---
+
 ## Move 4 — The customer sees their own quote *(2 minutes, this is the future)*
 
 If you have a second device or can log out and back in as the Hermans account:
@@ -141,12 +174,15 @@ current plan figures before you quote a number. Do not guess in the room.
 
 **"What is not finished?"**
 Have this list ready; volunteering it buys more credibility than it costs:
-- Cross-reference and vehicle-fitment tables are built but **empty**.
+- **Competitor** cross-reference isn't loaded. FAW catalogue interchange is.
 - The desktop app runs against its own local database — it is **not yet
   synced** to the cloud that the phone uses. Two surfaces, one not yet joined.
-- Stock transfer between locations exists in the engine but has **no button**.
+  This is the biggest remaining piece of work and it is deliberate: doing it
+  badly would break the order desk and accounting, so it's being done properly
+  rather than quickly.
 - The local desktop database is **not encrypted** at rest.
-- Payments (PayFast) and live accounting sync are designed, not built.
+- Payments (PayFast) and live accounting sync are designed, not built. Money
+  movement is the one place worth being slow.
 
 **"When can staff actually use it?"**
 The phone app is genuinely usable today. The desktop app needs the sync switch

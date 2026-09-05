@@ -94,6 +94,28 @@ what an auditor wants to see.
 > is ever overwritten or lost. If you fat-finger a number, just do a **Count**
 > with the true figure.
 
+## Move stock between places — *Move*
+
+When a part physically moves from one location to another — main store out to
+the shop, say — do not issue it from one and receive it into the other. There
+is a proper way that keeps the total right:
+
+1. Find the part and open the counter.
+2. Tap **Move between locations instead**.
+3. Pick where it is going.
+4. Set how many, and tap **Move**.
+
+You will see both sides before you commit it: what the source drops to and what
+the destination rises to. If the source doesn't hold enough, it says so — do a
+**Count** first if the shelf disagrees with the screen.
+
+The option only appears when the part exists in more than one location, because
+otherwise there is nowhere for it to go.
+
+> Moving writes **two** ledger lines — out of one place, into the other. The
+> total on hand across the business does not change, only where it sits. Undo
+> moves it straight back.
+
 ---
 
 ## The order desk *(staff only)*
@@ -184,6 +206,66 @@ double-post.** Export as often as you like.
 The company name, address, phone, email, VAT number and payment terms that
 print on every quote and invoice. **Check these are right before sending
 anything to a customer.**
+
+---
+
+# PART THREE — SETTINGS *(managers and owners)*
+
+The full settings area lives in the **phone app**, which also opens perfectly
+well in Chrome on a desktop. Sign in, go to **Info**, and tap **Settings** at
+the top. It only appears for managers and administrators.
+
+### Company
+The letterhead. Registered name, trading address, phone, email, **VAT number**,
+company registration number, the default VAT rate, quote and invoice number
+prefixes, **banking details** (printed in the invoice footer so customers can
+pay without phoning to ask), and payment terms.
+
+> Leave the VAT number blank rather than guess at it. A wrong VAT number on a
+> tax invoice breaks your customer's own VAT claim, and that is their problem
+> arriving back as yours.
+
+### Order emails
+Who gets told when something happens. Turn emails on or off entirely, set the
+recipients (several addresses, comma separated), the reply-to address, and the
+sender name. You can switch each event separately: a customer sending a
+request, accepting a quote, declining a quote.
+
+**Send a test email** proves the whole chain — the app, the mail service and
+the address. If it doesn't arrive within a minute or two, something in that
+chain needs attention.
+
+### Staff & access *(administrators only)*
+Invite someone by email and pick their role. They get an email and **choose
+their own password** — nobody, including you, ever sees or sets it.
+
+| Role | Sees |
+|---|---|
+| **customer** | Only their own quotes and orders. No prices, no stock, no bins. |
+| **sales** | Full catalogue, stock, order desk. Can quote and price. |
+| **warehouse** | Full catalogue and stock. Receives, issues, counts. |
+| **manager** | The above plus settings and accounting. |
+| **admin** | Everything, including managing staff. |
+
+Change a role from the dropdown next to anyone, or remove their access
+entirely. The system will not let you remove or demote the **last**
+administrator — that would lock everyone out permanently.
+
+> Roles are enforced by the database itself, not by hiding buttons. A warehouse
+> login physically cannot read cost prices, even through a direct request.
+
+### Warehouses
+Add a location, or retire one. A location still holding stock **cannot** be
+retired — move the stock out first. Retiring never deletes history; past
+movements keep pointing at it.
+
+### Pricing tiers
+What each kind of customer pays off the list price, and the margin floor a
+salesperson cannot go below.
+
+> Changing a tier does **not** rewrite quotes already sent. Every order line
+> keeps the price it was quoted at. That is deliberate: a price change today
+> cannot silently alter what you promised last week.
 
 ---
 

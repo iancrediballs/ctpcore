@@ -69,7 +69,7 @@ book the same sale twice.
 | Phone app | Vercel | **Live** |
 | Device sync | PowerSync | **Live** |
 | Image storage | Supabase, 421 files | **Live** |
-| Order emails | Supabase edge function via Resend | Deployed |
+| Order emails | Supabase edge function via Resend | **Live and verified** |
 
 **Data protection.** All 25 tables have row-level security switched on with
 real policies. A customer login is blocked *at the database*, not merely hidden
@@ -100,6 +100,9 @@ database. The material findings and their resolutions:
 | 116 MB of part photos and diagrams were missing from this machine | High — broken images throughout | **Restored, 421/421** |
 | Launcher scripts pointed at the previous machine's user folder | Low — fails on first use | **Fixed** |
 | `NODE_ENV=production` set system-wide silently broke dependency installation | Low — blocks any rebuild | **Fixed and documented** |
+| **Order emails had never once been sent.** The trigger was built but no notification had ever left the system — and it fails silently by design, so nothing ever said so | High — a whole feature believed working, wasn't | **Fixed, sent and confirmed** |
+| Cross-reference and vehicle-fitment tables were completely empty | High — the product's headline capability was undemonstrable | **Populated: 223 + 161 records** |
+| Stock transfer between locations existed in the engine with no way to reach it | Medium — a built feature nobody could use | **Fixed — now on the phone** |
 
 Price-list isolation was verified by simulating both a customer and a staff
 session directly against the live database: the customer sees **0** price rows,
@@ -108,33 +111,68 @@ session directly against the live database: the customer sees **0** price rows,
 
 ---
 
-## 5. What is honestly not finished
+## 5. What the owner controls directly
+
+A system that needs its developer for every change is a liability. The
+**Settings** area — in the phone app, which also opens in a desktop browser —
+puts the following in the owner's hands, with no code involved:
+
+| | |
+|---|---|
+| **Company** | Letterhead, VAT number, registration number, VAT rate, quote and invoice prefixes, banking details for the invoice footer, payment terms |
+| **Order emails** | On/off, recipients, reply-to, sender name, which events send, and a test send that proves the chain |
+| **Staff & access** | Invite staff, set roles, remove access — administrators only |
+| **Warehouses** | Add and retire locations |
+| **Pricing tiers** | Discount off list and the margin floor per tier |
+
+Every one of those writes is checked on the server, not in the browser. This
+was verified by simulating both a manager session and a customer session
+directly against the live database: the manager can write all of them; the
+customer login is refused and the letterhead is unchanged after the attempt.
+
+Staff management runs through a separate secured server function, because
+creating a login requires a key that must never reach a browser. It checks the
+caller's role against the database rather than trusting their own token, and it
+refuses to let the last administrator remove or demote themselves. It has no
+code path that can set or reveal anyone's password — invited staff choose their
+own.
+
+---
+
+## 6. What is honestly not finished
 
 Listed plainly, because a handover that hides these is worthless.
 
-**Cross-reference and vehicle fitment are empty.** The tables and the search
-that uses them are built, but **zero** OEM, competitor and supersession numbers
-have been loaded, and **zero** vehicle-fitment records. This matters because
-"type a competitor's number, get our equivalent" is the strongest commercial
-argument the system has, and it cannot be demonstrated from data today. Loading
-this is the highest-value next job in the whole project.
+**Competitor cross-reference is not loaded.** FAW *catalogue* interchange now
+is — 223 records covering all 161 parts, so a customer reading a FAW catalogue
+number finds the right stock item, including the 62 parts whose own stock
+number carries a grade suffix the catalogue number does not. What it will not
+yet do is turn a competitor's part number into our equivalent. That needs data
+the business does not hold, and it is the highest-value data job remaining.
 
 **The desktop app is not yet joined to the cloud.** It runs against its own
 local database. The cloud database has been the real record for weeks, and the
-phone app uses it. The desktop app has the sync and login machinery built and
-switched off pending a test. Until it is switched on, the desktop app should be
-treated as a tool, not as the system of record.
+phone app uses it.
 
-**Stock transfer between locations has no button.** The engine underneath is
-complete, correct and double-entry balanced. Nothing calls it.
+This one deserves a straight explanation, because the shortcut is tempting and
+wrong. The desktop app's screens reach their data through a Rust engine that
+implements 52 operations; the cloud path currently implements 19 of them.
+Simply switching the desktop over would take out the accounting screen
+entirely, the sales order desk almost entirely, and all diagram and part
+editing. Joining them properly means either porting those operations to the
+cloud path or building a sync engine into the Rust side — days of work, and the
+highest-risk change in the project. It is being done properly rather than
+quickly, which is why it is on this list rather than shipped.
 
 **The local desktop database is not encrypted.** A stolen office machine would
 expose a copy of the catalogue and orders. The cloud data is unaffected. Worth
-closing before the app is put on any laptop that leaves the building.
+closing before the app goes on any laptop that leaves the building.
 
 **Payments and live accounting sync are designed, not built.** Accounting
 currently exports a file for QuickBooks or Xero, which is a deliberate and
-sound early choice — integrate rather than rebuild.
+sound early choice — integrate rather than rebuild. Payments move real money
+and the verification has to be exactly right; that is the one area where being
+slow is the correct decision.
 
 **Two small housekeeping items:** one orphaned user record with no matching
 login, and the database's own migration history has gaps in its record-keeping
@@ -143,23 +181,24 @@ there is incomplete).
 
 ---
 
-## 6. What it would take next
+## 7. What it would take next
 
 In the order that returns the most value soonest:
 
-1. **Load the interchange data.** Turns the system from a good internal tool
-   into a reason customers phone us instead of a competitor. Highest value by a
-   wide margin.
-2. **Switch on desktop sync.** Makes it genuinely one system. The work is
-   built; it needs a controlled test, not new code.
-3. **Encrypt the local database.** Small, bounded, closes a real risk.
-4. **Wire up stock transfer.** A screen for an engine that already works.
-5. **Then** consider payments and live accounting — only once the above are
+1. **Load competitor interchange data.** FAW catalogue numbers are in. Adding
+   the competitor and OEM equivalents is what turns this from a good internal
+   tool into a reason a customer phones us instead of someone else. Highest
+   value by a wide margin, and it is a data-sourcing job rather than a coding
+   one.
+2. **Join the desktop app to the cloud.** The largest remaining piece, and the
+   one to do carefully rather than quickly — see section 6.
+3. **Encrypt the local desktop database.** Small, bounded, closes a real risk.
+4. **Then** consider payments and live accounting — only once the above are
    solid.
 
 ---
 
-## 7. Running it
+## 8. Running it
 
 **Accounts that must not be lost.** Supabase (database, storage, logins),
 PowerSync (device sync), Vercel (phone app hosting), Resend (order emails),
@@ -182,7 +221,7 @@ administrator access.
 
 ---
 
-## 8. The honest summary
+## 9. The honest summary
 
 The foundations here are unusually sound for a system of this size. The stock
 ledger, the money handling and the retry-safety are done properly — the way
