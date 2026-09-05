@@ -2,6 +2,13 @@ node_modules/
 dist/
 src-tauri/target/
 src-tauri/gen/
+
+# tsc output. tsconfig now sets noEmit, so these should never appear again --
+# this is the second line of defence. Every real source under src/ is .ts or
+# .tsx; a .js there is compiler output, and one sitting beside its own .tsx can
+# be picked up by module resolution instead of the source, which produces a bug
+# that survives editing the file you think you are running.
+src/**/*.js
 *.db
 *.db-wal
 *.db-shm
