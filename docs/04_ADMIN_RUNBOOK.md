@@ -81,6 +81,39 @@ set NODE_ENV=development && npm install --include=dev
 ```
 Clearing that system variable permanently would be the real fix.
 
+**The automation shell inherits a stripped environment — this one cost hours.**
+
+Commands run through the desktop automation bridge do **not** get a full Windows
+environment. Missing entirely: `windir`, `PROGRAMDATA`, `ALLUSERSPROFILE`, and
+others. The registry is perfectly correct; it is only what child processes
+inherit that is incomplete.
+
+This is not cosmetic. The Visual Studio Build Tools installer failed **five
+times** because of it, in a way that looks like something else entirely:
+
+```
+MS.Internal.FontCache.Util..cctor()
+  → System.UriFormatException: Invalid URI: the format could not be determined
+    at MS.Internal.FontCache.Util.get_Dpi()
+```
+
+WPF builds a `Uri` for the Windows fonts folder from `windir`. With the variable
+absent it gets an empty string, `new Uri("")` throws, and the installer dies
+during type initialisation — **before drawing anything**. That is why `--quiet`,
+`--passive`, the GUI and `winget` all failed identically, and why it reads like
+a font-cache or permissions fault when it is neither. Re-downloading the
+installer does not help; nor does running as administrator.
+
+The fix is one line before launching anything that touches WPF or expects a
+normal environment:
+```
+set "windir=C:\Windows"
+```
+
+Symptoms that should send you straight here: `echo %windir%` printing the
+literal `%windir%`, or `if exist "%windir%\Fonts"` reporting the folder missing
+on a machine where `C:\Windows\Fonts` obviously exists.
+
 **C: had 11 GB free.** The Rust toolchain and C++ build tools were installed to
 `D:\ctpbuild\` for that reason. `start-fleetview.bat` picks them up
 automatically; a bare terminal will not, so set `CARGO_HOME`,`RUSTUP_HOME` and
