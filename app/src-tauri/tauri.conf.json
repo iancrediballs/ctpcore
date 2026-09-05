@@ -39,7 +39,7 @@
       "icons/icon.ico"
     ],
     "windows": {
-      "wix": { "language": ["en-ZA", "en-US"] },
+      "wix": { "language": ["en-US"] },
       "nsis": {
         "installMode": "perMachine",
         "languages": ["English"],
