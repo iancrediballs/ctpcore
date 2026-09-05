@@ -70,6 +70,19 @@ export const postMovement = <T>(
   reason: string, clientUuid: string, actorId: number | null
 ) => call<T>("post_movement", { partId, locationId, delta, reason, clientUuid, actorId });
 
+/**
+ * Move stock from one location to another.
+ *
+ * Both legs are posted under separate idempotency keys, so a retry on a bad
+ * connection cannot move the stock twice — nor lose it.
+ */
+export const transferStock = <T>(
+  partId: number, fromLocationId: number, toLocationId: number,
+  qty: number, outUuid: string, inUuid: string, actorId: number | null
+) => call<T>("transfer_stock", {
+  partId, fromLocationId, toLocationId, qty, outUuid, inUuid, actorId,
+});
+
 /** Web-only: row counts per table in THIS device's local database. */
 export const deviceAudit = <T>() => call<T>("device_audit");
 

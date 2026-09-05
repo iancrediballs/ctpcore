@@ -470,6 +470,34 @@ export default function MobileShell() {
     }
   }, [showToast, reloadDetail]);
 
+  /**
+   * Move stock between locations. Undo is the mirror move, not a delete —
+   * consistent with everything else here, and it leaves both the mistake and
+   * the correction visible in the history.
+   */
+  const move = useCallback(async (
+    d: Detail, fromId: number, toId: number, qty: number, label: string
+  ) => {
+    try {
+      await api.transferStock(d.id, fromId, toId, qty, makeUuid(), makeUuid(), null);
+      const undo = async () => {
+        try {
+          await api.transferStock(d.id, toId, fromId, qty, makeUuid(), makeUuid(), null);
+          showToast({ text: `Moved back — ${d.sku} returned.` });
+          reloadDetail(d.id);
+        } catch (e) { console.error(e); }
+      };
+      showToast({ text: label, undo });
+      reloadDetail(d.id);
+    } catch (e) {
+      console.error(e);
+      showToast({
+        text: e instanceof Error ? e.message : "Move failed — nothing was booked.",
+        err: true,
+      });
+    }
+  }, [showToast, reloadDetail]);
+
   // ── the request basket (clients only) ──
   const inCart = (id: number) => cart.find((c) => c.id === id)?.qty ?? 0;
   const addToCart = (d: Detail, n = 1) =>
@@ -1374,7 +1402,9 @@ export default function MobileShell() {
           </div>
         </>
       )}
-      {d && counterOpen && <Counter d={d} onPost={post} onClose={() => setCounterOpen(false)} />}
+      {d && counterOpen && (
+        <Counter d={d} onPost={post} onMove={move} onClose={() => setCounterOpen(false)} />
+      )}
     </div>
   );
 
@@ -1618,16 +1648,23 @@ function Lightbox({ items, start, onClose }: {
 // positive "how many", which survives gloves and hurry better than a signed
 // number ever did.
 
-function Counter({ d, onPost, onClose }: {
+function Counter({ d, onPost, onMove, onClose }: {
   d: Detail;
   onPost: (d: Detail, locationId: number, delta: number, reason: string, label: string) => Promise<void>;
+  onMove: (d: Detail, fromId: number, toId: number, qty: number, label: string) => Promise<void>;
   onClose: () => void;
 }) {
   const [locId, setLocId] = useState<number | null>(
     d.stock.find((s) => s.on_hand > 0)?.location_id ?? d.stock[0]?.location_id ?? null
   );
   const [n, setN] = useState(1);
+  // Moving is a different intent from booking stock in or out, so it gets its
+  // own mode rather than a third button that silently needs a second location.
+  const [moving, setMoving] = useState(false);
+  const [destId, setDestId] = useState<number | null>(null);
   const loc = d.stock.find((s) => s.location_id === locId) ?? null;
+  const dest = d.stock.find((s) => s.location_id === destId) ?? null;
+  const canMove = d.stock.length > 1;
 
   const fire = (reason: "receipt" | "sale", label: string) => {
     if (locId == null) return;
@@ -1635,11 +1672,18 @@ function Counter({ d, onPost, onClose }: {
     onClose();
   };
 
+  const fireMove = () => {
+    if (locId == null || destId == null) return;
+    void onMove(d, locId, destId, n,
+      `${n} × ${d.sku} moved ${loc?.location_code ?? ""} → ${dest?.location_code ?? ""}`);
+    onClose();
+  };
+
   return (
     <div className="mb-sheet open" style={{ zIndex: 55 }}>
       <div className="mb-shead">
         <button className="mb-back" onClick={onClose}>‹</button>
-        <span className="mb-shead-t">Count — {d.sku}</span>
+        <span className="mb-shead-t">{moving ? "Move" : "Count"} — {d.sku}</span>
       </div>
       <div className="mb-sbody">
         <div className="mb-locrow" style={{ marginTop: 18 }}>
@@ -1658,20 +1702,67 @@ function Counter({ d, onPost, onClose }: {
           <button className="mb-sbtn" onClick={() => setN((v) => Math.min(999, v + 1))}>+</button>
         </div>
 
-        {loc && (
+        {moving && (
+          <>
+            <div className="mb-count" style={{ marginTop: 6 }}>Move to</div>
+            <div className="mb-locrow">
+              {d.stock.filter((s) => s.location_id !== locId).map((s) => (
+                <button key={s.location_id}
+                  className={"mb-chip" + (s.location_id === destId ? " on" : "")}
+                  onClick={() => setDestId(s.location_id)}>
+                  {s.location_code} · {s.on_hand}{s.bin ? ` · ${s.bin}` : ""}
+                </button>
+              ))}
+            </div>
+          </>
+        )}
+
+        {loc && !moving && (
           <div className="mb-count" style={{ textAlign: "center" }}>
             {loc.location_code} has {loc.on_hand} now → {loc.on_hand + n} after receive,{" "}
             {loc.on_hand - n} after issue
           </div>
         )}
+        {loc && moving && dest && (
+          <div className="mb-count" style={{ textAlign: "center" }}>
+            {loc.location_code} {loc.on_hand} → {loc.on_hand - n} ·{" "}
+            {dest.location_code} {dest.on_hand} → {dest.on_hand + n}
+          </div>
+        )}
+        {moving && loc && n > loc.on_hand && (
+          <div className="mb-count" style={{ textAlign: "center", color: "var(--warn)" }}>
+            {loc.location_code} only has {loc.on_hand}. Moving {n} leaves it short —
+            do a count first if the shelf disagrees.
+          </div>
+        )}
 
         <div className="mb-note">
-          <b>Receive</b> books stock in (a delivery, a return to shelf).{" "}
-          <b>Issue</b> books it out (sold or taken for a job). Both write a
-          ledger line — Undo posts the opposite line, nothing is deleted.
+          {moving ? (
+            <>Moving writes <b>two</b> ledger lines — out of one place, into the
+            other. The total on hand does not change, only where it sits. Undo
+            moves it straight back.</>
+          ) : (
+            <><b>Receive</b> books stock in (a delivery, a return to shelf).{" "}
+            <b>Issue</b> books it out (sold or taken for a job). Both write a
+            ledger line — Undo posts the opposite line, nothing is deleted.</>
+          )}
         </div>
+
+        {canMove && (
+          <button className="mb-btn s" style={{ width: "100%", marginTop: 14 }}
+            onClick={() => { setMoving((v) => !v); setDestId(null); }}>
+            {moving ? "← Back to receive / issue" : "Move between locations instead"}
+          </button>
+        )}
       </div>
       <div className="mb-actions">
+        {moving ? (
+          <button className="mb-btn p" disabled={locId == null || destId == null}
+            onClick={fireMove}>
+            Move {n} → {dest?.location_code ?? "…"}
+          </button>
+        ) : (
+          <>
         <button className="mb-btn s" disabled={locId == null}
           onClick={() => fire("receipt", `+${n} ${d.sku} received into ${loc?.location_code ?? ""}`)}>
           + Receive {n}
@@ -1680,6 +1771,8 @@ function Counter({ d, onPost, onClose }: {
           onClick={() => fire("sale", `−${n} ${d.sku} issued from ${loc?.location_code ?? ""}`)}>
           − Issue {n}
         </button>
+          </>
+        )}
       </div>
     </div>
   );

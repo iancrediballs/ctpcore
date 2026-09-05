@@ -574,6 +574,61 @@ async function getCompany(): Promise<unknown> {
 // table), so the UI updates offline and the sync happens when it happens.
 const MOVEMENT_REASONS = ["receipt", "sale", "return", "adjustment"] as const;
 
+/**
+ * Move stock between two locations.
+ *
+ * A transfer is not a special kind of record — it is two ordinary ledger lines
+ * that happen to sum to zero: minus n from where it was, plus n where it went.
+ * That is the whole point of an append-only ledger. There is nothing to keep
+ * consistent afterwards, because on-hand at both locations is derived from the
+ * same rows that were just written.
+ *
+ * Each leg carries its OWN client_uuid. The upload path upserts on that column
+ * with ignoreDuplicates, so a retry after a dropped connection re-sends both
+ * legs and books neither of them twice. Two uuids rather than one because they
+ * are two rows: sharing a key would make the second leg look like a duplicate
+ * of the first and get silently dropped, leaving stock destroyed rather than
+ * moved.
+ *
+ * Not wrapped in a transaction, and it does not need to be: PowerSync applies
+ * the local writes in order, and if only the first leg ever reached the server
+ * the result is a visible shortfall at one location, not a silent imbalance.
+ * A ledger cannot half-succeed into a wrong number — only into an incomplete
+ * one, which a count corrects.
+ */
+async function transferStock(a: Record<string, unknown>): Promise<unknown> {
+  const partId = numId(a["partId"], "partId");
+  const fromId = numId(a["fromLocationId"], "fromLocationId");
+  const toId = numId(a["toLocationId"], "toLocationId");
+  const qty = Number(a["qty"]);
+  const outUuid = str(a["outUuid"]);
+  const inUuid = str(a["inUuid"]);
+  const actorId = a["actorId"] == null ? null : String(a["actorId"]);
+
+  if (!Number.isInteger(qty) || qty <= 0) {
+    throw new Error("[CTP web] transfer_stock: quantity must be a whole number above zero.");
+  }
+  if (fromId === toId) {
+    throw new Error("[CTP web] transfer_stock: pick two different locations.");
+  }
+  if (!outUuid || !inUuid || outUuid === inUuid) {
+    throw new Error("[CTP web] transfer_stock: each leg needs its own idempotency key.");
+  }
+
+  await ready();
+  const now = new Date().toISOString();
+  const leg = async (locationId: number, delta: number, clientUuid: string) =>
+    powerSync.execute(
+      `INSERT INTO stock_movement (id, part_id, location_id, delta, reason, client_uuid, actor_id, created_at)
+       VALUES (?, ?, ?, ?, 'transfer', ?, ?, ?)`,
+      [makeUuid(), String(partId), String(locationId), delta, clientUuid, actorId, now]
+    );
+
+  await leg(fromId, -qty, outUuid);
+  await leg(toId, qty, inUuid);
+  return qty;
+}
+
 async function postMovement(a: Record<string, unknown>): Promise<unknown> {
   const partId = numId(a["partId"], "partId");
   const locationId = numId(a["locationId"], "locationId");
@@ -907,6 +962,7 @@ const PORTED: Record<string, Handler> = {
   jefrey_catalogue: () => jefreyCatalogue(),
   get_company: () => getCompany(),
   post_movement: (a) => postMovement(a),
+  transfer_stock: (a) => transferStock(a),
   request_parts: (a) => requestParts(a),
   my_requests: () => myRequests(),
   respond_to_quote: (a) => respondToQuote(a),
