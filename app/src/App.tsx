@@ -177,6 +177,21 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
           <button className="x" onClick={onClose}>{"✕"}</button>
         </div>
         <div className="sub">appears as the letterhead on quotes &amp; invoices</div>
+        {/*
+          Be honest about which copy this is. The desktop app keeps its own
+          local database, so editing here changes THIS machine's letterhead and
+          not the one the phone app and the cloud use. Two letterheads that
+          silently disagree is exactly the kind of thing nobody notices until a
+          customer gets an invoice with the wrong VAT number on it.
+        */}
+        <div className="note-inline">
+          This is <b>this machine&rsquo;s</b> copy. Staff and roles, order
+          emails, warehouses and pricing tiers live in the shared settings,
+          along with the letterhead the phone app prints from.
+          <button className="linkish" onClick={() => api.openUrl("https://ctp-core.vercel.app")}>
+            Open shared settings &rsaquo;
+          </button>
+        </div>
         <label className="fld">Name<input value={c.name} onChange={f("name")} /></label>
         <label className="fld">Address<input value={c.address ?? ""} onChange={f("address")} /></label>
         <label className="fld">Phone<input value={c.phone ?? ""} onChange={f("phone")} /></label>
