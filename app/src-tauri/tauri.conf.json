@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "CTP Core",
-  "version": "0.0.1",
+  "version": "1.0.0",
   "identifier": "net.chinatruckparts.fleetview",
   "build": {
     "frontendDist": "../dist",
@@ -13,24 +13,38 @@
     "windows": [
       {
         "title": "CTP Core",
-        "width": 1100,
-        "height": 760,
-        "minWidth": 720,
-        "minHeight": 480,
-        "theme": "Dark"
+        "width": 1280,
+        "height": 820,
+        "minWidth": 900,
+        "minHeight": 560,
+        "theme": "Dark",
+        "center": true
       }
     ],
     "security": { "csp": null }
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": ["msi", "nsis"],
+    "publisher": "China Truck Parts (Pty) Ltd",
+    "copyright": "© 2026 China Truck Parts (Pty) Ltd",
+    "category": "Business",
+    "shortDescription": "Truck parts catalogue, stock and sales",
+    "longDescription": "CTP Core — local-first parts catalogue, stock control, quoting and invoicing for commercial truck parts. Works offline; stock is an append-only ledger, so nothing is ever silently overwritten.",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "windows": {
+      "wix": { "language": ["en-ZA", "en-US"] },
+      "nsis": {
+        "installMode": "perMachine",
+        "languages": ["English"],
+        "displayLanguageSelector": false
+      }
+    }
   }
 }

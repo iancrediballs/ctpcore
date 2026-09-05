@@ -1,7 +1,7 @@
 [package]
 name = "fleetview"
-version = "0.0.1"
-description = "FleetView ERP — local-first truck parts"
+version = "1.0.0"
+description = "CTP Core — local-first truck parts catalogue, stock and sales"
 edition = "2021"
 
 [build-dependencies]
