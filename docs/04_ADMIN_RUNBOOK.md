@@ -37,13 +37,66 @@ npx vercel --prod
 Double-click `start-fleetview.bat`. It handles the toolchain paths, the
 `NODE_ENV` problem below, and fetching images on a fresh machine.
 
-### Build the desktop installer
+### Install the desktop app
+Run either installer from `Desktop\CTP\INSTALLERS\`:
+
+| File | Notes |
+|---|---|
+| `CTP Core_1.0.0_x64-setup.exe` | NSIS. Per-machine, no language prompt. **Use this one.** |
+| `CTP Core_1.0.0_x64_en-US.msi` | Same app as an MSI, for Group Policy or scripted rollout |
+
+Both are ~126 MB because the catalogue photos and diagrams are bundled into the
+app — that is deliberate, and it is why part images render with no network.
+
+### Rebuild the desktop installer
 ```
-cd app
-npm run tauri build
+Desktop\CTP\_go.bat
 ```
-Output lands in `app/src-tauri/target/release/bundle/`. Requires the Rust
-toolchain **and** the Microsoft C++ Build Tools.
+`_go.bat` is a one-line wrapper that redirects the whole run into
+`D:\ctpbuild\build4.log` and calls `_build.bat`, which does the work: it sets
+`windir` (see the trap below), the D: toolchain paths, `CARGO_TARGET_DIR` on D:,
+`NODE_ENV=development`, and the MSVC environment, then runs
+`npm run tauri build`. Output lands in `D:\ctpbuild\target\release\bundle\`.
+
+A clean first build took **62 minutes**; a rebuild takes about **11 minutes**,
+because the ~400 dependencies are cached.
+
+Three things in that script are load-bearing, and each one cost a failed build:
+
+- **The linker is found by `vcvars64.bat`, not by `vswhere`.** `rustc` normally
+  locates `link.exe` by asking `vswhere` where Visual Studio lives. On this
+  machine `vswhere` answers **NO INSTALLED PRODUCTS** even though the tools are
+  present and working on D: — the instance registration did not survive
+  installing to a non-standard path with `--nocache`. The first build only
+  succeeded because `setup.exe` was still running and the instance was
+  registered mid-install; every build after it failed with
+  ``error: linker `link.exe` not found``. `_build.bat` therefore calls
+  `D:\ctpbuild\BuildTools\VC\Auxiliary\Build\vcvars64.bat` and sets
+  `PATH`/`INCLUDE`/`LIB` directly, which is what a build server does anyway.
+  **Do not "fix" this by reinstalling the build tools.**
+- **Node is put back on `PATH` explicitly, after `vcvars`.** `vcvars` rebuilds
+  `PATH`, and this machine's is long enough that the tail — where
+  `C:\Program Files\nodejs` sits — does not survive. Symptom:
+  `'npm' is not recognized`, seconds into the build, with a perfectly good Node
+  installation on disk.
+- **Nothing inside `_build.bat` redirects to a log.** Stale shells on this
+  machine hold log files open, and every `>>` inside the script failed with
+  *the process cannot access the file*. One redirect, on the outside, in
+  `_go.bat`.
+
+One harmless message you will see and can ignore: `'Fastboot++\' is not
+recognized`. A system `PATH` entry (`C:\Program Files (x86)\ADB & Fastboot++\`)
+contains an `&`, which `cmd` reads as a command separator. It is cosmetic, but
+it also poisons `ERRORLEVEL` after `vcvars`, which is why the script does not
+test it.
+
+Two things that will bite if you edit `tauri.conf.json`:
+
+- **WiX locales.** `en-ZA` is not one of them. The build compiles the entire
+  application, then panics at the packaging step. Use `en-US`.
+- **Non-ASCII characters in bundle metadata** get mangled on the way into the
+  executable's resources — `©` came out as `c`. Keep `copyright`,
+  `longDescription` and friends to plain ASCII.
 
 ### Restore the catalogue images on a new machine
 ```
@@ -174,8 +227,11 @@ from the config file — only the device can tell you the truth.
 
 Lives at `%APPDATA%\net.chinatruckparts.fleetview\fleetview.db`. Built on first
 launch by a migration runner keyed on `PRAGMA user_version`, applying
-`0001`…`0013` in order. It has been audited as safe both on a fresh install and
-on upgrade from any earlier version.
+`0001`…`0015` in order and landing on `user_version = 14`. The full ladder was
+replayed against a fresh database to prove it: it lands on 14, produces 224
+cross-reference rows and 161 fitment rows with no orphans, and re-running it
+changes nothing. It is safe both on a fresh install and on upgrade from any
+earlier version.
 
 Two things to know:
 
@@ -192,7 +248,6 @@ Two things to know:
 
 ## Do these soon
 
-- [ ] **Push the repository.** History currently exists on one machine only.
 - [ ] **Test a database restore.** Backups run; a restore has never been proven.
 - [ ] Enable leaked-password protection (Supabase → Authentication, one toggle).
 - [ ] Remove the orphaned `app_user` row with no matching login.

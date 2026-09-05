@@ -14,7 +14,13 @@ one set of records.
 | | Who uses it | Where |
 |---|---|---|
 | **Phone app** | Counter and warehouse staff, and customers | `ctp-core.vercel.app` — installs to the home screen, no app store |
-| **Desktop app** | Office: pricing, invoicing, catalogue admin | Installed Windows application |
+| **Desktop app** | Office: pricing, invoicing, catalogue admin | Windows installer, version 1.0.0, `.exe` or `.msi` |
+
+The desktop installer is a normal signed-format Windows package that appears in
+Add/Remove Programs as **CTP Core 1.0.0**, published by China Truck Parts (Pty)
+Ltd. It is around 126 MB because every catalogue photograph and exploded diagram
+is bundled inside it — which is the point: a counter PC with no internet still
+shows the pictures.
 
 It is not a prototype. It runs on the real catalogue, the real customers and
 the real order book.
@@ -211,9 +217,9 @@ tested.** An untested backup is a hope, not a backup — test one.
 **Costs.** Three managed services on their respective plans. Confirm current
 figures from each provider's billing page before relying on a number.
 
-**Source code.** A complete Git repository with full history, currently on one
-machine and **not yet pushed to its remote**. This should be pushed
-immediately — right now the project's entire history exists in one place.
+**Source code.** A complete Git repository with full history, pushed to
+`github.com/iancrediballs/ctpcore` and up to date with it. The history no
+longer exists in only one place.
 
 **Two settings worth changing today**, both one click in the Supabase
 dashboard: enable leaked-password protection, and confirm who holds

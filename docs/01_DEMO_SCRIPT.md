@@ -14,9 +14,9 @@ Do these in order. Each one has bitten someone before.
    the whole catalogue and takes 20–60 seconds on a decent connection.
 2. **Search one part on the phone.** Anything — `5302010` will do. If you see
    a photo, the images are live and the whole visual side of the demo works.
-3. **Start the desktop app** (`start-fleetview.bat`) and let it finish
-   compiling *before* you leave the house. First build is 10–20 minutes. It is
-   fast every time after that.
+3. **Install the desktop app** from `Desktop\CTP\INSTALLERS\` — run
+   `CTP Core_1.0.0_x64-setup.exe`. Do this the night before, not in the room.
+   Launch it once and confirm it opens.
 4. **Check the letterhead.** Desktop app → gear icon → Settings. Confirm the
    company name, address and VAT number are what you want printed on a tax
    invoice in front of the owner.
