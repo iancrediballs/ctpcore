@@ -118,8 +118,13 @@ type View = "counter" | "parts" | "sales" | "accounting" | "diagrams" | "jefrey"
 
 type Company = {
   name: string; address: string | null; phone: string | null; email: string | null;
-  tax_id: string | null; currency: string; terms: string | null;
+  tax_id: string | null; currency: string; terms: string | null; app_url: string | null;
 };
+
+/** Where the hosted phone app lives when the company row does not say.
+ *  Kept so an unmigrated or offline database still opens something real
+ *  rather than a dead link — see migration 0016. */
+const APP_URL_FALLBACK = "https://ctpcore.vercel.app";
 
 export default function App() {
   const [view, setView] = useState<View>("counter");
@@ -182,7 +187,7 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
           This is <b>this machine&rsquo;s</b> copy. Staff and roles, order
           emails, warehouses and pricing tiers live in the shared settings,
           along with the letterhead the phone app prints from.
-          <button className="linkish" onClick={() => api.openUrl("https://ctpcore.vercel.app")}>
+          <button className="linkish" onClick={() => api.openUrl(c.app_url || APP_URL_FALLBACK)}>
             Open shared settings &rsaquo;
           </button>
         </div>

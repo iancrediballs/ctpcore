@@ -25,7 +25,7 @@ type Company = {
   name: string; address: string | null; phone: string | null; email: string | null;
   tax_id: string | null; reg_no: string | null; bank_details: string | null;
   terms: string | null; currency: string; default_tax_bps: number;
-  invoice_prefix: string; quote_prefix: string;
+  invoice_prefix: string; quote_prefix: string; app_url: string | null;
 };
 
 type NotifySetting = {
@@ -136,7 +136,7 @@ function CompanyPanel({ flash, fail }: PanelProps) {
 
   useEffect(() => {
     supabase.from("company")
-      .select("name,address,phone,email,tax_id,reg_no,bank_details,terms,currency,default_tax_bps,invoice_prefix,quote_prefix")
+      .select("name,address,phone,email,tax_id,reg_no,bank_details,terms,currency,default_tax_bps,invoice_prefix,quote_prefix,app_url")
       .eq("id", 1).maybeSingle()
       .then(({ data, error }) => error ? fail(error) : setC(data as Company));
   }, []);
@@ -180,6 +180,9 @@ function CompanyPanel({ flash, fail }: PanelProps) {
       <Field label="Banking details" value={c.bank_details ?? ""} onChange={(v) => set("bank_details", v)} multiline
         hint="Printed in the invoice footer so customers can pay without asking." />
       <Field label="Payment terms" value={c.terms ?? ""} onChange={(v) => set("terms", v)} multiline />
+
+      <Field label="Phone app address" value={c.app_url ?? ""} onChange={(v) => set("app_url", v)}
+        hint="Where the desktop's 'Open shared settings' link sends people. Change it here if the app moves to a custom domain — no new installer needed. Blank falls back to https://ctpcore.vercel.app." />
 
       <button className="st-save" disabled={busy} onClick={save}>
         {busy ? "Saving…" : "Save company details"}

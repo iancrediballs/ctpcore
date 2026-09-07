@@ -143,6 +143,16 @@ fn init_db(path: &PathBuf) -> rusqlite::Result<Connection> {
     if ver < 14 {
         conn.execute_batch(include_str!("../migrations/0015_xref_fitment.sql"))?;
         conn.execute_batch("PRAGMA user_version = 14;")?;
+        ver = 14;
+    }
+
+    // v14 -> v15: the hosted app's URL moves out of App.tsx and onto the company
+    // row. It was compiled into the installer, so a domain change meant shipping
+    // a new .msi to every machine; now it is a settings edit. Cloud gets the same
+    // column in its migration 0031.
+    if ver < 15 {
+        conn.execute_batch(include_str!("../migrations/0016_company_app_url.sql"))?;
+        conn.execute_batch("PRAGMA user_version = 15;")?;
     }
 
     Ok(conn)
@@ -1217,17 +1227,20 @@ struct Company {
     tax_id: Option<String>,
     currency: String,
     terms: Option<String>,
+    /// Base URL of the hosted phone app. Null falls back to the compiled
+    /// default in the UI, so an unmigrated database still links somewhere real.
+    app_url: Option<String>,
 }
 
 #[tauri::command]
 fn get_company(db: State<Db>) -> Result<Company, String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
     conn.query_row(
-        "SELECT name, address, phone, email, tax_id, currency, terms FROM company WHERE id=1",
+        "SELECT name, address, phone, email, tax_id, currency, terms, app_url FROM company WHERE id=1",
         [],
         |r| Ok(Company {
             name: r.get(0)?, address: r.get(1)?, phone: r.get(2)?, email: r.get(3)?,
-            tax_id: r.get(4)?, currency: r.get(5)?, terms: r.get(6)?,
+            tax_id: r.get(4)?, currency: r.get(5)?, terms: r.get(6)?, app_url: r.get(7)?,
         }),
     )
     .map_err(|e| e.to_string())
@@ -1239,9 +1252,10 @@ fn set_company(company: Company, db: State<Db>) -> Result<Company, String> {
         let conn = db.0.lock().map_err(|e| e.to_string())?;
         conn.execute(
             "UPDATE company SET name=?1, address=?2, phone=?3, email=?4, tax_id=?5,
-                    currency=?6, terms=?7, rev=rev+1, updated_at=datetime('now') WHERE id=1",
+                    currency=?6, terms=?7, app_url=?8, rev=rev+1,
+                    updated_at=datetime('now') WHERE id=1",
             rusqlite::params![company.name, company.address, company.phone, company.email,
-                              company.tax_id, company.currency, company.terms],
+                              company.tax_id, company.currency, company.terms, company.app_url],
         )
         .map_err(|e| e.to_string())?;
     }
