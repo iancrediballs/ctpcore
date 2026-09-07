@@ -34,7 +34,7 @@ const esc = (s: string) =>
 
 function render(e: OrderEvent): { subject: string; html: string } {
   const who = esc(e.customer) + (e.contact ? ` (${esc(e.contact)})` : "");
-  const app = "https://ctp-core.vercel.app";
+  const app = Deno.env.get("APP_URL") ?? "https://ctpcore.vercel.app";
   if (e.kind === "request_received") {
     return {
       subject: `New parts request ${e.number} from ${e.customer}`,

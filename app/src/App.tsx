@@ -182,7 +182,7 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
           This is <b>this machine&rsquo;s</b> copy. Staff and roles, order
           emails, warehouses and pricing tiers live in the shared settings,
           along with the letterhead the phone app prints from.
-          <button className="linkish" onClick={() => api.openUrl("https://ctp-core.vercel.app")}>
+          <button className="linkish" onClick={() => api.openUrl("https://ctpcore.vercel.app")}>
             Open shared settings &rsaquo;
           </button>
         </div>

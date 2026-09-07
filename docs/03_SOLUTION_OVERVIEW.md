@@ -13,7 +13,7 @@ one set of records.
 
 | | Who uses it | Where |
 |---|---|---|
-| **Phone app** | Counter and warehouse staff, and customers | `ctp-core.vercel.app` — installs to the home screen, no app store |
+| **Phone app** | Counter and warehouse staff, and customers | `ctpcore.vercel.app` — installs to the home screen, no app store |
 | **Desktop app** | Office: pricing, invoicing, catalogue admin | Windows installer, version 1.0.0, `.exe` or `.msi` |
 
 The desktop installer is a normal signed-format Windows package that appears in

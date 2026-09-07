@@ -23,7 +23,7 @@ people can work at the same time without standing on each other.
 
 # PART ONE — THE PHONE
 
-Open `ctp-core.vercel.app` in Chrome or Safari and sign in with the email and
+Open `ctpcore.vercel.app` in Chrome or Safari and sign in with the email and
 password you were given.
 
 **Install it properly on your phone** — it is worth the 20 seconds:

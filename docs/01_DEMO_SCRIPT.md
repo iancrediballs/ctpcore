@@ -9,7 +9,7 @@ Prepared 5 September 2026 · Verified against the live system the same morning.
 
 Do these in order. Each one has bitten someone before.
 
-1. **Open the phone app and sign in.** `https://ctp-core.vercel.app`
+1. **Open the phone app and sign in.** `https://ctpcore.vercel.app`
    Wait for the sync dot to read **synced**, not "offline". First sync pulls
    the whole catalogue and takes 20–60 seconds on a decent connection.
 2. **Search one part on the phone.** Anything — `5302010` will do. If you see

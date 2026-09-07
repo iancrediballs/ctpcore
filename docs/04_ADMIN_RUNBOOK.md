@@ -11,7 +11,7 @@
 |---|---|
 | Database + auth + storage | Supabase project `ctp-core`, ref `hkzmydowyiajkbakxfkj`, eu-central-1, Postgres 17.6 |
 | Device sync | PowerSync — `6a445bd8deeddd0df6093d43.powersync.journeyapps.com` |
-| Phone app hosting | Vercel project `ctp-core`, team `ianiboyai` → `ctp-core.vercel.app` |
+| Phone app hosting | Vercel project `ctp-core`, account `ian-33be3d61` → `ctpcore.vercel.app` |
 | Image storage | Supabase bucket `ctp-assets` (public), 421 objects, 116 MB |
 | Order emails | Supabase edge function `notify`, sends via Resend |
 | Source | `github.com/iancrediballs/ctpcore` |

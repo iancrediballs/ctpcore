@@ -49,10 +49,10 @@ on the old workstation. See the note below before you worry about it.
 
 | Piece | Where |
 |---|---|
-| Mobile PWA | https://ctp-core.vercel.app |
+| Mobile PWA | https://ctpcore.vercel.app |
 | Database | Supabase project `ctp-core`, ref `hkzmydowyiajkbakxfkj`, eu-central-1 |
 | Assets | Supabase Storage bucket `ctp-assets` |
-| Vercel | project `ctp-core`, team `ianiboyai` |
+| Vercel | project `ctp-core`, account `ian-33be3d61` |
 | Deploy | `npx vercel --prod` from inside `app/` |
 
 ## About the old machine's data — you can stop worrying about it
