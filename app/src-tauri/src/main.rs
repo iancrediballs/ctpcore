@@ -1,6 +1,8 @@
 // Prevent a console window on Windows release builds.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod sync;
+
 use rusqlite::{Connection, OpenFlags};
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
@@ -1949,6 +1951,103 @@ fn ensure_device_code(conn: &Connection) -> Result<String, String> {
     Ok(code)
 }
 
+// ─── Stage B: pull-only sync ─────────────────────────────────────────────────
+//
+// Downloads cloud changes into fleetview.db. Never uploads — the worst this can
+// do is make local data more current. It is also the reseed: the desktop and
+// cloud have never synced, so the first pull is what makes them agree.
+//
+// Requires a signed-in user's access token. It calls PostgREST AS THAT USER,
+// which is the whole reason for option (c): rows written later carry a
+// server-derived actor rather than the device's word. Nothing here uploads yet,
+// but the token is what makes the eventual upload attributable.
+
+#[derive(Serialize)]
+struct SyncReport {
+    tables: Vec<sync::Applied>,
+    stopped_at: Option<String>,
+    error: Option<String>,
+}
+
+/// One table's worth of rows from PostgREST, oldest first so the watermark
+/// advances monotonically even if the pull is interrupted part way.
+fn fetch_table(
+    base: &str, apikey: &str, token: &str, table: &str, since: Option<&str>,
+) -> Result<Vec<serde_json::Value>, String> {
+    let col = sync::watermark_col(table);
+    let mut url = format!(
+        "{base}/rest/v1/{table}?select={}&order={col}.asc&limit=1000",
+        sync::select_for(table)
+    );
+    if let Some(w) = since {
+        url.push_str(&format!("&{col}=gt.{}", urlencode(w)));
+    }
+    let resp = ureq::get(&url)
+        .set("apikey", apikey)
+        .set("Authorization", &format!("Bearer {token}"))
+        .set("Accept", "application/json")
+        .call()
+        .map_err(|e| format!("{table}: {e}"))?;
+    // into_string + serde_json rather than ureq's `json` feature: serde_json is
+    // already a dependency, so this needs no feature flag and no new crate.
+    let text = resp.into_string().map_err(|e| format!("{table}: {e}"))?;
+    let body: serde_json::Value =
+        serde_json::from_str(&text).map_err(|e| format!("{table}: bad JSON: {e}"))?;
+    Ok(body.as_array().cloned().unwrap_or_default())
+}
+
+fn urlencode(s: &str) -> String {
+    s.bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                (b as char).to_string()
+            }
+            _ => format!("%{b:02X}"),
+        })
+        .collect()
+}
+
+/// Pull every table in dependency order. Each table is its own transaction and
+/// its watermark advances only on success, so an interruption leaves some
+/// tables refreshed, others not, and a working app either way — never an empty
+/// one, because nothing is deleted before downloading.
+#[tauri::command]
+fn sync_pull(
+    supabase_url: String, apikey: String, token: String, db: State<Db>,
+) -> Result<SyncReport, String> {
+    let mut conn = db.0.lock().map_err(|e| e.to_string())?;
+    let mut report = SyncReport { tables: vec![], stopped_at: None, error: None };
+
+    for table in sync::PULL_ORDER {
+        let since = sync::get_watermark(&conn, table);
+        let rows = match fetch_table(&supabase_url, &apikey, &token, table, since.as_deref()) {
+            Ok(r) => r,
+            Err(e) => {
+                report.stopped_at = Some((*table).to_string());
+                report.error = Some(e);
+                return Ok(report); // partial success is still success
+            }
+        };
+        let high = sync::max_watermark(table, &rows);
+        let tx = conn.transaction().map_err(|e| e.to_string())?;
+        let applied = sync::apply_rows(&tx, table, &rows).map_err(|e| e.to_string())?;
+        tx.commit().map_err(|e| e.to_string())?;
+        if let Some(h) = high {
+            sync::set_watermark(&conn, table, &h).map_err(|e| e.to_string())?;
+        }
+        report.tables.push(applied);
+    }
+
+    conn.execute(
+        "UPDATE device_identity
+            SET last_sync_at = datetime('now'), last_sync_status = 'ok'
+          WHERE id = 1",
+        [],
+    )
+    .ok();
+    Ok(report)
+}
+
 // ─── cached sign-in (offline working) ────────────────────────────────────────
 //
 // Rust stores and returns opaque strings here and makes no security decisions.
@@ -2522,6 +2621,7 @@ fn main() {
             set_primary_image,
             get_device_code,
             set_device_code,
+            sync_pull,
             list_local_sessions,
             get_local_session,
             save_local_session,
