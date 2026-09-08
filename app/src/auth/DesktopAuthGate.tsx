@@ -103,24 +103,52 @@ function LoginScreen({ onOffline }: { onOffline: (m: Extract<Mode, { kind: "offl
   );
 }
 
-/** Always visible, not only when unhappy — so the warning is a change in
- *  something already being watched rather than an alarm from nowhere, and so
- *  an operator can report "it says 9 days" instead of "it's broken". */
-function ConnectionBadge({ mode }: { mode: Mode }) {
-  if (mode.kind === "online") return <div className="connbadge ok">Connected</div>;
-  const msg = offlineMessage(mode.state);
+/** Who is signed in, how current the machine is, and how to hand over.
+ *
+ *  Always visible, not only when unhappy — so a warning is a change in
+ *  something already being watched rather than an alarm from nowhere, and so an
+ *  operator can report "it says 9 days" instead of "it's broken".
+ *
+ *  The handover button matters as much as the warning: per-person logins are
+ *  only workable on a shared counter if switching takes one click. If handing
+ *  over is awkward, people share one login, and then actor_id records nothing. */
+function AccountStrip(
+  { mode, who, onSwitch }: { mode: Mode; who: string; onSwitch: () => void }
+) {
+  const state = mode.kind === "offline" ? mode.state : null;
+  const msg = state ? offlineMessage(state) : null;
+  const cls = mode.kind === "online" ? "ok" : state!.band === "warning" ? "warn" : "off";
   return (
-    <div className={"connbadge " + (mode.state.band === "warning" ? "warn" : "off")}>
-      Working offline · last checked in {mode.state.daysOffline} day
-      {mode.state.daysOffline === 1 ? "" : "s"} ago
+    <div className={"connbadge " + cls}>
+      <div className="connbadge-top">
+        <span className="connbadge-who">{who}</span>
+        <button className="connbadge-sw" onClick={onSwitch} title="Sign out and hand over">
+          Switch user
+        </button>
+      </div>
+      {mode.kind === "online"
+        ? <span>Connected</span>
+        : <span>Working offline · last checked in {state!.daysOffline} day
+            {state!.daysOffline === 1 ? "" : "s"} ago</span>}
       {msg && <div className="connbadge-msg">{msg}</div>}
     </div>
   );
 }
 
 export function DesktopAuthGate({ children }: { children: React.ReactNode }) {
-  const { session, loading } = useAuth();
+  const { session, loading, signOut } = useAuth();
   const [offline, setOffline] = useState<Extract<Mode, { kind: "offline" }> | null>(null);
+
+  /** Hand the machine to the next person. Works offline: an offline session
+   *  exists only in React state, and supabase.auth.signOut() will fail with no
+   *  network — which must not block the handover, so it is best-effort. The
+   *  cached verifier is deliberately NOT removed: the point of caching is that
+   *  the previous user can sign back in later without connectivity. Forgetting
+   *  an account is a separate, explicit act (forget_local_session). */
+  const switchUser = useCallback(async () => {
+    setOffline(null);
+    try { await signOut(); } catch { /* offline: local state is what matters */ }
+  }, [signOut]);
 
   // Any successful server contact resets the offline clock — a silent token
   // refresh counts, not only a typed sign-in. A machine that reaches the server
@@ -158,9 +186,13 @@ export function DesktopAuthGate({ children }: { children: React.ReactNode }) {
     ? { kind: "online" }
     : { kind: "offline", session: offline!.session, state: offlineState(offline!.session.last_verified_at) };
 
+  const who = session
+    ? (session.user.email ?? "Signed in")
+    : (offline!.session.display_name || offline!.session.email);
+
   return (
     <>
-      <ConnectionBadge mode={mode} />
+      <AccountStrip mode={mode} who={who} onSwitch={switchUser} />
       {children}
     </>
   );
