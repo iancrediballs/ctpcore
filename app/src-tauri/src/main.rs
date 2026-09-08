@@ -165,6 +165,16 @@ fn init_db(path: &PathBuf) -> rusqlite::Result<Connection> {
     if ver < 16 {
         conn.execute_batch(include_str!("../migrations/0017_retire_non_sec_diagrams.sql"))?;
         conn.execute_batch("PRAGMA user_version = 16;")?;
+        ver = 16;
+    }
+
+    // v16 -> v17: `rev` becomes one mechanism. Triggers maintain it on all 18
+    // rev-bearing tables, and the ten hand-written `rev = rev + 1` statements
+    // are removed from this file in the same commit — a window where both fire
+    // would double-increment silently. Cloud gets the same rule in 0034.
+    if ver < 17 {
+        conn.execute_batch(include_str!("../migrations/0018_rev_triggers.sql"))?;
+        conn.execute_batch("PRAGMA user_version = 17;")?;
     }
 
     Ok(conn)
@@ -899,7 +909,7 @@ fn update_part(part_id: i64, patch: PartEdit, db: State<Db>) -> Result<(), Strin
         r#"UPDATE part SET name=?2, side=?3, make=?4, model=?5, drawing_no=?6, diagram_item_no=?7,
              locator=?8, catalogue_pn=?9, inventory_pn=?10, mpn=?11, description=?12, status=?13,
              match_status=?14, notes=?15, category_id=?16, list_price_minor=?17,
-             rev=rev+1, updated_at=datetime('now')
+             updated_at=datetime('now')
            WHERE id=?1"#,
         rusqlite::params![
             part_id, patch.name, patch.side, patch.make, patch.model, patch.drawing_no,
@@ -976,7 +986,7 @@ fn update_hotspot(
 ) -> Result<(), String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
     conn.execute(
-        "UPDATE hotspot SET x=?2, y=?3, part_id=?4, item_no=?5, rev=rev+1, updated_at=datetime('now') WHERE id=?1",
+        "UPDATE hotspot SET x=?2, y=?3, part_id=?4, item_no=?5, updated_at=datetime('now') WHERE id=?1",
         rusqlite::params![id, x, y, part_id, item_no],
     )
     .map_err(|e| e.to_string())?;
@@ -1264,7 +1274,7 @@ fn set_company(company: Company, db: State<Db>) -> Result<Company, String> {
         let conn = db.0.lock().map_err(|e| e.to_string())?;
         conn.execute(
             "UPDATE company SET name=?1, address=?2, phone=?3, email=?4, tax_id=?5,
-                    currency=?6, terms=?7, app_url=?8, rev=rev+1,
+                    currency=?6, terms=?7, app_url=?8,
                     updated_at=datetime('now') WHERE id=1",
             rusqlite::params![company.name, company.address, company.phone, company.email,
                               company.tax_id, company.currency, company.terms, company.app_url],
@@ -1412,7 +1422,7 @@ fn add_line(order_id: i64, part_id: i64, qty: i64, db: State<Db>) -> Result<Orde
             "INSERT INTO sales_line (order_id, part_id, qty, unit_price_minor, tier_at_add, origin)
              VALUES (?1, ?2, ?3, ?4, ?5, 'local')
              ON CONFLICT(order_id, part_id)
-             DO UPDATE SET qty = qty + excluded.qty, rev = rev + 1,
+             DO UPDATE SET qty = qty + excluded.qty,
                            updated_at = datetime('now'), deleted_at = NULL",
             rusqlite::params![order_id, part_id, qty, price, tier],
         )
@@ -1434,7 +1444,7 @@ fn update_line_qty(line_id: i64, qty: i64, db: State<Db>) -> Result<OrderDetail,
             .map_err(|e| e.to_string())?;
         order_is_editable(&conn, oid)?;
         conn.execute(
-            "UPDATE sales_line SET qty=?1, rev=rev+1, updated_at=datetime('now') WHERE id=?2",
+            "UPDATE sales_line SET qty=?1, updated_at=datetime('now') WHERE id=?2",
             rusqlite::params![qty, line_id],
         )
         .map_err(|e| e.to_string())?;
@@ -1482,7 +1492,7 @@ fn set_status(order_id: i64, status: String, db: State<Db>) -> Result<OrderDetai
             return Err(format!("can't move {cur} → {status} here"));
         }
         conn.execute(
-            "UPDATE sales_order SET status=?1, rev=rev+1, updated_at=datetime('now') WHERE id=?2",
+            "UPDATE sales_order SET status=?1, updated_at=datetime('now') WHERE id=?2",
             rusqlite::params![status, order_id],
         )
         .map_err(|e| e.to_string())?;
@@ -1541,7 +1551,7 @@ fn fulfill_order(order_id: i64, db: State<Db>) -> Result<OrderDetail, String> {
         }
         tx.execute(
             "UPDATE sales_order SET status='fulfilled', fulfilled_at=datetime('now'),
-                    rev=rev+1, updated_at=datetime('now') WHERE id=?1",
+                    updated_at=datetime('now') WHERE id=?1",
             rusqlite::params![order_id],
         )
         .map_err(|e| e.to_string())?;
@@ -1589,7 +1599,7 @@ fn set_tax_rate(order_id: i64, bps: i64, db: State<Db>) -> Result<OrderDetail, S
         let conn = db.0.lock().map_err(|e| e.to_string())?;
         order_is_editable(&conn, order_id)?;
         conn.execute(
-            "UPDATE sales_order SET tax_rate_bps=?1, rev=rev+1, updated_at=datetime('now') WHERE id=?2",
+            "UPDATE sales_order SET tax_rate_bps=?1, updated_at=datetime('now') WHERE id=?2",
             rusqlite::params![bps, order_id],
         )
         .map_err(|e| e.to_string())?;
@@ -2068,7 +2078,7 @@ fn delete_part(part_id: i64, force: Option<bool>, db: State<Db>) -> Result<Delet
         ));
     }
     conn.execute(
-        "UPDATE part SET deleted_at = datetime('now'), rev = rev + 1,
+        "UPDATE part SET deleted_at = datetime('now'),
                          updated_at = datetime('now') WHERE id = ?1",
         [part_id],
     )
@@ -2081,7 +2091,7 @@ fn delete_part(part_id: i64, force: Option<bool>, db: State<Db>) -> Result<Delet
 fn restore_part(part_id: i64, db: State<Db>) -> Result<(), String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
     conn.execute(
-        "UPDATE part SET deleted_at = NULL, rev = rev + 1,
+        "UPDATE part SET deleted_at = NULL,
                          updated_at = datetime('now') WHERE id = ?1",
         [part_id],
     )
