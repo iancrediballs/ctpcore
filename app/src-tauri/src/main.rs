@@ -153,6 +153,18 @@ fn init_db(path: &PathBuf) -> rusqlite::Result<Connection> {
     if ver < 15 {
         conn.execute_batch(include_str!("../migrations/0016_company_app_url.sql"))?;
         conn.execute_batch("PRAGMA user_version = 15;")?;
+        ver = 15;
+    }
+
+    // v15 -> v16: SEC101-116 is the only diagram set. Retires the 32 D-series
+    // plus SFW and SRD — 34 rows whose image files no longer exist anywhere, so
+    // they rendered as broken images with hotspot markers floating over them.
+    // Soft-delete only; the 91 hotspots stay dormant and attached. Cloud gets
+    // the same rule in its migration 0032 (which retires 22 rusauto rows the
+    // desktop never had).
+    if ver < 16 {
+        conn.execute_batch(include_str!("../migrations/0017_retire_non_sec_diagrams.sql"))?;
+        conn.execute_batch("PRAGMA user_version = 16;")?;
     }
 
     Ok(conn)
