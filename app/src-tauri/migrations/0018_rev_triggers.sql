@@ -37,6 +37,23 @@
 --  The guard has a second job: an UPDATE that sets rev explicitly is left
 --  alone rather than double-counted, which is what a sync-applied row needs.
 --
+--  ⚠ WARNING TO WHOEVER WRITES THE SYNC UPLOADER — READ BEFORE YOU DO
+--  Because the trigger stands aside for an explicit rev, an upload that SENDS
+--  rev can move the counter BACKWARDS. Measured on this schema at v19:
+--
+--      local edit, no rev in the statement   -> rev 5 becomes 6   (correct)
+--      applied WITH explicit rev = 42        -> rev becomes 42    (correct)
+--      applied with a LOWER explicit rev = 7 -> rev becomes 7     (WRONG)
+--
+--  A counter that can decrease cannot detect a conflict, which is the only
+--  thing rev is for. DO NOT send rev when uploading a changed row — let the
+--  trigger increment it so the value only moves forward. DO use the device's
+--  rev as an optimistic-concurrency precondition instead (PostgREST:
+--  `PATCH ...&rev=eq.5`; zero rows updated means somebody else got there
+--  first). The explicit-rev behaviour stays because it is right for restore
+--  and import; it is simply the wrong tool for an uploader, and the obvious
+--  implementation is the wrong one.
+--
 --  KNOWN COST, measured not assumed: `part` and `part_xref` carry FTS
 --  maintenance triggers (part_au, xref_au). Those now fire TWICE per update —
 --  once for the caller's write, once for the rev write. The rebuild is

@@ -42,6 +42,31 @@
 -- The guard `NEW.rev IS NOT DISTINCT FROM OLD.rev` means an UPDATE that sets
 -- `rev` explicitly is respected rather than double-counted. That matters for
 -- sync-applied rows, which arrive carrying the originating device's rev.
+--
+-- ⚠ WARNING TO WHOEVER WRITES THE SYNC UPLOADER — READ BEFORE YOU DO
+--
+-- Because the trigger stands aside for an explicitly-set rev, an upload that
+-- SENDS rev can move the counter BACKWARDS. Measured on the real schema:
+--
+--     local edit, no rev in the statement   -> rev 5 becomes 6   (correct)
+--     applied WITH explicit rev = 42        -> rev becomes 42    (correct)
+--     applied with a LOWER explicit rev = 7 -> rev becomes 7     (WRONG)
+--
+-- A version counter that can decrease cannot detect a conflict, which is the
+-- only thing rev is for. So:
+--
+--   DO NOT send `rev` when uploading a changed row. Let the trigger increment
+--   it, so the server's value only ever moves forward.
+--
+--   DO use the device's rev as an optimistic-concurrency PRECONDITION instead.
+--   PostgREST expresses this directly:
+--         PATCH /rest/v1/part?id=eq.123&rev=eq.5
+--   Zero rows updated means somebody else changed it first — a conflict,
+--   detected cheaply and explicitly, with no guessing.
+--
+-- The explicit-rev behaviour stays because it is right for RESTORE and IMPORT,
+-- where preserving a known version is the whole point. It is simply the wrong
+-- tool for an uploader, and the obvious implementation is the wrong one.
 -- ============================================================================
 
 create or replace function public.touch_rev()

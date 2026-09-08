@@ -197,6 +197,17 @@ fn init_db(path: &PathBuf) -> rusqlite::Result<Connection> {
     if ver < 19 {
         conn.execute_batch(include_str!("../migrations/0020_device_identity.sql"))?;
         conn.execute_batch("PRAGMA user_version = 19;")?;
+        ver = 19;
+    }
+
+    // v19 -> v20: sync foundations, schema only. Idempotency keys on the five
+    // tables the desktop can create rows in offline (hotspot had NO unique
+    // constraint at all); `local_session` added to actor_source for the offline
+    // outbox case; and the sync watermark folded onto device_identity rather
+    // than a second local-only table. Cloud gets 0036 and 0037.
+    if ver < 20 {
+        conn.execute_batch(include_str!("../migrations/0021_sync_foundations.sql"))?;
+        conn.execute_batch("PRAGMA user_version = 20;")?;
     }
 
     Ok(conn)
