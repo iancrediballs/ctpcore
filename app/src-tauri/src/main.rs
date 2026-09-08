@@ -208,6 +208,15 @@ fn init_db(path: &PathBuf) -> rusqlite::Result<Connection> {
     if ver < 20 {
         conn.execute_batch(include_str!("../migrations/0021_sync_foundations.sql"))?;
         conn.execute_batch("PRAGMA user_version = 20;")?;
+        ver = 20;
+    }
+
+    // v20 -> v21: cached sign-in, so the counter keeps working offline. One row
+    // per person because each person has their own login and a shared machine
+    // sees several across a shift. Local-only — must never join the sync set.
+    if ver < 21 {
+        conn.execute_batch(include_str!("../migrations/0022_local_session.sql"))?;
+        conn.execute_batch("PRAGMA user_version = 21;")?;
     }
 
     Ok(conn)
@@ -1940,6 +1949,161 @@ fn ensure_device_code(conn: &Connection) -> Result<String, String> {
     Ok(code)
 }
 
+// ─── cached sign-in (offline working) ────────────────────────────────────────
+//
+// Rust stores and returns opaque strings here and makes no security decisions.
+// The password verifier is computed in the app with Web Crypto (PBKDF2-SHA256);
+// this layer never sees a password and could not check one if it wanted to.
+// Keeping the crypto in one place — src/auth/offlineSession.ts — means there is
+// exactly one implementation to get right rather than two that must agree.
+//
+// See migration 0022 for what is stored and, more importantly, what it does and
+// does not protect against.
+
+#[derive(Serialize)]
+struct LocalSessionSummary {
+    user_id: String,
+    email: String,
+    display_name: Option<String>,
+    role: Option<String>,
+    last_verified_at: String,
+}
+
+#[derive(Serialize)]
+struct LocalSessionSecret {
+    user_id: String,
+    email: String,
+    display_name: Option<String>,
+    role: Option<String>,
+    verifier: String,
+    verifier_salt: String,
+    verifier_iters: i64,
+    refresh_token: Option<String>,
+    last_verified_at: String,
+}
+
+/// Who has signed in on this machine before — the offline sign-in picker, and
+/// the shift-handover list. Carries no verifier material.
+#[tauri::command]
+fn list_local_sessions(db: State<Db>) -> Result<Vec<LocalSessionSummary>, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT user_id, email, display_name, role, last_verified_at
+               FROM local_session ORDER BY last_verified_at DESC",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], |r| {
+            Ok(LocalSessionSummary {
+                user_id: r.get(0)?,
+                email: r.get(1)?,
+                display_name: r.get(2)?,
+                role: r.get(3)?,
+                last_verified_at: r.get(4)?,
+            })
+        })
+        .map_err(|e| e.to_string())?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+}
+
+/// The verifier material for one account, so the app can check a password with
+/// no network. Returns None when this machine has never seen that person —
+/// which is what makes the "first launch needs internet" message possible.
+#[tauri::command]
+fn get_local_session(email: String, db: State<Db>) -> Result<Option<LocalSessionSecret>, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT user_id, email, display_name, role, verifier, verifier_salt,
+                    verifier_iters, refresh_token, last_verified_at
+               FROM local_session WHERE lower(email) = lower(?1)",
+        )
+        .map_err(|e| e.to_string())?;
+    let mut rows = stmt
+        .query_map(rusqlite::params![email.trim()], |r| {
+            Ok(LocalSessionSecret {
+                user_id: r.get(0)?,
+                email: r.get(1)?,
+                display_name: r.get(2)?,
+                role: r.get(3)?,
+                verifier: r.get(4)?,
+                verifier_salt: r.get(5)?,
+                verifier_iters: r.get(6)?,
+                refresh_token: r.get(7)?,
+                last_verified_at: r.get(8)?,
+            })
+        })
+        .map_err(|e| e.to_string())?;
+    match rows.next() {
+        Some(r) => Ok(Some(r.map_err(|e| e.to_string())?)),
+        None => Ok(None),
+    }
+}
+
+/// Called after a SUCCESSFUL ONLINE sign-in, and only then. Refreshing the
+/// verifier here is what makes a centrally-changed password take effect on this
+/// machine, and stamping last_verified_at is what resets the offline window.
+#[allow(clippy::too_many_arguments)]
+#[tauri::command]
+fn save_local_session(
+    user_id: String,
+    email: String,
+    display_name: Option<String>,
+    role: Option<String>,
+    verifier: String,
+    verifier_salt: String,
+    verifier_iters: i64,
+    refresh_token: Option<String>,
+    db: State<Db>,
+) -> Result<(), String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    conn.execute(
+        "INSERT INTO local_session
+            (user_id, email, display_name, role, verifier, verifier_salt,
+             verifier_iters, refresh_token, last_verified_at)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8, datetime('now'))
+         ON CONFLICT(user_id) DO UPDATE SET
+            email = excluded.email, display_name = excluded.display_name,
+            role = excluded.role, verifier = excluded.verifier,
+            verifier_salt = excluded.verifier_salt,
+            verifier_iters = excluded.verifier_iters,
+            refresh_token = excluded.refresh_token,
+            last_verified_at = datetime('now')",
+        rusqlite::params![user_id, email.trim(), display_name, role, verifier,
+                          verifier_salt, verifier_iters, refresh_token],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Reset the offline clock after any successful server contact — a token
+/// refresh counts, not only a typed sign-in. A machine that reaches the server
+/// even once a week never sees a warning.
+#[tauri::command]
+fn touch_local_session(user_id: String, role: Option<String>, db: State<Db>) -> Result<(), String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    conn.execute(
+        "UPDATE local_session
+            SET last_verified_at = datetime('now'),
+                role = COALESCE(?2, role)
+          WHERE user_id = ?1",
+        rusqlite::params![user_id, role],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Forget one account on this machine. Used by "sign out and forget me", and by
+/// an administrator clearing a departed employee off a shared counter.
+#[tauri::command]
+fn forget_local_session(user_id: String, db: State<Db>) -> Result<(), String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM local_session WHERE user_id = ?1", rusqlite::params![user_id])
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 #[tauri::command]
 fn get_device_code(db: State<Db>) -> Result<String, String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
@@ -2358,6 +2522,11 @@ fn main() {
             set_primary_image,
             get_device_code,
             set_device_code,
+            list_local_sessions,
+            get_local_session,
+            save_local_session,
+            touch_local_session,
+            forget_local_session,
             add_hotspot,
             update_hotspot,
             delete_hotspot,

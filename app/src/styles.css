@@ -611,3 +611,19 @@ tr:hover .rmbtn{opacity:1}
 .linkish{display:block;margin-top:7px;padding:0;border:0;background:none;
   color:var(--amber,#e08a2b);font-size:12.5px;font-weight:750;cursor:pointer;text-align:left}
 .linkish:hover{text-decoration:underline}
+
+/* ═══ desktop sign-in: known users + connection state ═══ */
+.login-known{margin-top:16px;border-top:1px solid var(--line);padding-top:12px}
+.login-known-h{font-size:10px;letter-spacing:1.5px;text-transform:uppercase;color:#6e7681;margin-bottom:7px}
+.login-known-b{display:block;width:100%;text-align:left;background:rgba(255,255,255,.03);
+  border:1px solid var(--line);border-radius:6px;padding:7px 10px;margin-bottom:5px;
+  color:#c9d1d9;font-size:12.5px;cursor:pointer;transition:.12s}
+.login-known-b:hover{border-color:var(--accent2);color:#e6edf3}
+.login-known-s{display:block;font-size:10.5px;color:#6e7681;margin-top:1px}
+.connbadge{position:fixed;bottom:10px;right:12px;z-index:40;font-size:11px;
+  padding:5px 10px;border-radius:6px;border:1px solid var(--line);
+  background:rgba(22,27,34,.94);color:#8b949e;max-width:360px}
+.connbadge.ok{opacity:.55}
+.connbadge.warn{border-color:var(--warn);color:var(--warn)}
+.connbadge.off{border-color:#6e7681}
+.connbadge-msg{margin-top:4px;color:#c9d1d9;line-height:1.35;font-size:11px}
