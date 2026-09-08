@@ -175,6 +175,28 @@ fn init_db(path: &PathBuf) -> rusqlite::Result<Connection> {
     if ver < 17 {
         conn.execute_batch(include_str!("../migrations/0018_rev_triggers.sql"))?;
         conn.execute_batch("PRAGMA user_version = 17;")?;
+        ver = 17;
+    }
+
+    // v17 -> v18: shape only. actor_id was INTEGER and app_user.id is a UUID, so
+    // the audit column could never have held the identity it exists to record.
+    // Re-typed to TEXT, plus actor_label (who acted, when there is no account)
+    // and actor_source (which path stamped it — a server-derived record is not
+    // the same as a client's claim). Nothing populates these yet; they are free
+    // now because every value is NULL, and a data migration later.
+    if ver < 18 {
+        conn.execute_batch(include_str!("../migrations/0019_actor_identity_columns.sql"))?;
+        conn.execute_batch("PRAGMA user_version = 18;")?;
+        ver = 18;
+    }
+
+    // v18 -> v19: order numbers get a per-install namespace. `SO-{1000+rowid}`
+    // repeats on every machine, and the cloud already holds SO-1001. Numbers are
+    // now {quote_prefix}{device code}-{1000+id}. device_identity is local-only
+    // and must never be added to the sync set — see the migration's own comment.
+    if ver < 19 {
+        conn.execute_batch(include_str!("../migrations/0020_device_identity.sql"))?;
+        conn.execute_batch("PRAGMA user_version = 19;")?;
     }
 
     Ok(conn)
@@ -827,8 +849,13 @@ fn cache_supplier_diagrams(db_path: std::path::PathBuf) {
     let dir = assets_dir("diagrams/ru");
     if std::fs::create_dir_all(&dir).is_err() { return; }
     let rows: Vec<(i64, String)> = {
+        // deleted_at guard: without it this re-fetches diagrams that have been
+        // RETIRED, re-localising a third party's images for rows nothing shows.
+        // The 22 rusauto rows are retired in 0017/0032 precisely so they stop
+        // being used; this is the loop that would have quietly undone that.
         let mut stmt = match conn.prepare(
-            "SELECT id, image_path FROM diagram WHERE image_path LIKE 'http%'") {
+            "SELECT id, image_path FROM diagram
+              WHERE image_path LIKE 'http%' AND deleted_at IS NULL") {
             Ok(s) => s, Err(_) => return };
         let mapped = stmt.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)));
         match mapped { Ok(it) => it.filter_map(|x| x.ok()).collect(), Err(_) => return }
@@ -1252,17 +1279,23 @@ struct Company {
     /// Base URL of the hosted phone app. Null falls back to the compiled
     /// default in the UI, so an unmigrated database still links somewhere real.
     app_url: Option<String>,
+    /// Prefix half of an order number — the other half is this machine's device
+    /// code. The cloud has carried this column since 0028 with nothing reading
+    /// it; order numbering is its first consumer.
+    quote_prefix: String,
 }
 
 #[tauri::command]
 fn get_company(db: State<Db>) -> Result<Company, String> {
     let conn = db.0.lock().map_err(|e| e.to_string())?;
     conn.query_row(
-        "SELECT name, address, phone, email, tax_id, currency, terms, app_url FROM company WHERE id=1",
+        "SELECT name, address, phone, email, tax_id, currency, terms, app_url, quote_prefix
+           FROM company WHERE id=1",
         [],
         |r| Ok(Company {
             name: r.get(0)?, address: r.get(1)?, phone: r.get(2)?, email: r.get(3)?,
             tax_id: r.get(4)?, currency: r.get(5)?, terms: r.get(6)?, app_url: r.get(7)?,
+            quote_prefix: r.get(8)?,
         }),
     )
     .map_err(|e| e.to_string())
@@ -1274,10 +1307,11 @@ fn set_company(company: Company, db: State<Db>) -> Result<Company, String> {
         let conn = db.0.lock().map_err(|e| e.to_string())?;
         conn.execute(
             "UPDATE company SET name=?1, address=?2, phone=?3, email=?4, tax_id=?5,
-                    currency=?6, terms=?7, app_url=?8,
+                    currency=?6, terms=?7, app_url=?8, quote_prefix=?9,
                     updated_at=datetime('now') WHERE id=1",
             rusqlite::params![company.name, company.address, company.phone, company.email,
-                              company.tax_id, company.currency, company.terms, company.app_url],
+                              company.tax_id, company.currency, company.terms, company.app_url,
+                              company.quote_prefix],
         )
         .map_err(|e| e.to_string())?;
     }
@@ -1288,8 +1322,19 @@ fn set_company(company: Company, db: State<Db>) -> Result<Company, String> {
 fn create_order(customer_id: i64, location_id: i64, db: State<Db>) -> Result<OrderDetail, String> {
     let new_id = {
         let mut conn = db.0.lock().map_err(|e| e.to_string())?;
+        // This machine's namespace, and the shared prefix. Read before the
+        // transaction so a first-run device-code insert is its own commit.
+        let device = ensure_device_code(&conn)?;
+        let prefix: String = conn
+            .query_row(
+                "SELECT COALESCE(NULLIF(quote_prefix, ''), 'QT-') FROM company WHERE id = 1",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap_or_else(|_| "QT-".to_string());
+
         let tx = conn.transaction().map_err(|e| e.to_string())?;
-        // temp unique number, then stamp SO-<id> once we know the id
+        // temp unique number, then stamp the real one once we know the id
         let temp = format!("tmp-{}", uuid_like());
         tx.execute(
             "INSERT INTO sales_order (number, customer_id, location_id, status, origin)
@@ -1298,9 +1343,12 @@ fn create_order(customer_id: i64, location_id: i64, db: State<Db>) -> Result<Ord
         )
         .map_err(|e| e.to_string())?;
         let id = tx.last_insert_rowid();
+        // {prefix}{device}-{1000+id}, e.g. QT-A7K2-1001. The device code is what
+        // makes this unique across installs: the local id alone repeats on every
+        // machine, and the cloud already holds SO-1001. See migration 0020.
         tx.execute(
             "UPDATE sales_order SET number = ?1 WHERE id = ?2",
-            rusqlite::params![format!("SO-{}", 1000 + id), id],
+            rusqlite::params![format!("{}{}-{}", prefix, device, 1000 + id), id],
         )
         .map_err(|e| e.to_string())?;
         tx.commit().map_err(|e| e.to_string())?;
@@ -1842,6 +1890,76 @@ fn uuid_like() -> String {
     format!("{n:x}")
 }
 
+/// This install's numbering namespace, created on first use.
+///
+/// Order numbers are `{quote_prefix}{code}-{1000 + id}`. The code is what stops
+/// two machines minting the same number from the same local rowid — see
+/// migration 0020. It is a namespace, NOT an identity: it records which machine
+/// minted a number, never who was using it.
+///
+/// Seeded from SQLite's RNG rather than the clock. `uuid_like()` is nanosecond
+/// based, and two machines first run at the same instant is exactly the case
+/// this has to survive.
+fn ensure_device_code(conn: &Connection) -> Result<String, String> {
+    if let Ok(code) = conn.query_row(
+        "SELECT code FROM device_identity WHERE id = 1",
+        [],
+        |r| r.get::<_, String>(0),
+    ) {
+        if !code.trim().is_empty() {
+            return Ok(code);
+        }
+    }
+    // Crockford-style alphabet: no 0/O/1/I, because these get read aloud down a
+    // telephone and written on paper.
+    const ALPHABET: &[u8] = b"23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
+    let raw: Vec<u8> = conn
+        .query_row("SELECT randomblob(4)", [], |r| r.get(0))
+        .map_err(|e| e.to_string())?;
+    let code: String = raw
+        .iter()
+        .map(|b| ALPHABET[*b as usize % ALPHABET.len()] as char)
+        .collect();
+    conn.execute(
+        "INSERT INTO device_identity (id, code) VALUES (1, ?1)
+         ON CONFLICT(id) DO UPDATE SET code = excluded.code",
+        rusqlite::params![code],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(code)
+}
+
+#[tauri::command]
+fn get_device_code(db: State<Db>) -> Result<String, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    ensure_device_code(&conn)
+}
+
+/// Change this machine's numbering namespace. Only affects orders minted from
+/// here AFTER the change — existing numbers are historical record and are never
+/// rewritten.
+#[tauri::command]
+fn set_device_code(code: String, db: State<Db>) -> Result<String, String> {
+    let clean: String = code
+        .trim()
+        .to_uppercase()
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .take(8)
+        .collect();
+    if clean.is_empty() {
+        return Err("A device code needs at least one letter or digit.".into());
+    }
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    conn.execute(
+        "INSERT INTO device_identity (id, code) VALUES (1, ?1)
+         ON CONFLICT(id) DO UPDATE SET code = excluded.code",
+        rusqlite::params![clean],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(clean)
+}
+
 /// Open a URL in the user's DEFAULT browser. window.open() is blocked inside the
 /// Tauri/WebView2 webview (returns null), so the "Check price" link did nothing —
 /// this shells out to the OS handler instead. http(s) only, no extra crates.
@@ -2227,6 +2345,8 @@ fn main() {
             save_part_image,
             remove_part_image,
             set_primary_image,
+            get_device_code,
+            set_device_code,
             add_hotspot,
             update_hotspot,
             delete_hotspot,

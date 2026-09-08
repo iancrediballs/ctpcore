@@ -137,6 +137,13 @@ export const setTaxRate = <T>(orderId: number, bps: number) =>
 // ─── company & accounting ────────────────────────────────────────────────
 export const getCompany = <T>() => call<T>("get_company");
 export const setCompany = (company: unknown) => call<void>("set_company", { company });
+
+/** This install's order-numbering namespace. Desktop-only and deliberately NOT
+ *  part of the company row: company syncs, and a device code that synced would
+ *  put every machine back in the same namespace — which is the collision it
+ *  exists to prevent. See migration 0020. */
+export const getDeviceCode = () => call<string>("get_device_code");
+export const setDeviceCode = (code: string) => call<string>("set_device_code", { code });
 export const listExportQueue = <T>(target: string) => call<T>("list_export_queue", { target });
 export const exportAccounting = <T>(target: string, orderIds: number[]) =>
   call<T>("export_accounting", { target, orderIds });

@@ -119,6 +119,7 @@ type View = "counter" | "parts" | "sales" | "accounting" | "diagrams" | "jefrey"
 type Company = {
   name: string; address: string | null; phone: string | null; email: string | null;
   tax_id: string | null; currency: string; terms: string | null; app_url: string | null;
+  quote_prefix: string;
 };
 
 /** Where the hosted phone app lives when the company row does not say.
@@ -159,8 +160,15 @@ export default function App() {
 function SettingsModal({ onClose }: { onClose: () => void }) {
   const [c, setC] = useState<Company | null>(null);
   const [msg, setMsg] = useState("");
+  const [device, setDevice] = useState("");
+  const [deviceMsg, setDeviceMsg] = useState("");
   const prefs = usePrefs();
   useEffect(() => { api.getCompany<Company>().then(setC).catch(console.error); }, []);
+  useEffect(() => { api.getDeviceCode().then(setDevice).catch(console.error); }, []);
+  const saveDevice = async () => {
+    try { setDevice(await api.setDeviceCode(device)); setDeviceMsg("✓ saved"); }
+    catch (e) { setDeviceMsg("✕ " + String(e)); }
+  };
   if (!c) return null;
   const f = (k: keyof Company) => (e: { target: { value: string } }) => setC({ ...c, [k]: e.target.value });
   const save = async () => {
@@ -200,6 +208,20 @@ function SettingsModal({ onClose }: { onClose: () => void }) {
         <label className="fld">Terms<textarea rows={3} value={c.terms ?? ""} onChange={f("terms")} /></label>
         <button className="post" style={{ marginTop: 14 }} onClick={save}>Save</button>
         {msg && <div className={"msg" + (msg.startsWith("✕") ? " err" : "")}>{msg}</div>}
+
+        <div className="sub" style={{ marginTop: 20 }}>This machine</div>
+        <div className="note-inline">
+          Order numbers minted here look like <b>{(c.quote_prefix || "QT-") + (device || "…") + "-1001"}</b>.
+          The middle part is this machine&rsquo;s code, and it is what keeps two
+          computers from giving two different orders the same number. Give each
+          machine its own — <b>FRONT</b>, <b>WH</b>, whatever you call it. Changing
+          it only affects orders created from now on.
+        </div>
+        <label className="fld">Machine code
+          <input value={device} onChange={(e) => setDevice(e.target.value)} />
+        </label>
+        <button className="post" onClick={saveDevice}>Save machine code</button>
+        {deviceMsg && <div className={"msg" + (deviceMsg.startsWith("✕") ? " err" : "")}>{deviceMsg}</div>}
 
         <div className="sub" style={{ marginTop: 20 }}>Display &mdash; part detail</div>
         <label className="chk">
