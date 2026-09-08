@@ -90,8 +90,25 @@ begin
 end $$;
 
 -- Verify by query, not by the editor's "Success" message — RAISE NOTICE is not
--- surfaced by the Supabase SQL editor. Expect one row per rev-bearing table
--- (19 at the time of writing: the 18 the desktop also has, plus `lead`).
+-- surfaced by the Supabase SQL editor. Expect one row per rev-bearing table.
+--
+-- APPLIED 2026-09-08: 22 tables, not the 19 counted from schema.postgres.sql
+-- before applying — brand, category, company, customer, diagram, hotspot, lead,
+-- location, part, part_alias, part_cost, part_diagram_callout, part_fitment,
+-- part_image, part_model, part_xref, price, price_tier, sales_line,
+-- sales_order, stock_policy, vehicle_model.
+--
+-- Nothing drifted. The extra three (part_alias, part_cost, price_tier) gained
+-- their rev/updated_at columns in migrations after schema.postgres.sql was
+-- written, so a count taken from that file was always going to be short. This
+-- is the declarative rule doing its job: it covered tables the author of the
+-- rule had not enumerated. A hard-coded list of 19 would have silently missed
+-- three, which is the failure mode this file exists to avoid.
+--
+-- Worth recording the negative too: `stock_movement` correctly did NOT get a
+-- trigger, because it has no `rev` column. It is the append-only ledger — rows
+-- are never updated, so a version counter would be meaningless there. The rule
+-- reached the right answer without being told about the exception.
 --
 --   select event_object_table, trigger_name
 --     from information_schema.triggers
