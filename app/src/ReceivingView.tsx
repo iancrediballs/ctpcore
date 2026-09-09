@@ -32,7 +32,7 @@ type Supplier = { id: number; code: string; name: string; currency: string; inco
 type DocRef = { id: number; number: string };
 
 type LandedLine = {
-  part_id: number; sku: string; qty: number;
+  part_id: number; sku: string; name: string; qty: number;
   unit_invoice_minor: number; unit_freight_minor: number; unit_duty_minor: number;
   unit_clearing_minor: number; unit_other_minor: number;
   unit_cost_invoiced_minor: number; total_invoiced_minor: number;
@@ -52,6 +52,19 @@ type CostNow = {
   cost_invoiced_minor: number; cost_expected_minor: number; rebate_minor: number;
   basis: string; is_estimated: boolean; list_price_minor: number;
   margin_bps_invoiced: number; margin_bps_expected: number;
+};
+
+type PoSummary = {
+  id: number; number: string; supplier: string; status: string;
+  lines: number; outstanding: number; expected_at: string | null;
+};
+type DiscrepancyRow = {
+  id: number; sku: string; name: string; kind: string; qty: number;
+  disposition: string; claim_value_minor: number; claim_number: string | null;
+};
+type Opening = {
+  receipt_id: number; parts: number; units: number; adopted: number;
+  uncosted: string[];
 };
 
 /** Working line, held in React until the draft is saved row by row. */
@@ -95,6 +108,10 @@ export default function ReceivingView() {
   const [posted, setPosted] = useState<Posted | null>(null);
   const [msg, setMsg] = useState<string>("");
   const [busy, setBusy] = useState(false);
+  const [poPicker, setPoPicker] = useState(false);
+  const [discOpen, setDiscOpen] = useState(false);
+  const [discs, setDiscs] = useState<DiscrepancyRow[]>([]);
+  const [opening, setOpening] = useState<Opening | null>(null);
 
   const supported = api.supports("post_goods_receipt");
 
@@ -140,6 +157,38 @@ export default function ReceivingView() {
       setLanded(null);
     } catch (e) { setMsg("✕ " + String(e)); }
   }, [receipt]);
+
+  const reloadDiscs = useCallback(async () => {
+    if (!receipt) return;
+    try { setDiscs(await api.listDiscrepancies<DiscrepancyRow[]>(receipt.id)); }
+    catch (e) { console.error(e); }
+  }, [receipt]);
+
+  /** After pulling from an order the draft holds lines this screen has never
+   *  seen, so they are read back from the receipt rather than guessed at. */
+  const reloadLines = useCallback(async () => {
+    if (!receipt) return;
+    try {
+      const l = await api.previewLandedCost<Landed>(receipt.id);
+      setLines(l.lines.map((x) => ({
+        part_id: x.part_id, sku: x.sku, name: x.name,
+        qty: x.qty, unit_cost_minor: x.unit_invoice_minor,
+      })));
+      setLanded(null);
+    } catch (e) { setMsg("\u2715 " + String(e)); }
+  }, [receipt]);
+
+  /** Give the stock that was already here a costed origin.
+   *  ADOPTS the existing ledger rows - posting would add the same stock a
+   *  second time. See purchasing::adopt_opening_stock. */
+  const openingBalance = useCallback(async () => {
+    setBusy(true); setMsg("");
+    try {
+      const r = await api.createOpeningReceipt<Opening>();
+      setOpening(r);
+      setMsg(`opening balance recorded \u2014 ${r.units} units across ${r.parts} parts now trace to a receipt`);
+    } catch (e) { setMsg("\u2715 " + String(e)); } finally { setBusy(false); }
+  }, []);
 
   const preview = useCallback(async () => {
     if (!receipt) return;
@@ -198,10 +247,50 @@ export default function ReceivingView() {
       </div>
 
       {!receipt && (
-        <div className="empty">
-          Nothing being received. Start a delivery when a container arrives —
-          counting into a draft writes no stock until you post it.
-        </div>
+        <>
+          <div className="empty">
+            Nothing being received. Start a delivery when a container arrives —
+            counting into a draft writes no stock until you post it.
+          </div>
+
+          {/* The stock that was here before the system was. Offered once - the
+              command refuses a second opening balance. */}
+          {!opening && (
+            <div className="card" style={{ cursor: "pointer" }}
+              onClick={busy ? undefined : openingBalance}>
+              <div className="row1">
+                <span className="sku">Opening balance</span>
+                <span className="nm">Give the stock already on the shelf a costed origin</span>
+                <span className="spacer" />
+                <span className="why" style={{ margin: 0 }}>one-off</span>
+              </div>
+              <div className="hint" style={{ margin: "6px 0 0" }}>
+                This does not add stock. It attaches the movements already in the
+                ledger to a receipt, so every unit on hand can say where it came
+                from. Costs are the supplier price list, not measured landed
+                costs, and are marked as estimates.
+              </div>
+            </div>
+          )}
+
+          {opening && (
+            <>
+              <div className="totals">
+                <div className="totrow"><span className="totlabel">parts</span><span className="tnum">{opening.parts}</span></div>
+                <div className="totrow"><span className="totlabel">units, unchanged</span><span className="tnum">{opening.units}</span></div>
+                <div className="totrow tot"><span className="totlabel">ledger rows attached</span><span className="tnum">{opening.adopted}</span></div>
+              </div>
+              {opening.uncosted.length > 0 && (
+                <div className="hint">
+                  ⚠ {opening.uncosted.length} part{opening.uncosted.length === 1 ? " has" : "s have"} no
+                  cost on file at all, so {opening.uncosted.length === 1 ? "it is" : "they are"} carried at
+                  zero: {opening.uncosted.join(", ")}. A zero is visible and gets
+                  questioned; a guessed number gets sold against.
+                </div>
+              )}
+            </>
+          )}
+        </>
       )}
 
       {receipt && (
@@ -210,6 +299,16 @@ export default function ReceivingView() {
           <div className="count">
             1 · what arrived {lines.length > 0 && `— ${lines.length} line${lines.length === 1 ? "" : "s"}, ${money(goods)}`}
           </div>
+          {!posted && (
+            <div className="actbar">
+              <button className="post sm" onClick={() => setPoPicker(true)}>
+                Pull from a purchase order
+              </button>
+              <span className="why" style={{ margin: 0 }}>
+                or just count what is in front of you
+              </span>
+            </div>
+          )}
           {!posted && <LineAdder onAdd={addLine} />}
           {lines.map((l) => (
             <div className="card" key={l.part_id}>
@@ -223,6 +322,38 @@ export default function ReceivingView() {
             </div>
           ))}
           {lines.length === 0 && <div className="empty">no lines counted yet</div>}
+
+          {/* 1b - what is wrong with it. Placed immediately after counting and
+              before anything else, because this is the moment the crate is open
+              and the evidence is in front of somebody. */}
+          {lines.length > 0 && (
+            <>
+              <div className="actbar">
+                <button className="post sm" onClick={() => setDiscOpen(true)}>
+                  Report a short, damage or wrong part
+                </button>
+                {discs.length > 0 && (
+                  <span className="why" style={{ margin: 0 }}>
+                    {discs.length} recorded ·{" "}
+                    {money(discs.reduce((a, d) => a + d.claim_value_minor, 0))} claimed
+                  </span>
+                )}
+              </div>
+              {discs.map((d) => (
+                <div className="card" key={d.id}>
+                  <div className="row1">
+                    <span className="sku">{d.sku}</span>
+                    <span className="nm">{d.kind.replace("_", " ")} × {d.qty}</span>
+                    <span className="spacer" />
+                    {d.claim_number
+                      ? <span className="sbadge st-confirmed">claim {d.claim_number}</span>
+                      : <span className="why" style={{ margin: 0 }}>no claim</span>}
+                    <span className="price">{money(d.claim_value_minor)}</span>
+                  </div>
+                </div>
+              ))}
+            </>
+          )}
 
           {/* ── 2. the charges ───────────────────────────────────────── */}
           <div className="count">
@@ -269,6 +400,20 @@ export default function ReceivingView() {
           {msg && <div className={"msg" + (msg.startsWith("✕") ? " err" : "")}>{msg}</div>}
 
           {landed && <LandedTable landed={landed} posted={!!posted} />}
+
+          {poPicker && receipt && (
+            <PoPicker receiptId={receipt.id} onClose={() => setPoPicker(false)}
+              onPulled={(n) => {
+                setMsg(n === 0
+                  ? "nothing outstanding on that order that is not already counted"
+                  : `pulled ${n} line${n === 1 ? "" : "s"} \u2014 check them against what is actually on the pallet`);
+                void reloadLines();
+              }} />
+          )}
+          {discOpen && receipt && (
+            <DiscrepancyPanel receiptId={receipt.id} lines={lines}
+              onClose={() => setDiscOpen(false)} onSaved={reloadDiscs} />
+          )}
         </>
       )}
     </>
@@ -469,5 +614,183 @@ function LandedTable({ landed, posted }: { landed: Landed; posted: boolean }) {
         arrived is how a threshold gets missed.
       </div>
     </>
+  );
+}
+
+/** Shorts, damages and wrong parts — captured at the open crate.
+ *
+ *  THIS IS THE ON-RAMP TO SUPPLIER RECOVERY, and it is here rather than on a
+ *  claims screen for one reason: a claim raised three weeks later against a
+ *  supplier eight thousand kilometres away is a negotiation. The same claim
+ *  raised at the crate, with a quantity and a photograph reference, is an
+ *  invoice.
+ *
+ *  The distinction the form exists to enforce: A SHORT IS NOT A STOCK
+ *  ADJUSTMENT. An adjustment says "we were mistaken about what we had". A short
+ *  says "we paid for 100, received 97, and the supplier owes us 3". One is a
+ *  correction; the other is an asset — and recording it as the first is how the
+ *  money quietly stops being collected.
+ */
+function DiscrepancyPanel({ receiptId, lines, onClose, onSaved }: {
+  receiptId: number;
+  lines: DraftLine[];
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [partId, setPartId] = useState<number | null>(lines[0]?.part_id ?? null);
+  const [kind, setKind] = useState<string>("short");
+  const [qty, setQty] = useState("");
+  const [notes, setNotes] = useState("");
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const line = lines.find((l) => l.part_id === partId) ?? null;
+  // A short is always 'reject': the goods never entered the building, so no
+  // stock is written and the claim is the entire output. Anything else is a
+  // decision about goods that ARE here, so the disposition is offered.
+  const isShort = kind === "short";
+  const [disposition, setDisposition] = useState("accept_and_claim");
+  const effective = isShort ? "reject" : disposition;
+  const n = parseInt(qty, 10);
+  const value = line && Number.isFinite(n) ? line.unit_cost_minor * Math.max(n, 0) : 0;
+
+  const save = async () => {
+    if (partId == null || !Number.isFinite(n) || n <= 0) { setErr("how many?"); return; }
+    setBusy(true); setErr("");
+    try {
+      await api.recordDiscrepancy({
+        receiptId, partId, kind, qty: n,
+        disposition: effective,
+        notes: notes.trim() === "" ? null : notes.trim(),
+      });
+      onSaved(); onClose();
+    } catch (e) { setErr(String(e)); } finally { setBusy(false); }
+  };
+
+  return (
+    <div className="overlay" onClick={onClose}>
+      <div className="panel narrow" onClick={(e) => e.stopPropagation()}>
+        <div className="phead">
+          <span className="sku big">Something is wrong with this delivery</span>
+          <span className="spacer" />
+          <button className="x" onClick={onClose}>✕</button>
+        </div>
+
+        <label className="fld">Part
+          <select value={partId ?? ""} onChange={(e) => setPartId(Number(e.target.value))}>
+            {lines.map((l) => (
+              <option key={l.part_id} value={l.part_id}>{l.sku} — {l.name}</option>
+            ))}
+          </select>
+        </label>
+
+        <label className="fld">What is wrong
+          <select value={kind} onChange={(e) => setKind(e.target.value)}>
+            <option value="short">Short — we paid for more than arrived</option>
+            <option value="damaged">Damaged in transit</option>
+            <option value="wrong_part">Wrong part sent</option>
+            <option value="quality">Quality not acceptable</option>
+            <option value="over">Over-delivered — more arrived than ordered</option>
+          </select>
+        </label>
+
+        <label className="fld">How many
+          <input className="qty" inputMode="numeric" value={qty} autoFocus
+            onChange={(e) => setQty(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); save(); } }} />
+        </label>
+
+        {isShort ? (
+          <div className="hint">
+            A short never enters stock — the goods are not here. Nothing is
+            added to the shelf and a claim is raised against the supplier for
+            what was paid.
+          </div>
+        ) : (
+          <label className="fld">What are we doing with them
+            <select value={disposition} onChange={(e) => setDisposition(e.target.value)}>
+              <option value="accept_and_claim">Keeping them, and claiming — sellable at a discount</option>
+              <option value="reject">Sending them back — they never enter stock</option>
+              <option value="scrap_and_claim">Scrapping them — recorded, then written off</option>
+              <option value="accept_no_claim">Keeping them, no claim — not worth the paperwork</option>
+            </select>
+          </label>
+        )}
+
+        <label className="fld">Note (what the crate looked like, who saw it)
+          <input value={notes} onChange={(e) => setNotes(e.target.value)}
+            placeholder="optional, but a claim with detail gets paid" />
+        </label>
+
+        {value > 0 && effective !== "accept_no_claim" && (
+          <div className="totals">
+            <div className="totrow tot">
+              <span className="totlabel">claim against the supplier</span>
+              <span className="tnum">{money(value)}</span>
+            </div>
+          </div>
+        )}
+
+        {err && <div className="msg err">✕ {err}</div>}
+        <button className="post" style={{ marginTop: 14 }} onClick={save} disabled={busy}>
+          {busy ? "…" : effective === "accept_no_claim" ? "Record it" : "Record it and raise the claim"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** Pick the order this delivery is against. Pulling copies only what is still
+ *  owed, so a part-delivered container brings down the balance and not the
+ *  original quantity. */
+function PoPicker({ receiptId, onClose, onPulled }: {
+  receiptId: number; onClose: () => void; onPulled: (n: number) => void;
+}) {
+  const [orders, setOrders] = useState<PoSummary[]>([]);
+  const [err, setErr] = useState("");
+
+  useEffect(() => {
+    api.listOpenPurchaseOrders<PoSummary[]>()
+      .then(setOrders).catch((e) => setErr(String(e)));
+  }, []);
+
+  const pull = async (o: PoSummary) => {
+    try { onPulled(await api.pullPoLines(receiptId, o.id)); onClose(); }
+    catch (e) { setErr(String(e)); }
+  };
+
+  return (
+    <div className="overlay" onClick={onClose}>
+      <div className="panel narrow" onClick={(e) => e.stopPropagation()}>
+        <div className="phead">
+          <span className="sku big">Which order is this against?</span>
+          <span className="spacer" />
+          <button className="x" onClick={onClose}>✕</button>
+        </div>
+        {orders.length === 0 && !err && (
+          <div className="empty">
+            No purchase orders are outstanding. You can still receive without
+            one — suppliers send things nobody ordered, and recording what
+            actually arrived beats refusing to record it.
+          </div>
+        )}
+        {orders.map((o) => (
+          <div className="card" key={o.id} onClick={() => pull(o)}>
+            <div className="row1">
+              <span className="sku">{o.number}</span>
+              <span className="nm">{o.supplier}</span>
+              <span className={"sbadge st-" + (o.status === "part_received" ? "confirmed" : "quote")}>
+                {o.status.replace("_", " ")}
+              </span>
+              <span className="spacer" />
+              <span className="why" style={{ margin: 0 }}>
+                {o.outstanding} still owed across {o.lines} line{o.lines === 1 ? "" : "s"}
+              </span>
+            </div>
+          </div>
+        ))}
+        {err && <div className="msg err">✕ {err}</div>}
+      </div>
+    </div>
   );
 }

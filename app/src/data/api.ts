@@ -225,3 +225,16 @@ export const recordDiscrepancy = (a: {
   receiptId: number; partId: number; kind: string; qty: number;
   disposition?: string; claimValueMinor?: number | null; notes?: string | null;
 }) => call<number>("record_discrepancy", a as unknown as Record<string, unknown>);
+
+/** Purchase orders that still owe something. */
+export const listOpenPurchaseOrders = <T>() => call<T>("list_open_purchase_orders");
+/** Copy everything still owed on an order onto a draft receipt. Lines already
+ *  counted by hand are left alone — a count is a fact, an order is a claim. */
+export const pullPoLines = (receiptId: number, orderId: number) =>
+  call<number>("pull_po_lines", { receiptId, orderId });
+/** Give the stock that was already here a costed origin. ADOPTS the existing
+ *  ledger rows; it does not post new ones, because posting would add the same
+ *  stock a second time. */
+export const createOpeningReceipt = <T>() => call<T>("create_opening_receipt");
+export const listDiscrepancies = <T>(receiptId: number) =>
+  call<T>("list_discrepancies", { receiptId });

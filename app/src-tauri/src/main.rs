@@ -1984,6 +1984,134 @@ fn record_discrepancy(
     Ok(id)
 }
 
+#[derive(Serialize)]
+struct PoSummary {
+    id: i64, number: String, supplier: String, status: String,
+    lines: i64, outstanding: i64, expected_at: Option<String>,
+}
+
+/// Orders that still owe something. The receiver's question is never "show me
+/// every order ever" — it is "what is this pallet against".
+#[tauri::command]
+fn list_open_purchase_orders(db: State<Db>) -> Result<Vec<PoSummary>, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    let mut s = conn
+        .prepare(
+            "SELECT o.id, o.number, s.name, o.status,
+                    COUNT(st.order_line_id),
+                    COALESCE(SUM(st.qty_ordered - st.qty_received), 0),
+                    o.expected_at
+               FROM purchase_order o
+               JOIN supplier s ON s.id = o.supplier_id
+               LEFT JOIN po_line_status st ON st.order_id = o.id
+              WHERE o.deleted_at IS NULL
+                AND o.status IN ('draft','sent','acknowledged','part_received')
+              GROUP BY o.id
+             HAVING COALESCE(SUM(st.qty_ordered - st.qty_received), 0) > 0
+              ORDER BY o.expected_at, o.id",
+        )
+        .map_err(|e| e.to_string())?;
+    let v = s
+        .query_map([], |r| {
+            Ok(PoSummary {
+                id: r.get(0)?, number: r.get(1)?, supplier: r.get(2)?, status: r.get(3)?,
+                lines: r.get(4)?, outstanding: r.get(5)?, expected_at: r.get(6)?,
+            })
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(|e| e.to_string())?;
+    Ok(v)
+}
+
+/// Copy everything still owed on an order onto this draft receipt.
+/// Lines already counted by hand are left exactly as they are.
+#[tauri::command]
+fn pull_po_lines(receipt_id: i64, order_id: i64, db: State<Db>) -> Result<usize, String> {
+    let mut conn = db.0.lock().map_err(|e| e.to_string())?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    let n = purchasing::pull_po_lines(&tx, receipt_id, order_id)?;
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(n)
+}
+
+/// Give the stock that was already here a costed origin.
+///
+/// ⚠ Adopts the existing ledger rows rather than posting new ones. Posting
+///   would add the stock a second time — see purchasing::adopt_opening_stock.
+#[tauri::command]
+fn create_opening_receipt(db: State<Db>) -> Result<purchasing::OpeningResult, String> {
+    let mut conn = db.0.lock().map_err(|e| e.to_string())?;
+    let device = ensure_device_code(&conn)?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    let loc: i64 = tx
+        .query_row(
+            "SELECT id FROM location WHERE deleted_at IS NULL ORDER BY id LIMIT 1",
+            [], |r| r.get(0),
+        )
+        .map_err(|_| "no live location".to_string())?;
+    // Dated to the shipment the costs came from, not to today. The opening
+    // balance is a statement about when this stock arrived, and 30 July is the
+    // date on the Item Cost Price List those figures were taken from.
+    tx.execute(
+        "INSERT INTO goods_receipt (number, kind, location_id, received_at,
+                                    invoice_currency, fx_rate_ppm, status,
+                                    cost_is_estimated, notes, origin)
+         VALUES (?1, 'opening', ?2, '2026-07-30 00:00:00', 'ZAR', 1000000, 'draft', 1,
+                 'Opening balance. Stock that was on the shelf before the system '
+                 || 'existed. Costs are the supplier Item Cost Price List, NOT '
+                 || 'measured landed costs - treat every figure derived from '
+                 || 'this receipt as an estimate until these units sell through.',
+                 'local')",
+        rusqlite::params![format!("tmp-{}", uuid_like()), loc],
+    )
+    .map_err(|e| e.to_string())?;
+    let id = tx.last_insert_rowid();
+    tx.execute(
+        "UPDATE goods_receipt SET number = ?1 WHERE id = ?2",
+        rusqlite::params![format!("GR-{}-{}", device, 1000 + id), id],
+    )
+    .map_err(|e| e.to_string())?;
+
+    let res = purchasing::adopt_opening_stock(&tx, id)?;
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(res)
+}
+
+#[derive(Serialize)]
+struct DiscrepancyRow {
+    id: i64, sku: String, name: String, kind: String, qty: i64,
+    disposition: String, claim_value_minor: i64, claim_number: Option<String>,
+}
+
+#[tauri::command]
+fn list_discrepancies(receipt_id: i64, db: State<Db>) -> Result<Vec<DiscrepancyRow>, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    let mut s = conn
+        .prepare(
+            "SELECT d.id, p.sku, p.name, d.kind, d.qty, d.disposition,
+                    d.claim_value_minor, c.number
+               FROM receipt_discrepancy d
+               JOIN part p ON p.id = d.part_id
+               LEFT JOIN supplier_claim c ON c.id = d.claim_id
+              WHERE d.receipt_id = ?1 AND d.deleted_at IS NULL
+              ORDER BY d.id",
+        )
+        .map_err(|e| e.to_string())?;
+    let v = s
+        .query_map([receipt_id], |r| {
+            Ok(DiscrepancyRow {
+                id: r.get(0)?, sku: r.get(1)?, name: r.get(2)?, kind: r.get(3)?,
+                qty: r.get(4)?, disposition: r.get(5)?, claim_value_minor: r.get(6)?,
+                claim_number: r.get(7)?,
+            })
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(|e| e.to_string())?;
+    Ok(v)
+}
+
 fn order_is_editable(conn: &Connection, order_id: i64) -> Result<String, String> {
     let status: String = conn
         .query_row(
@@ -3167,6 +3295,10 @@ fn main() {
             list_rebate_agreements,
             list_supplier_claims,
             record_discrepancy,
+            list_open_purchase_orders,
+            pull_po_lines,
+            create_opening_receipt,
+            list_discrepancies,
             list_local_sessions,
             get_local_session,
             save_local_session,

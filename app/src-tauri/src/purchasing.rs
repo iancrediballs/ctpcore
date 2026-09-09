@@ -273,6 +273,9 @@ impl RebateBasis {
 pub struct LandedLine {
     pub part_id: i64,
     pub sku: String,
+    /// Carried so a screen that reads its lines back from the receipt — after
+    /// pulling from a purchase order, say — can still say what the part IS.
+    pub name: String,
     pub qty: i64,
     pub unit_invoice_minor: i64,
     pub unit_freight_minor: i64,
@@ -307,6 +310,7 @@ pub struct LandedResult {
 struct RcLine {
     part_id: i64,
     sku: String,
+    name: String,
     qty: i64,
     unit_cost_minor: i64, // invoice currency
     weight_g: Option<i64>,
@@ -325,7 +329,7 @@ pub fn compute_landed(conn: &Connection, receipt_id: i64) -> Result<LandedResult
 
     let mut stmt = conn
         .prepare(
-            "SELECT l.part_id, p.sku, l.qty_received, l.unit_cost_minor, p.weight_g
+            "SELECT l.part_id, p.sku, l.qty_received, l.unit_cost_minor, p.weight_g, p.name
                FROM goods_receipt_line l JOIN part p ON p.id = l.part_id
               WHERE l.receipt_id = ?1 AND l.deleted_at IS NULL
               ORDER BY l.id",
@@ -339,6 +343,7 @@ pub fn compute_landed(conn: &Connection, receipt_id: i64) -> Result<LandedResult
                 qty: r.get(2)?,
                 unit_cost_minor: r.get(3)?,
                 weight_g: r.get(4)?,
+                name: r.get(5)?,
             })
         })
         .map_err(|e| e.to_string())?
@@ -458,6 +463,7 @@ pub fn compute_landed(conn: &Connection, receipt_id: i64) -> Result<LandedResult
             LandedLine {
                 part_id: l.part_id,
                 sku: l.sku.clone(),
+                name: l.name.clone(),
                 qty: l.qty,
                 unit_invoice_minor: per(goods[i]),
                 unit_freight_minor: per(freight[i]),
@@ -691,6 +697,196 @@ pub fn post_receipt(tx: &Transaction, receipt_id: i64) -> Result<PostResult, Str
         accruals,
         units,
     })
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Receiving against a purchase order
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Copy the still-outstanding quantity of every PO line onto a draft receipt.
+///
+/// Outstanding is derived from `po_line_status`, never from a stored counter,
+/// so a part-delivered order pulls only what is still owed. Lines already on
+/// the receipt are left alone — a receiver who has counted something by hand
+/// before pressing this must not have their count overwritten by an
+/// expectation. What was ordered is a claim about the future; what was counted
+/// is a fact, and the fact wins.
+pub fn pull_po_lines(tx: &Transaction, receipt_id: i64, order_id: i64) -> Result<usize, String> {
+    let n = tx
+        .execute(
+            "INSERT INTO goods_receipt_line
+               (receipt_id, part_id, order_line_id, qty_received, unit_cost_minor, origin)
+             SELECT ?1, pol.part_id, pol.id,
+                    pol.qty_ordered - COALESCE(st.qty_received, 0),
+                    pol.unit_cost_minor, 'local'
+               FROM purchase_order_line pol
+               LEFT JOIN po_line_status st ON st.order_line_id = pol.id
+              WHERE pol.order_id = ?2
+                AND pol.deleted_at IS NULL
+                AND pol.qty_ordered - COALESCE(st.qty_received, 0) > 0
+                AND NOT EXISTS (SELECT 1 FROM goods_receipt_line x
+                                 WHERE x.receipt_id = ?1 AND x.part_id = pol.part_id)",
+            rusqlite::params![receipt_id, order_id],
+        )
+        .map_err(|e| e.to_string())?;
+    // Point the receipt at the order so the PO rolls forward when it posts.
+    tx.execute(
+        "UPDATE goods_receipt
+            SET order_id = ?2,
+                supplier_id = COALESCE(supplier_id,
+                  (SELECT supplier_id FROM purchase_order WHERE id = ?2))
+          WHERE id = ?1",
+        rusqlite::params![receipt_id, order_id],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(n)
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  The opening position
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[derive(Debug, Serialize)]
+pub struct OpeningResult {
+    pub receipt_id: i64,
+    pub parts: usize,
+    pub units: i64,
+    /// Movements RE-POINTED at the opening receipt. Not new movements.
+    pub adopted: usize,
+    /// Parts on hand with no cost on file at all. Their opening cost is zero,
+    /// which is visible and wrong rather than invented and plausible.
+    pub uncosted: Vec<String>,
+}
+
+/// Give the stock that was already here a costed origin.
+///
+/// ⚠ THIS ADOPTS THE EXISTING LEDGER. IT DOES NOT POST NEW MOVEMENTS.
+///
+/// The units on hand arrived before the system existed, and their movements
+/// carry `ref_type='seed'` — they point at nothing. Posting an opening receipt
+/// the ordinary way would add those units a SECOND time and double the stock.
+/// That is the obvious implementation and it is completely wrong.
+///
+/// So this re-points the existing movements at the opening receipt instead.
+/// Same rows, same deltas, same created_at, same client_uuid — only what they
+/// reference changes. Afterwards every unit on hand traces to a receipt, which
+/// is the invariant the whole module leans on, and the total is asserted
+/// unchanged before the caller is allowed to commit.
+///
+/// The costs are the supplier PRICE LIST, not measured landed costs, so the
+/// receipt is flagged `cost_is_estimated` and everything derived from it says
+/// so until those units sell through.
+pub fn adopt_opening_stock(tx: &Transaction, receipt_id: i64) -> Result<OpeningResult, String> {
+    let before: i64 = tx
+        .query_row("SELECT COALESCE(SUM(delta),0) FROM stock_movement", [], |r| r.get(0))
+        .map_err(|e| e.to_string())?;
+
+    let (kind, status): (String, String) = tx
+        .query_row(
+            "SELECT kind, status FROM goods_receipt WHERE id = ?1",
+            [receipt_id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .map_err(|e| format!("receipt {receipt_id}: {e}"))?;
+    if kind != "opening" {
+        return Err(format!(
+            "receipt {receipt_id} is a '{kind}' receipt, not an opening balance"
+        ));
+    }
+    if status != "draft" {
+        return Err(format!("receipt {receipt_id} is already {status}"));
+    }
+    // One opening balance, ever. A second would adopt nothing, cost nothing,
+    // and confuse whoever found it later.
+    let others: i64 = tx
+        .query_row(
+            "SELECT count(*) FROM goods_receipt
+              WHERE kind = 'opening' AND id <> ?1 AND status <> 'reversed'
+                AND deleted_at IS NULL",
+            [receipt_id],
+            |r| r.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    if others > 0 {
+        return Err("an opening balance already exists; there can only be one".into());
+    }
+
+    // One line per part still on hand, at whatever cost is on file.
+    let inserted = tx
+        .execute(
+            "INSERT INTO goods_receipt_line
+               (receipt_id, part_id, qty_received, unit_cost_minor, origin)
+             SELECT ?1, s.part_id, s.qty_on_hand,
+                    COALESCE((SELECT pc.amount_minor FROM part_cost pc
+                               WHERE pc.part_id = s.part_id AND pc.deleted_at IS NULL
+                               ORDER BY pc.valid_from DESC LIMIT 1), 0),
+                    'local'
+               FROM stock_on_hand s
+               JOIN part p ON p.id = s.part_id
+              WHERE s.qty_on_hand > 0 AND p.deleted_at IS NULL",
+            [receipt_id],
+        )
+        .map_err(|e| e.to_string())?;
+    if inserted == 0 {
+        return Err("there is no stock on hand to adopt".into());
+    }
+
+    let mut st = tx
+        .prepare(
+            "SELECT p.sku FROM goods_receipt_line l JOIN part p ON p.id = l.part_id
+              WHERE l.receipt_id = ?1 AND l.unit_cost_minor = 0 ORDER BY p.sku",
+        )
+        .map_err(|e| e.to_string())?;
+    let uncosted: Vec<String> = st
+        .query_map([receipt_id], |r| r.get(0))
+        .map_err(|e| e.to_string())?
+        .collect::<rusqlite::Result<_>>()
+        .map_err(|e| e.to_string())?;
+    drop(st);
+
+    // THE ADOPTION. Not an INSERT — an UPDATE of what these rows reference.
+    let adopted = tx
+        .execute(
+            "UPDATE stock_movement
+                SET ref_type = 'goods_receipt', ref_id = ?1
+              WHERE reason = 'receipt'
+                AND (ref_type IS NULL OR ref_type = 'seed')",
+            [receipt_id],
+        )
+        .map_err(|e| e.to_string())?;
+
+    tx.execute(
+        "UPDATE goods_receipt
+            SET status = 'posted', posted_at = datetime('now'), cost_is_estimated = 1
+          WHERE id = ?1",
+        [receipt_id],
+    )
+    .map_err(|e| e.to_string())?;
+
+    // RebateBasis::None: an opening balance was not bought under any agreement,
+    // so nothing may be deducted from it.
+    let _ = write_landed(tx, receipt_id, RebateBasis::None)?;
+
+    let after: i64 = tx
+        .query_row("SELECT COALESCE(SUM(delta),0) FROM stock_movement", [], |r| r.get(0))
+        .map_err(|e| e.to_string())?;
+    if after != before {
+        return Err(format!(
+            "ABORT: adopting the opening balance changed stock from {before} to {after}. \
+             It may only change what movements reference, never how many units exist."
+        ));
+    }
+
+    let (parts, units): (i64, i64) = tx
+        .query_row(
+            "SELECT count(*), COALESCE(SUM(qty_received),0) FROM goods_receipt_line
+              WHERE receipt_id = ?1",
+            [receipt_id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .map_err(|e| e.to_string())?;
+
+    Ok(OpeningResult { receipt_id, parts: parts as usize, units, adopted, uncosted })
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1561,6 +1757,275 @@ mod tests {
         assert_eq!(n.uplift_minor, 362_919);
         // Exposure: everything earned that is not yet settled.
         assert_eq!(s.exposure_minor, s.earned_minor);
+    }
+
+    // ── the opening position ──────────────────────────────────────────────
+
+    fn new_opening(conn: &Connection, tag: &str) -> i64 {
+        conn.execute(
+            "INSERT INTO goods_receipt (number, kind, location_id, received_at,
+                                        invoice_currency, fx_rate_ppm, status)
+             VALUES (?1, 'opening', (SELECT id FROM location WHERE deleted_at IS NULL
+                                      ORDER BY id LIMIT 1),
+                     '2026-07-30 00:00:00', 'ZAR', 1000000, 'draft')",
+            [format!("GR-OPEN-{tag}")],
+        )
+        .unwrap();
+        conn.last_insert_rowid()
+    }
+
+    #[test]
+    fn opening_balance_adopts_the_ledger_instead_of_doubling_it() {
+        const TAG: &str = "opening";
+        let Some(mut conn) = open_db(TAG) else {
+            eprintln!("skipped: set CTP_TEST_DB");
+            return;
+        };
+        let before_units: i64 = conn
+            .query_row("SELECT COALESCE(SUM(delta),0) FROM stock_movement", [], |r| r.get(0))
+            .unwrap();
+        let before_rows: i64 = conn
+            .query_row("SELECT count(*) FROM stock_movement", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(before_units, 834, "Ian's real opening position");
+        assert_eq!(before_rows, 160);
+
+        let rid = new_opening(&conn, TAG);
+        let tx = conn.transaction().unwrap();
+        let res = adopt_opening_stock(&tx, rid).unwrap();
+        tx.commit().unwrap();
+
+        // THE POINT OF THE WHOLE FUNCTION: the units did not move.
+        let after_units: i64 = conn
+            .query_row("SELECT COALESCE(SUM(delta),0) FROM stock_movement", [], |r| r.get(0))
+            .unwrap();
+        let after_rows: i64 = conn
+            .query_row("SELECT count(*) FROM stock_movement", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(after_units, 834, "adopting must never change how much stock exists");
+        assert_eq!(after_rows, 160, "and must never add a ledger row");
+
+        assert_eq!(res.parts, 160);
+        assert_eq!(res.units, 834);
+        assert_eq!(res.adopted, 160, "every seed movement now points at the receipt");
+
+        // Two of the 160 parts on hand have no cost anywhere. They are NAMED
+        // rather than silently costed at zero and forgotten.
+        assert_eq!(res.uncosted.len(), 2);
+
+        // The invariant the module leans on is now true: every unit traces to
+        // a receipt.
+        let orphans: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM stock_movement
+                  WHERE reason = 'receipt'
+                    AND (ref_type IS NULL OR ref_type <> 'goods_receipt')",
+                [], |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(orphans, 0);
+
+        // Costed, and flagged as an estimate — these are price-list figures,
+        // not measured landed costs.
+        let (rows, est): (i64, i64) = conn
+            .query_row(
+                "SELECT count(*), MIN(is_estimated) FROM part_landed_cost WHERE receipt_id = ?1",
+                [rid], |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(rows, 160);
+        assert_eq!(est, 1, "an opening balance is never a measurement");
+
+        // The bumper carries its price-list cost, unchanged by the adoption.
+        let inv: i64 = conn
+            .query_row(
+                "SELECT unit_cost_invoiced_minor FROM part_landed_cost
+                  WHERE receipt_id = ?1 AND part_id = (SELECT id FROM part WHERE sku='CTP-BMP-001-L')",
+                [rid], |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(inv, 119_263);
+    }
+
+    #[test]
+    fn there_can_only_ever_be_one_opening_balance() {
+        const TAG: &str = "opening2";
+        let Some(mut conn) = open_db(TAG) else {
+            eprintln!("skipped: set CTP_TEST_DB");
+            return;
+        };
+        let first = new_opening(&conn, "a");
+        let tx = conn.transaction().unwrap();
+        adopt_opening_stock(&tx, first).unwrap();
+        tx.commit().unwrap();
+
+        // A second one would adopt nothing — the movements already point at the
+        // first — so it must be refused rather than left as an empty puzzle.
+        let second = new_opening(&conn, "b");
+        let tx = conn.transaction().unwrap();
+        let err = adopt_opening_stock(&tx, second).unwrap_err();
+        drop(tx);
+        assert!(err.contains("already exists"), "got: {err}");
+    }
+
+    #[test]
+    fn opening_refuses_a_receipt_that_is_not_an_opening_balance() {
+        const TAG: &str = "opening3";
+        let Some(mut conn) = open_db(TAG) else {
+            eprintln!("skipped: set CTP_TEST_DB");
+            return;
+        };
+        let rid = build_receipt(&mut conn, TAG); // kind = 'purchase'
+        let tx = conn.transaction().unwrap();
+        let err = adopt_opening_stock(&tx, rid).unwrap_err();
+        drop(tx);
+        assert!(err.contains("not an opening balance"), "got: {err}");
+    }
+
+    // ── receiving against a purchase order ────────────────────────────────
+
+    #[test]
+    fn pulling_a_po_takes_only_what_is_still_outstanding() {
+        const TAG: &str = "po";
+        let Some(mut conn) = open_db(TAG) else {
+            eprintln!("skipped: set CTP_TEST_DB");
+            return;
+        };
+        // Order 10 bumpers and 4 brackets.
+        conn.execute(
+            "INSERT INTO purchase_order (number, supplier_id, currency, status)
+             VALUES ('PO-TEST-1', (SELECT id FROM supplier WHERE code='FAW'), 'ZAR', 'sent')",
+            [],
+        )
+        .unwrap();
+        let po = conn.last_insert_rowid();
+        for (sku, qty, cost) in [("CTP-BMP-001-L", 10i64, 119_263i64), ("CTP-BMP-003-L", 4, 102_168)] {
+            conn.execute(
+                "INSERT INTO purchase_order_line (order_id, part_id, qty_ordered, unit_cost_minor)
+                 VALUES (?1, (SELECT id FROM part WHERE sku = ?2), ?3, ?4)",
+                rusqlite::params![po, sku, qty, cost],
+            )
+            .unwrap();
+        }
+
+        // First delivery: 6 of the 10 bumpers, nothing else.
+        conn.execute(
+            "INSERT INTO goods_receipt (number, supplier_id, order_id, kind, location_id,
+                                        invoice_currency, fx_rate_ppm, status)
+             VALUES ('GR-PO-1', (SELECT id FROM supplier WHERE code='FAW'), ?1, 'purchase',
+                     (SELECT id FROM location WHERE deleted_at IS NULL ORDER BY id LIMIT 1),
+                     'ZAR', 1000000, 'draft')",
+            [po],
+        )
+        .unwrap();
+        let r1 = conn.last_insert_rowid();
+        conn.execute(
+            "INSERT INTO goods_receipt_line (receipt_id, part_id, order_line_id, qty_received, unit_cost_minor)
+             SELECT ?1, pol.part_id, pol.id, 6, pol.unit_cost_minor
+               FROM purchase_order_line pol
+               JOIN part p ON p.id = pol.part_id
+              WHERE pol.order_id = ?2 AND p.sku = 'CTP-BMP-001-L'",
+            rusqlite::params![r1, po],
+        )
+        .unwrap();
+        let tx = conn.transaction().unwrap();
+        post_receipt(&tx, r1).unwrap();
+        tx.commit().unwrap();
+
+        // Second delivery: pull what is left. Should be 4 bumpers and 4
+        // brackets, not 10 and 4.
+        conn.execute(
+            "INSERT INTO goods_receipt (number, kind, location_id, invoice_currency,
+                                        fx_rate_ppm, status)
+             VALUES ('GR-PO-2', 'purchase',
+                     (SELECT id FROM location WHERE deleted_at IS NULL ORDER BY id LIMIT 1),
+                     'ZAR', 1000000, 'draft')",
+            [],
+        )
+        .unwrap();
+        let r2 = conn.last_insert_rowid();
+        let tx = conn.transaction().unwrap();
+        let n = pull_po_lines(&tx, r2, po).unwrap();
+        tx.commit().unwrap();
+        assert_eq!(n, 2, "two lines still owed");
+
+        let mut st = conn
+            .prepare(
+                "SELECT p.sku, l.qty_received FROM goods_receipt_line l
+                   JOIN part p ON p.id = l.part_id
+                  WHERE l.receipt_id = ?1 ORDER BY p.sku",
+            )
+            .unwrap();
+        let got: Vec<(String, i64)> = st
+            .query_map([r2], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap()
+            .map(|x| x.unwrap())
+            .collect();
+        drop(st);
+        assert_eq!(got, vec![
+            ("CTP-BMP-001-L".to_string(), 4),   // 10 ordered - 6 received
+            ("CTP-BMP-003-L".to_string(), 4),   // none received yet
+        ]);
+
+        // Pulling the supplier across as well, so the receipt knows who it is from.
+        let sup: Option<i64> = conn
+            .query_row("SELECT supplier_id FROM goods_receipt WHERE id = ?1", [r2], |r| r.get(0))
+            .unwrap();
+        assert!(sup.is_some(), "the receipt inherited the order's supplier");
+    }
+
+    #[test]
+    fn pulling_a_po_never_overwrites_a_hand_count() {
+        const TAG: &str = "po2";
+        let Some(mut conn) = open_db(TAG) else {
+            eprintln!("skipped: set CTP_TEST_DB");
+            return;
+        };
+        conn.execute(
+            "INSERT INTO purchase_order (number, supplier_id, currency, status)
+             VALUES ('PO-TEST-2', (SELECT id FROM supplier WHERE code='FAW'), 'ZAR', 'sent')",
+            [],
+        )
+        .unwrap();
+        let po = conn.last_insert_rowid();
+        conn.execute(
+            "INSERT INTO purchase_order_line (order_id, part_id, qty_ordered, unit_cost_minor)
+             VALUES (?1, (SELECT id FROM part WHERE sku='CTP-BMP-001-L'), 10, 119263)",
+            [po],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO goods_receipt (number, kind, location_id, invoice_currency,
+                                        fx_rate_ppm, status)
+             VALUES ('GR-PO-3','purchase',
+                     (SELECT id FROM location WHERE deleted_at IS NULL ORDER BY id LIMIT 1),
+                     'ZAR',1000000,'draft')",
+            [],
+        )
+        .unwrap();
+        let rid = conn.last_insert_rowid();
+        // The receiver counted 7 on the floor before pressing "pull from order".
+        conn.execute(
+            "INSERT INTO goods_receipt_line (receipt_id, part_id, qty_received, unit_cost_minor)
+             VALUES (?1, (SELECT id FROM part WHERE sku='CTP-BMP-001-L'), 7, 119263)",
+            [rid],
+        )
+        .unwrap();
+
+        let tx = conn.transaction().unwrap();
+        let n = pull_po_lines(&tx, rid, po).unwrap();
+        tx.commit().unwrap();
+        assert_eq!(n, 0, "nothing pulled — that part is already counted");
+
+        let qty: i64 = conn
+            .query_row(
+                "SELECT qty_received FROM goods_receipt_line WHERE receipt_id = ?1",
+                [rid], |r| r.get(0),
+            )
+            .unwrap();
+        // What was ordered is a claim about the future; what was counted is a
+        // fact. The fact wins.
+        assert_eq!(qty, 7, "the hand count survived");
     }
 
     // ── the margin floor, shared with the cloud ───────────────────────────
