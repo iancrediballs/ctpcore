@@ -159,3 +159,57 @@ export const jefreyForget = (phrase: string, partId: number) =>
 // ─── shell ───────────────────────────────────────────────────────────────
 /** Opens an external URL in the OS browser. Desktop-only; on web use a plain <a>. */
 export const openUrl = (url: string) => call<void>("open_url", { url });
+
+// ─── purchasing, goods receipt, landed cost, rebates ─────────────────────
+// Desktop-only for now: the calculations live in Rust (purchasing.rs) where
+// they are tested against worked examples. Guard any UI with
+// supports("post_goods_receipt") rather than checking isTauri directly.
+export const listSuppliers = <T>() => call<T>("list_suppliers");
+export const upsertSupplier = (s: {
+  code: string; name: string; currency?: string; incoterm?: string | null;
+  contact?: string | null; phone?: string | null; email?: string | null;
+  leadTimeDays?: number | null;
+}) => call<number>("upsert_supplier", s as unknown as Record<string, unknown>);
+
+export const createPurchaseOrder = <T>(supplierId: number, currency?: string, expectedAt?: string) =>
+  call<T>("create_purchase_order", { supplierId, currency, expectedAt });
+export const addPoLine = (orderId: number, partId: number, qty: number, unitCostMinor: number) =>
+  call<number>("add_po_line", { orderId, partId, qty, unitCostMinor });
+export const purchaseOrderDetail = <T>(orderId: number) =>
+  call<T>("purchase_order_detail", { orderId });
+
+export const createGoodsReceipt = <T>(a: {
+  supplierId?: number | null; orderId?: number | null; kind?: string;
+  locationId?: number | null; invoiceCurrency?: string; fxRatePpm?: number;
+}) => call<T>("create_goods_receipt", a as unknown as Record<string, unknown>);
+export const addReceiptLine = (
+  receiptId: number, partId: number, qty: number,
+  unitCostMinor?: number | null, orderLineId?: number | null,
+) => call<number>("add_receipt_line", { receiptId, partId, qty, unitCostMinor, orderLineId });
+export const addReceiptCost = (a: {
+  receiptId: number; component: string; amountMinor: number;
+  allocation?: string; directPartId?: number | null; isLanded?: boolean;
+  currency?: string; fxRatePpm?: number; supplierRef?: string | null;
+}) => call<number>("add_receipt_cost", a as unknown as Record<string, unknown>);
+
+/** What the receipt WOULD cost. Read-only — nothing is committed. */
+export const previewLandedCost = <T>(receiptId: number) =>
+  call<T>("preview_landed_cost", { receiptId });
+/** The single moment stock moves. Irreversible except by a reversing receipt. */
+export const postGoodsReceipt = <T>(receiptId: number) =>
+  call<T>("post_goods_receipt", { receiptId });
+/** Recompute after a late clearing invoice. The normal path, not an exception. */
+export const recostReceipt = (receiptId: number) =>
+  call<number>("recost_receipt", { receiptId });
+
+/** Both cost figures for a part, with the margin each implies. */
+export const partCostNow = <T>(partId: number) => call<T>("part_cost_now", { partId });
+export const listRebateAgreements = <T>() => call<T>("list_rebate_agreements");
+export const rebateStanding = <T>(agreementId: number) =>
+  call<T>("rebate_standing", { agreementId });
+export const listSupplierClaims = <T>(openOnly?: boolean) =>
+  call<T>("list_supplier_claims", { openOnly });
+export const recordDiscrepancy = (a: {
+  receiptId: number; partId: number; kind: string; qty: number;
+  disposition?: string; claimValueMinor?: number | null; notes?: string | null;
+}) => call<number>("record_discrepancy", a as unknown as Record<string, unknown>);

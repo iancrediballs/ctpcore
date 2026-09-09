@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import * as api from "./data/api";
 import SalesView from "./SalesView";
+import ReceivingView from "./ReceivingView";
 import AccountingView from "./AccountingView";
 import DiagramsView from "./DiagramsView";
 import PartsView from "./PartsView";
@@ -114,7 +115,7 @@ export const money = (c: number | null) =>
   });
 export const stockClass = (n: number) => (n <= 0 ? "s-out" : n <= 5 ? "s-low" : "s-ok");
 
-type View = "counter" | "parts" | "sales" | "accounting" | "diagrams" | "jefrey";
+type View = "counter" | "parts" | "receiving" | "sales" | "accounting" | "diagrams" | "jefrey";
 
 type Company = {
   name: string; address: string | null; phone: string | null; email: string | null;
@@ -138,6 +139,7 @@ export default function App() {
         <nav className="nav">
           <button className={"navbtn" + (view === "counter" ? " on" : "")} onClick={() => setView("counter")}>Counter</button>
           <button className={"navbtn" + (view === "parts" ? " on" : "")} onClick={() => setView("parts")}>Parts</button>
+          <button className={"navbtn" + (view === "receiving" ? " on" : "")} onClick={() => setView("receiving")}>Receiving</button>
           <button className={"navbtn" + (view === "sales" ? " on" : "")} onClick={() => setView("sales")}>Sales</button>
           <button className={"navbtn" + (view === "accounting" ? " on" : "")} onClick={() => setView("accounting")}>Accounting</button>
           <button className={"navbtn" + (view === "diagrams" ? " on" : "")} onClick={() => setView("diagrams")}>Diagrams</button>
@@ -148,6 +150,7 @@ export default function App() {
       </div>
       {view === "counter" && <CounterView />}
       {view === "parts" && <PartsView />}
+      {view === "receiving" && <ReceivingView />}
       {view === "sales" && <SalesView />}
       {view === "accounting" && <AccountingView />}
       {view === "diagrams" && <DiagramsView />}
