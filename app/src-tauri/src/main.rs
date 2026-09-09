@@ -1,6 +1,7 @@
 // Prevent a console window on Windows release builds.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod purchasing;
 mod sync;
 
 use rusqlite::{Connection, OpenFlags};
@@ -236,6 +237,22 @@ fn init_db(path: &PathBuf) -> rusqlite::Result<Connection> {
     if ver < 22 {
         conn.execute_batch(include_str!("../migrations/0023_single_location.sql"))?;
         conn.execute_batch("PRAGMA user_version = 22;")?;
+        ver = 22;
+    }
+
+    // v22 -> v23: the inbound side. Suppliers, purchase orders, goods receipt,
+    // landed cost and the rebate accrual engine. The system could only watch
+    // stock leave; this is the half that records it arriving, and therefore the
+    // half that can say what a part truly cost.
+    //
+    // Two cost figures from the first commit, never one: cost_invoiced is money
+    // actually spent and is the ONLY figure a price floor may read;
+    // cost_expected is net of rebate, for reporting. Merging them later is easy;
+    // unpicking them once something reads the column is not. Cloud gets the same
+    // rule in server/0039.
+    if ver < 23 {
+        conn.execute_batch(include_str!("../migrations/0024_purchasing.sql"))?;
+        conn.execute_batch("PRAGMA user_version = 23;")?;
     }
 
     Ok(conn)
@@ -1472,6 +1489,501 @@ fn snapshot_price(conn: &Connection, part_id: i64, tier: &str) -> rusqlite::Resu
     Ok(discounted.max(floor).min(list))
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+//  PURCHASING COMMANDS
+//
+//  The inbound side. These are deliberately thin: every calculation lives in
+//  purchasing.rs, where it is tested against worked examples, and nothing here
+//  does arithmetic of its own. A number computed in two places is a number that
+//  will eventually disagree with itself.
+// ════════════════════════════════════════════════════════════════════════════
+
+#[derive(Serialize)]
+struct SupplierRow {
+    id: i64, code: String, name: String, currency: String,
+    incoterm: Option<String>, contact: Option<String>, phone: Option<String>,
+    email: Option<String>, lead_time_days: Option<i64>,
+}
+
+#[tauri::command]
+fn list_suppliers(db: State<Db>) -> Result<Vec<SupplierRow>, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    let mut s = conn
+        .prepare(
+            "SELECT id, code, name, currency, incoterm, contact, phone, email, lead_time_days
+               FROM supplier WHERE deleted_at IS NULL ORDER BY name",
+        )
+        .map_err(|e| e.to_string())?;
+    let v = s
+        .query_map([], |r| {
+            Ok(SupplierRow {
+                id: r.get(0)?, code: r.get(1)?, name: r.get(2)?, currency: r.get(3)?,
+                incoterm: r.get(4)?, contact: r.get(5)?, phone: r.get(6)?,
+                email: r.get(7)?, lead_time_days: r.get(8)?,
+            })
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(|e| e.to_string())?;
+    Ok(v)
+}
+
+/// Create or update a supplier, keyed on `code` — the natural key sync matches
+/// on, so the same supplier entered on two machines converges rather than
+/// duplicating.
+#[allow(clippy::too_many_arguments)]
+#[tauri::command]
+fn upsert_supplier(
+    code: String, name: String, currency: Option<String>, incoterm: Option<String>,
+    contact: Option<String>, phone: Option<String>, email: Option<String>,
+    lead_time_days: Option<i64>, db: State<Db>,
+) -> Result<i64, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    conn.execute(
+        "INSERT INTO supplier (code, name, currency, incoterm, contact, phone, email,
+                               lead_time_days, origin)
+         VALUES (?1,?2,COALESCE(?3,'ZAR'),?4,?5,?6,?7,?8,'local')
+         ON CONFLICT(code) DO UPDATE SET
+            name = excluded.name,
+            currency = excluded.currency,
+            incoterm = COALESCE(excluded.incoterm, supplier.incoterm),
+            contact = COALESCE(excluded.contact, supplier.contact),
+            phone = COALESCE(excluded.phone, supplier.phone),
+            email = COALESCE(excluded.email, supplier.email),
+            lead_time_days = COALESCE(excluded.lead_time_days, supplier.lead_time_days)",
+        rusqlite::params![code, name, currency, incoterm, contact, phone, email, lead_time_days],
+    )
+    .map_err(|e| e.to_string())?;
+    conn.query_row("SELECT id FROM supplier WHERE code = ?1", [&code], |r| r.get(0))
+        .map_err(|e| e.to_string())
+}
+
+/// A document number in this machine's namespace: {prefix}{device}-{1000+id}.
+/// Same scheme as sales orders (migration 0020) and for the same reason — a
+/// local sequence alone repeats on every install.
+fn mint_number(conn: &Connection, table: &str, prefix: &str, id: i64) -> Result<String, String> {
+    let device = ensure_device_code(conn)?;
+    let number = format!("{}{}-{}", prefix, device, 1000 + id);
+    conn.execute(
+        &format!("UPDATE {table} SET number = ?1 WHERE id = ?2"),
+        rusqlite::params![number, id],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(number)
+}
+
+#[derive(Serialize)]
+struct DocRef { id: i64, number: String }
+
+#[tauri::command]
+fn create_purchase_order(
+    supplier_id: i64, currency: Option<String>, expected_at: Option<String>, db: State<Db>,
+) -> Result<DocRef, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    let ccy = match currency {
+        Some(c) => c,
+        None => conn
+            .query_row("SELECT currency FROM supplier WHERE id = ?1", [supplier_id], |r| r.get(0))
+            .unwrap_or_else(|_| "ZAR".to_string()),
+    };
+    conn.execute(
+        "INSERT INTO purchase_order (number, supplier_id, currency, ordered_at, expected_at, origin)
+         VALUES (?1, ?2, ?3, datetime('now'), ?4, 'local')",
+        rusqlite::params![format!("tmp-{}", uuid_like()), supplier_id, ccy, expected_at],
+    )
+    .map_err(|e| e.to_string())?;
+    let id = conn.last_insert_rowid();
+    let number = mint_number(&conn, "purchase_order", "PO-", id)?;
+    Ok(DocRef { id, number })
+}
+
+#[tauri::command]
+fn add_po_line(
+    order_id: i64, part_id: i64, qty: i64, unit_cost_minor: i64, db: State<Db>,
+) -> Result<i64, String> {
+    if qty <= 0 { return Err("quantity must be above zero".into()); }
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    conn.execute(
+        "INSERT INTO purchase_order_line (order_id, part_id, qty_ordered, unit_cost_minor, origin)
+         VALUES (?1,?2,?3,?4,'local')
+         ON CONFLICT(order_id, part_id) DO UPDATE SET
+            qty_ordered = excluded.qty_ordered,
+            unit_cost_minor = excluded.unit_cost_minor",
+        rusqlite::params![order_id, part_id, qty, unit_cost_minor],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(conn.last_insert_rowid())
+}
+
+#[derive(Serialize)]
+struct PoLineRow {
+    part_id: i64, sku: String, name: String,
+    qty_ordered: i64, qty_received: i64, outstanding: i64, unit_cost_minor: i64,
+}
+
+#[derive(Serialize)]
+struct PoDetail {
+    id: i64, number: String, status: String, currency: String,
+    supplier: String, ordered_at: Option<String>, expected_at: Option<String>,
+    lines: Vec<PoLineRow>, total_minor: i64,
+}
+
+#[tauri::command]
+fn purchase_order_detail(order_id: i64, db: State<Db>) -> Result<PoDetail, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    let (number, status, currency, supplier, ordered_at, expected_at) = conn
+        .query_row(
+            "SELECT o.number, o.status, o.currency, s.name, o.ordered_at, o.expected_at
+               FROM purchase_order o JOIN supplier s ON s.id = o.supplier_id
+              WHERE o.id = ?1",
+            [order_id],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?,
+                    r.get::<_, String>(3)?, r.get::<_, Option<String>>(4)?,
+                    r.get::<_, Option<String>>(5)?)),
+        )
+        .map_err(|e| e.to_string())?;
+
+    // qty_received comes from the po_line_status view, never from a column —
+    // a stored counter drifts the first time a receipt is reversed.
+    let mut s = conn
+        .prepare(
+            "SELECT pol.part_id, p.sku, p.name, pol.qty_ordered,
+                    COALESCE(st.qty_received, 0), pol.unit_cost_minor
+               FROM purchase_order_line pol
+               JOIN part p ON p.id = pol.part_id
+               LEFT JOIN po_line_status st ON st.order_line_id = pol.id
+              WHERE pol.order_id = ?1 AND pol.deleted_at IS NULL
+              ORDER BY pol.id",
+        )
+        .map_err(|e| e.to_string())?;
+    let lines: Vec<PoLineRow> = s
+        .query_map([order_id], |r| {
+            let qo: i64 = r.get(3)?;
+            let qr: i64 = r.get(4)?;
+            Ok(PoLineRow {
+                part_id: r.get(0)?, sku: r.get(1)?, name: r.get(2)?,
+                qty_ordered: qo, qty_received: qr, outstanding: qo - qr,
+                unit_cost_minor: r.get(5)?,
+            })
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(|e| e.to_string())?;
+    let total_minor = lines.iter().map(|l| l.qty_ordered * l.unit_cost_minor).sum();
+    Ok(PoDetail { id: order_id, number, status, currency, supplier, ordered_at, expected_at, lines, total_minor })
+}
+
+#[tauri::command]
+fn create_goods_receipt(
+    supplier_id: Option<i64>, order_id: Option<i64>, kind: Option<String>,
+    location_id: Option<i64>, invoice_currency: Option<String>,
+    fx_rate_ppm: Option<i64>, db: State<Db>,
+) -> Result<DocRef, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    // One warehouse (migration 0023), so the location is not a question the
+    // receiver should be asked. Kept as an argument for when that changes.
+    let loc = match location_id {
+        Some(l) => l,
+        None => conn
+            .query_row(
+                "SELECT id FROM location WHERE deleted_at IS NULL ORDER BY id LIMIT 1",
+                [], |r| r.get(0),
+            )
+            .map_err(|_| "no live location to receive into".to_string())?,
+    };
+    conn.execute(
+        "INSERT INTO goods_receipt (number, supplier_id, order_id, kind, location_id,
+                                    invoice_currency, fx_rate_ppm, origin)
+         VALUES (?1,?2,?3,COALESCE(?4,'purchase'),?5,COALESCE(?6,'ZAR'),
+                 COALESCE(?7,1000000),'local')",
+        rusqlite::params![format!("tmp-{}", uuid_like()), supplier_id, order_id, kind,
+                          loc, invoice_currency, fx_rate_ppm],
+    )
+    .map_err(|e| e.to_string())?;
+    let id = conn.last_insert_rowid();
+    let number = mint_number(&conn, "goods_receipt", "GR-", id)?;
+    Ok(DocRef { id, number })
+}
+
+#[tauri::command]
+fn add_receipt_line(
+    receipt_id: i64, part_id: i64, qty: i64, unit_cost_minor: Option<i64>,
+    order_line_id: Option<i64>, db: State<Db>,
+) -> Result<i64, String> {
+    if qty <= 0 { return Err("quantity must be above zero".into()); }
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    // Default the cost from the PO line if there is one — the receiver has the
+    // goods in front of them, not the price list.
+    let cost = match unit_cost_minor {
+        Some(c) => c,
+        None => order_line_id
+            .and_then(|l| conn.query_row(
+                "SELECT unit_cost_minor FROM purchase_order_line WHERE id = ?1", [l], |r| r.get(0),
+            ).ok())
+            .unwrap_or(0),
+    };
+    conn.execute(
+        "INSERT INTO goods_receipt_line (receipt_id, part_id, order_line_id,
+                                         qty_received, unit_cost_minor, origin)
+         VALUES (?1,?2,?3,?4,?5,'local')
+         ON CONFLICT(receipt_id, part_id) DO UPDATE SET
+            qty_received = excluded.qty_received,
+            unit_cost_minor = excluded.unit_cost_minor,
+            order_line_id = COALESCE(excluded.order_line_id, goods_receipt_line.order_line_id)",
+        rusqlite::params![receipt_id, part_id, order_line_id, qty, cost],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(conn.last_insert_rowid())
+}
+
+#[allow(clippy::too_many_arguments)]
+#[tauri::command]
+fn add_receipt_cost(
+    receipt_id: i64, component: String, amount_minor: i64,
+    allocation: Option<String>, direct_part_id: Option<i64>,
+    is_landed: Option<bool>, currency: Option<String>, fx_rate_ppm: Option<i64>,
+    supplier_ref: Option<String>, db: State<Db>,
+) -> Result<i64, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    // Import VAT defaults to EXCLUDED from the part cost, because it is
+    // normally reclaimable and including it would overstate cost on every part.
+    // Everything else defaults to included.
+    let landed = is_landed.unwrap_or(component != "vat_import");
+    conn.execute(
+        "INSERT INTO receipt_cost (receipt_id, component, amount_minor, currency,
+                                   fx_rate_ppm, allocation, direct_part_id,
+                                   is_landed, supplier_ref, origin)
+         VALUES (?1,?2,?3,COALESCE(?4,'ZAR'),COALESCE(?5,1000000),
+                 COALESCE(?6,'by_value'),?7,?8,?9,'local')",
+        rusqlite::params![receipt_id, component, amount_minor, currency, fx_rate_ppm,
+                          allocation, direct_part_id, if landed {1} else {0}, supplier_ref],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(conn.last_insert_rowid())
+}
+
+/// What this receipt WOULD cost, without committing to it. Read-only, so the
+/// receiver can see the landed figure before posting rather than after.
+#[tauri::command]
+fn preview_landed_cost(receipt_id: i64, db: State<Db>) -> Result<purchasing::LandedResult, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    purchasing::compute_landed(&conn, receipt_id)
+}
+
+/// Post a draft receipt: stock arrives, landed costs are written, purchase
+/// rebates accrue. One transaction — a receipt is never half-posted.
+#[tauri::command]
+fn post_goods_receipt(receipt_id: i64, db: State<Db>) -> Result<purchasing::PostResult, String> {
+    let mut conn = db.0.lock().map_err(|e| e.to_string())?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    let res = purchasing::post_receipt(&tx, receipt_id)?;
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(res)
+}
+
+/// Recompute a receipt's landed cost after late-arriving charges. The clearing
+/// agent invoices in arrears, so this is the normal path, not an exception.
+#[tauri::command]
+fn recost_receipt(receipt_id: i64, db: State<Db>) -> Result<usize, String> {
+    let mut conn = db.0.lock().map_err(|e| e.to_string())?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    let n = purchasing::write_landed(&tx, receipt_id, purchasing::RebateBasis::Settled)?;
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(n)
+}
+
+#[derive(Serialize)]
+struct CostNow {
+    part_id: i64, sku: String,
+    cost_invoiced_minor: i64, cost_expected_minor: i64, rebate_minor: i64,
+    basis: String, is_estimated: bool,
+    list_price_minor: i64,
+    /// Margin against the CERTAIN cost. The honest one.
+    margin_bps_invoiced: i64,
+    /// Margin against cost net of settled rebate. The optimistic one, labelled
+    /// rather than blended so nobody mistakes it for the first.
+    margin_bps_expected: i64,
+}
+
+/// Both cost figures for a part, side by side with the margin each implies.
+/// Showing them together is the point: the gap between them is the part of the
+/// margin that depends on a rebate being claimed and honoured.
+#[tauri::command]
+fn part_cost_now(part_id: i64, db: State<Db>) -> Result<CostNow, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    let (sku, ci, ce, reb, basis, est): (String, i64, i64, i64, String, i64) = conn
+        .query_row(
+            "SELECT p.sku,
+                    COALESCE(c.cost_invoiced_minor,0), COALESCE(c.cost_expected_minor,0),
+                    COALESCE(c.rebate_minor,0), c.basis, COALESCE(c.is_estimated,1)
+               FROM part p JOIN part_current_cost c ON c.part_id = p.id
+              WHERE p.id = ?1",
+            [part_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)),
+        )
+        .map_err(|e| e.to_string())?;
+    let list: i64 = conn
+        .query_row(
+            "SELECT amount_minor FROM price
+              WHERE part_id = ?1 AND tier = 'list' AND deleted_at IS NULL
+              ORDER BY valid_from DESC LIMIT 1",
+            [part_id], |r| r.get(0),
+        )
+        .unwrap_or(0);
+    let bps = |cost: i64| if list > 0 { (list - cost) * 10_000 / list } else { 0 };
+    Ok(CostNow {
+        part_id, sku,
+        cost_invoiced_minor: ci, cost_expected_minor: ce, rebate_minor: reb,
+        basis, is_estimated: est == 1, list_price_minor: list,
+        margin_bps_invoiced: bps(ci), margin_bps_expected: bps(ce),
+    })
+}
+
+#[tauri::command]
+fn rebate_standing(agreement_id: i64, db: State<Db>) -> Result<purchasing::RebateStanding, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    purchasing::rebate_standing(&conn, agreement_id)
+}
+
+#[derive(Serialize)]
+struct AgreementRow {
+    id: i64, code: String, supplier: String, basis: String, measure: String,
+    tier_mode: String, period_start: String, period_end: String,
+    status: String, is_provisional: bool,
+}
+
+#[tauri::command]
+fn list_rebate_agreements(db: State<Db>) -> Result<Vec<AgreementRow>, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    let mut s = conn
+        .prepare(
+            "SELECT a.id, a.code, s.name, a.basis, a.measure, a.tier_mode,
+                    a.period_start, a.period_end, a.status, a.is_provisional
+               FROM rebate_agreement a JOIN supplier s ON s.id = a.supplier_id
+              WHERE a.deleted_at IS NULL ORDER BY a.period_start DESC, a.code",
+        )
+        .map_err(|e| e.to_string())?;
+    let v = s
+        .query_map([], |r| {
+            Ok(AgreementRow {
+                id: r.get(0)?, code: r.get(1)?, supplier: r.get(2)?, basis: r.get(3)?,
+                measure: r.get(4)?, tier_mode: r.get(5)?, period_start: r.get(6)?,
+                period_end: r.get(7)?, status: r.get(8)?,
+                is_provisional: r.get::<_, i64>(9)? == 1,
+            })
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(|e| e.to_string())?;
+    Ok(v)
+}
+
+#[derive(Serialize)]
+struct ClaimRow {
+    id: i64, number: String, supplier: String, kind: String, state: String,
+    value_minor: i64, created_at: String,
+}
+
+/// What the supplier owes back, and what has actually been asked for. The gap
+/// between 'open' and 'submitted' is where this money dies.
+#[tauri::command]
+fn list_supplier_claims(open_only: Option<bool>, db: State<Db>) -> Result<Vec<ClaimRow>, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    let sql = if open_only.unwrap_or(false) {
+        "SELECT c.id, c.number, s.name, c.kind, c.state, c.value_minor, c.created_at
+           FROM supplier_claim c JOIN supplier s ON s.id = c.supplier_id
+          WHERE c.deleted_at IS NULL AND c.state NOT IN ('settled','written_off')
+          ORDER BY c.created_at DESC"
+    } else {
+        "SELECT c.id, c.number, s.name, c.kind, c.state, c.value_minor, c.created_at
+           FROM supplier_claim c JOIN supplier s ON s.id = c.supplier_id
+          WHERE c.deleted_at IS NULL ORDER BY c.created_at DESC"
+    };
+    let mut s = conn.prepare(sql).map_err(|e| e.to_string())?;
+    let v = s
+        .query_map([], |r| {
+            Ok(ClaimRow {
+                id: r.get(0)?, number: r.get(1)?, supplier: r.get(2)?, kind: r.get(3)?,
+                state: r.get(4)?, value_minor: r.get(5)?, created_at: r.get(6)?,
+            })
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(|e| e.to_string())?;
+    Ok(v)
+}
+
+/// Record a shortage, damage or wrong part — and raise the claim in the same
+/// breath. A discrepancy without a claim is a note nobody acts on.
+#[allow(clippy::too_many_arguments)]
+#[tauri::command]
+fn record_discrepancy(
+    receipt_id: i64, part_id: i64, kind: String, qty: i64,
+    disposition: Option<String>, claim_value_minor: Option<i64>,
+    notes: Option<String>, db: State<Db>,
+) -> Result<i64, String> {
+    if qty <= 0 { return Err("quantity must be above zero".into()); }
+    let mut conn = db.0.lock().map_err(|e| e.to_string())?;
+    // A short is always 'reject': the goods never entered the building, so no
+    // stock is written — the claim is the entire output.
+    let disp = disposition.unwrap_or_else(|| {
+        if kind == "short" { "reject".into() } else { "accept_and_claim".into() }
+    });
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+
+    let supplier_id: Option<i64> = tx
+        .query_row("SELECT supplier_id FROM goods_receipt WHERE id = ?1", [receipt_id],
+                   |r| r.get(0))
+        .map_err(|e| e.to_string())?;
+
+    // Value the claim at what we paid for the goods, unless told otherwise.
+    let value = match claim_value_minor {
+        Some(v) => v,
+        None => tx
+            .query_row(
+                "SELECT COALESCE(l.unit_cost_minor,0) * ?2
+                   FROM goods_receipt_line l
+                  WHERE l.receipt_id = ?1 AND l.part_id = ?3",
+                rusqlite::params![receipt_id, qty, part_id], |r| r.get(0),
+            )
+            .unwrap_or(0),
+    };
+
+    let claim_id = if disp != "accept_no_claim" {
+        if let Some(sid) = supplier_id {
+            tx.execute(
+                "INSERT INTO supplier_claim (number, supplier_id, kind, origin_type,
+                                             value_minor, state, origin)
+                 VALUES (?1,?2,?3,'receipt_discrepancy',?4,'open','local')",
+                rusqlite::params![format!("tmp-{}", uuid_like()), sid,
+                                  if kind == "short" { "short" } else { "damage" }, value],
+            ).map_err(|e| e.to_string())?;
+            let cid = tx.last_insert_rowid();
+            let device = ensure_device_code(&tx)?;
+            tx.execute(
+                "UPDATE supplier_claim SET number = ?1 WHERE id = ?2",
+                rusqlite::params![format!("CL-{}-{}", device, 1000 + cid), cid],
+            ).map_err(|e| e.to_string())?;
+            Some(cid)
+        } else { None }
+    } else { None };
+
+    tx.execute(
+        "INSERT INTO receipt_discrepancy (receipt_id, part_id, kind, qty, disposition,
+                                          claim_value_minor, claim_id, notes, origin)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,'local')",
+        rusqlite::params![receipt_id, part_id, kind, qty, disp, value, claim_id, notes],
+    ).map_err(|e| e.to_string())?;
+    let id = tx.last_insert_rowid();
+
+    if let Some(cid) = claim_id {
+        tx.execute("UPDATE supplier_claim SET origin_id = ?1 WHERE id = ?2",
+                   rusqlite::params![id, cid]).map_err(|e| e.to_string())?;
+    }
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(id)
+}
+
 fn order_is_editable(conn: &Connection, order_id: i64) -> Result<String, String> {
     let status: String = conn
         .query_row(
@@ -2639,6 +3151,22 @@ fn main() {
             get_device_code,
             set_device_code,
             sync_pull,
+            list_suppliers,
+            upsert_supplier,
+            create_purchase_order,
+            add_po_line,
+            purchase_order_detail,
+            create_goods_receipt,
+            add_receipt_line,
+            add_receipt_cost,
+            preview_landed_cost,
+            post_goods_receipt,
+            recost_receipt,
+            part_cost_now,
+            rebate_standing,
+            list_rebate_agreements,
+            list_supplier_claims,
+            record_discrepancy,
             list_local_sessions,
             get_local_session,
             save_local_session,
