@@ -107,8 +107,20 @@ export const myRequests = <T>() => call<T>("my_requests");
 /** Every order, grouped by what it is waiting on. */
 export const staffOrders = <T>() => call<T>("staff_orders");
 /** Set line prices on a quote. Staff only; rules enforced in the database. */
-export const priceQuote = <T>(orderId: number, lines: { line_id: number; unit_price_minor: number }[]) =>
-  call<T>("price_quote", { orderId, lines });
+export const priceQuote = <T>(
+  orderId: number,
+  lines: { line_id: number; unit_price_minor: number }[],
+  /** Pass true ONLY after a person has seen the floor and chosen to go under
+   *  it. The database records the override on the order's notes. */
+  allowBelowFloor = false,
+) => call<T>("price_quote", { orderId, lines, allowBelowFloor });
+/** What WOULD happen to these prices. Read-only — writes nothing. Lets the
+ *  screen warn before saving rather than after, which is when it is worth
+ *  something. */
+export const quotePriceCheck = <T>(
+  orderId: number,
+  lines: { line_id: number; unit_price_minor: number }[],
+) => call<T>("quote_price_check", { orderId, lines });
 /** Fill every line from the current list price. */
 export const fillQuoteFromList = <T>(orderId: number) =>
   call<T>("fill_quote_from_list", { orderId });

@@ -270,6 +270,9 @@ export default function MobileShell() {
   const [ordersErr, setOrdersErr] = useState<string | null>(null);
   const [mineErr, setMineErr] = useState<string | null>(null);
   const [openOrder, setOpenOrder] = useState<number | null>(null);
+  // A blocked save is held here until the person chooses. Clearing it is the
+  // only way past, so the choice cannot be missed by looking away.
+  const [floorBlock, setFloorBlock] = useState<{ order: StaffOrder; message: string } | null>(null);
   const [draftPrices, setDraftPrices] = useState<Record<number, string>>({});
   const [savingOrder, setSavingOrder] = useState(false);
   const [photoBusy, setPhotoBusy] = useState(false);
@@ -550,7 +553,12 @@ export default function MobileShell() {
    * the person actually had. When both separators appear, whichever comes
    * last is the decimal point; the other is thousands.
    */
-  const parseRand = (s: string): number => {
+  type PriceFinding = {
+  line_id: number; sku: string; severity: "block" | "warn"; code: string;
+  message: string;
+};
+
+const parseRand = (s: string): number => {
     const t = s.replace(/[Rr\s]/g, "");
     if (t === "") return NaN;
     if (t.includes(",") && t.includes(".")) {
@@ -569,7 +577,7 @@ export default function MobileShell() {
     return Number(t);
   };
 
-  const savePrices = useCallback(async (o: StaffOrder) => {
+  const savePrices = useCallback(async (o: StaffOrder, overrideFloor = false) => {
     // "Every line must have a price" is TRUE of an order with no lines — the
     // check passes vacuously and the server then rejects the empty list with a
     // message about prices, which is not the problem the person is looking at.
@@ -600,17 +608,35 @@ export default function MobileShell() {
     setSavingOrder(true);
     try {
       const lines = resolved.map((r) => ({ line_id: r.line.id, unit_price_minor: r.minor }));
-      const res = await api.priceQuote<{ unpriced_left?: number; total_minor?: number }>(o.id, lines);
+      const res = await api.priceQuote<{
+        unpriced_left?: number; total_minor?: number;
+        warnings?: PriceFinding[]; below_floor_overridden?: boolean;
+      }>(o.id, lines, overrideFloor);
       const left = Number(res?.unpriced_left ?? 0);
-      showToast({ text: left > 0
-        ? `Saved — ${left} line${left === 1 ? "" : "s"} still without a price, so ${o.number} can't be accepted yet.`
-        : `${o.number} priced: ${fmtR(Number(res?.total_minor ?? 0))}. It's on their phone now.` });
+
+      // Warnings never block. They ride back with the result so a price that
+      // is legal but strange still gets said out loud — which is the whole
+      // lesson of the R11 111 door: nothing was wrong with the software's
+      // rules, it simply had no opinion about the number it was handed.
+      const warns = (res?.warnings ?? []).filter((w) => w.severity === "warn");
+      if (warns.length > 0) {
+        showToast({ text: warns.map((w) => w.message).join(" "), err: true });
+      } else {
+        showToast({ text: left > 0
+          ? `Saved — ${left} line${left === 1 ? "" : "s"} still without a price, so ${o.number} can't be accepted yet.`
+          : `${o.number} priced: ${fmtR(Number(res?.total_minor ?? 0))}. It's on their phone now.` });
+      }
       setDraftPrices({});
+      setFloorBlock(null);
       loadOrders();
     } catch (e) {
       console.error(e);
       const msg = e instanceof Error ? e.message.replace(/^\[CTP web\] could not save prices: /, "") : "Could not save.";
-      showToast({ text: msg, err: true });
+      // A margin-floor refusal is not a failure to be dismissed — it is a
+      // decision to be made, so it gets a strip with two named choices rather
+      // than a toast that vanishes.
+      if (/below the minimum margin/i.test(msg)) setFloorBlock({ order: o, message: msg });
+      else showToast({ text: msg, err: true });
     } finally {
       setSavingOrder(false);
     }
@@ -1428,6 +1454,36 @@ export default function MobileShell() {
       {sheet}
       {viewer && (
         <Lightbox items={viewer.items} start={viewer.idx} onClose={() => setViewer(null)} />
+      )}
+
+      {/* A margin-floor refusal. Deliberately NOT a toast: a toast is for
+          something that already happened, and this is a decision that has not
+          been made yet. It names the shortfall and offers two honest choices —
+          go back and change the price, or price it under the floor on purpose,
+          which the database then records on the order's notes. */}
+      {floorBlock && (
+        <div className="mb-toast err"
+          style={{ display: "flex", flexDirection: "column", alignItems: "stretch", gap: 10 }}>
+          <span>{floorBlock.message}</span>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button className="mb-chip on" style={{ flex: 1 }}
+              onClick={() => setFloorBlock(null)}>
+              Change the price
+            </button>
+            <button className="mb-chip" style={{ flex: 1 }}
+              onClick={() => {
+                const o = floorBlock.order;
+                setFloorBlock(null);
+                // The override is an ARGUMENT, not state. Setting state and
+                // calling in the same tick would read the pre-update closure
+                // and drop the override silently — the save would just fail
+                // again with the same message and no way through.
+                void savePrices(o, true);
+              }}>
+              Price it below the floor anyway
+            </button>
+          </div>
+        </div>
       )}
 
       {toast && (

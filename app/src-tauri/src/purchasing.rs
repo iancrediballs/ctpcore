@@ -1563,6 +1563,58 @@ mod tests {
         assert_eq!(s.exposure_minor, s.earned_minor);
     }
 
+    // ── the margin floor, shared with the cloud ───────────────────────────
+    //
+    // snapshot_price() in main.rs owns this arithmetic on the desktop, and
+    // server/0041 reproduces it character-for-character in price_floor_minor()
+    // so the two paths cannot drift by a cent. It is asserted HERE, against the
+    // real numbers from the Hermans quotes, so the expected values written into
+    // that migration's verification block were computed rather than assumed.
+    fn floor_minor(cost: i64, min_margin_bps: i64) -> Option<i64> {
+        if cost <= 0 || min_margin_bps >= 10_000 { return None; }
+        Some((cost * 10_000) / (10_000 - min_margin_bps) + 1)
+    }
+
+    #[test]
+    fn the_accepted_door_quote_was_below_the_floor() {
+        // CTP-DOR-002-R, Front Door Assembly R/H. Supplier cost R11 039.59,
+        // no list price, quoted to Hermans at R11 111.00 on RQ-260813-16 and
+        // accepted by the client.
+        let cost = 1_103_959;
+        let floor = floor_minor(cost, 1_500).unwrap();
+        assert_eq!(floor, 1_298_776, "R12 987.76 — the value server/0041 verifies");
+
+        let quoted = 1_111_100; // R11 111.00
+        assert!(quoted < floor, "the accepted quote sits below the 15% floor");
+        assert_eq!(floor - quoted, 187_676, "R1 876.76 below");
+
+        // And the margin actually quoted, for the record: 0.6%.
+        let margin_bps = (quoted - cost) * 10_000 / quoted;
+        assert_eq!(margin_bps, 64);
+    }
+
+    #[test]
+    fn floor_protects_only_where_there_is_a_cost_to_protect() {
+        // No cost on file means nothing to protect, and the floor must not
+        // invent one. Same answer on both paths: NULL / None.
+        assert_eq!(floor_minor(0, 1_500), None);
+        assert_eq!(floor_minor(-1, 1_500), None);
+        // A 100% minimum margin is unreachable, so it protects nothing rather
+        // than making every price impossible.
+        assert_eq!(floor_minor(1_000_000, 10_000), None);
+    }
+
+    #[test]
+    fn floor_is_strictly_above_break_even() {
+        // The +1 is deliberate. At 15% on a cost of R100.00 the exact
+        // break-even is R117.647…, so the floor is R117.65 and a quote at
+        // R117.64 is refused rather than sitting exactly on the margin.
+        assert_eq!(floor_minor(10_000, 1_500), Some(11_765));
+        // An exactly-divisible case still gets its cent, so "on the floor" is
+        // always above the margin and never on it.
+        assert_eq!(floor_minor(8_500, 1_500), Some(10_001));
+    }
+
     // ── the price-floor guarantee ─────────────────────────────────────────
     #[test]
     fn rebate_basis_settled_excludes_unearned_money() {

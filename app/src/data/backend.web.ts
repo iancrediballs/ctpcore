@@ -792,8 +792,25 @@ async function priceQuote(a: Record<string, unknown>): Promise<unknown> {
     return { line_id: Number(o["line_id"]), unit_price_minor: Math.round(Number(o["unit_price_minor"])) };
   }).filter((l) => Number.isInteger(l.line_id) && l.unit_price_minor > 0);
   if (lines.length === 0) throw new Error("[CTP web] no prices to save.");
-  const { data, error } = await supabase.rpc("price_quote", { order_id: orderId, lines });
+  const { data, error } = await supabase.rpc("price_quote", {
+    order_id: orderId, lines,
+    p_allow_below_floor: a["allowBelowFloor"] === true,
+  });
   if (error) throw new Error(`[CTP web] could not save prices: ${error.message}`);
+  return data;
+}
+
+/** Read-only price check. Same payload as price_quote, writes nothing. */
+async function quotePriceCheck(a: Record<string, unknown>): Promise<unknown> {
+  const orderId = numId(a["orderId"], "orderId");
+  const raw = Array.isArray(a["lines"]) ? (a["lines"] as unknown[]) : [];
+  const lines = raw.map((it) => {
+    const o = (it ?? {}) as Record<string, unknown>;
+    return { line_id: Number(o["line_id"]), unit_price_minor: Math.round(Number(o["unit_price_minor"])) };
+  }).filter((l) => Number.isInteger(l.line_id) && l.unit_price_minor > 0);
+  if (lines.length === 0) return { blocking: 0, warnings: 0, findings: [] };
+  const { data, error } = await supabase.rpc("quote_price_check", { order_id: orderId, lines });
+  if (error) throw new Error(`[CTP web] could not check prices: ${error.message}`);
   return data;
 }
 
@@ -968,6 +985,7 @@ const PORTED: Record<string, Handler> = {
   respond_to_quote: (a) => respondToQuote(a),
   staff_orders: () => staffOrders(),
   price_quote: (a) => priceQuote(a),
+  quote_price_check: (a) => quotePriceCheck(a),
   fill_quote_from_list: (a) => fillFromList(a),
   device_audit: () => deviceAudit(),
   admin_delete_photo: (a) => adminDeletePhoto(a),
