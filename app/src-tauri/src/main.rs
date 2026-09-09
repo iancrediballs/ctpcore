@@ -219,6 +219,23 @@ fn init_db(path: &PathBuf) -> rusqlite::Result<Connection> {
     if ver < 21 {
         conn.execute_batch(include_str!("../migrations/0022_local_session.sql"))?;
         conn.execute_batch("PRAGMA user_version = 21;")?;
+        ver = 21;
+    }
+
+    // v21 -> v22: one building, one warehouse. The seed shipped MAIN + SHOP and
+    // the real shipment landed into WH; nobody chose to have three. Repoints
+    // orders, ledger rows and bin policies onto WH and retires the other two —
+    // soft-delete only, because the ledger references them. No stock is written
+    // off: the migration asserts sum(delta) is unchanged and aborts if it is
+    // not. Cloud gets the same rule in server/0038.
+    //
+    // This one CANNOT be left to sync. stock_movement has no updated_at — its
+    // pull watermark is created_at, which a location repoint does not touch —
+    // so a desktop that has already pulled those rows would never see the
+    // correction. Both databases have to apply the rule themselves.
+    if ver < 22 {
+        conn.execute_batch(include_str!("../migrations/0023_single_location.sql"))?;
+        conn.execute_batch("PRAGMA user_version = 22;")?;
     }
 
     Ok(conn)
