@@ -3322,3 +3322,209 @@ fn main() {
         .run(tauri::generate_context!())
         .expect("error while running CTP Core");
 }
+
+// ════════════════════════════════════════════════════════════════════════════
+//  THE UPGRADE REHEARSAL
+//
+//  Not a re-implementation of the migration chain — this calls init_db(), the
+//  same function main() calls, against a COPY of the real database taken with
+//  its -wal and -shm. A chain that passes on a freshly seeded database proves
+//  very little: the interesting failures live in the data that accumulated
+//  before the migration was written.
+//
+//  Set CTP_UPGRADE_DB to the copy. Skipped when unset, so an ordinary
+//  `cargo test` is unaffected.
+// ════════════════════════════════════════════════════════════════════════════
+#[cfg(test)]
+mod upgrade_rehearsal {
+    use super::*;
+
+    #[test]
+    fn live_database_upgrades_cleanly_and_loses_nothing() {
+        let Ok(path) = std::env::var("CTP_UPGRADE_DB") else {
+            eprintln!("skipped: set CTP_UPGRADE_DB to a COPY of the live database");
+            return;
+        };
+        let p = PathBuf::from(&path);
+
+        // ── before, read without running any migration ─────────────────────
+        let (v0, parts0, moves0, units0, locs0) = {
+            let c = Connection::open(&p).expect("open copy");
+            let v: i64 = c.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
+            let parts: i64 = c
+                .query_row("SELECT count(*) FROM part WHERE deleted_at IS NULL", [], |r| r.get(0))
+                .unwrap();
+            let moves: i64 = c.query_row("SELECT count(*) FROM stock_movement", [], |r| r.get(0)).unwrap();
+            let units: i64 = c
+                .query_row("SELECT COALESCE(SUM(delta),0) FROM stock_movement", [], |r| r.get(0))
+                .unwrap();
+            let locs: i64 = c
+                .query_row("SELECT count(*) FROM location WHERE deleted_at IS NULL", [], |r| r.get(0))
+                .unwrap();
+            (v, parts, moves, units, locs)
+        };
+        println!("BEFORE  user_version={v0} parts={parts0} movements={moves0} units={units0} live_locations={locs0}");
+
+        // ── the actual upgrade, through the actual code path ───────────────
+        let conn = init_db(&p).expect("init_db must complete the whole chain");
+
+        let v1: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
+        let parts1: i64 = conn
+            .query_row("SELECT count(*) FROM part WHERE deleted_at IS NULL", [], |r| r.get(0))
+            .unwrap();
+        let moves1: i64 = conn.query_row("SELECT count(*) FROM stock_movement", [], |r| r.get(0)).unwrap();
+        let units1: i64 = conn
+            .query_row("SELECT COALESCE(SUM(delta),0) FROM stock_movement", [], |r| r.get(0))
+            .unwrap();
+        let locs1: i64 = conn
+            .query_row("SELECT count(*) FROM location WHERE deleted_at IS NULL", [], |r| r.get(0))
+            .unwrap();
+        println!("AFTER   user_version={v1} parts={parts1} movements={moves1} units={units1} live_locations={locs1}");
+
+        assert_eq!(v1, 23, "the chain must land on v23");
+        assert_eq!(parts1, parts0, "no part may be lost");
+        assert_eq!(moves1, moves0, "no ledger row may be added or lost");
+        assert_eq!(units1, units0, "STOCK MUST NOT MOVE during an upgrade");
+        assert_eq!(locs1, 1, "0023 consolidates to one warehouse");
+
+        // Every new table is present and empty apart from the seeded supplier.
+        for t in [
+            "supplier", "purchase_order", "purchase_order_line", "goods_receipt",
+            "goods_receipt_line", "receipt_cost", "part_landed_cost",
+            "receipt_discrepancy", "supplier_claim", "rebate_agreement",
+            "rebate_agreement_scope", "rebate_tier", "rebate_accrual",
+        ] {
+            let n: i64 = conn
+                .query_row(
+                    "SELECT count(*) FROM sqlite_master WHERE type='table' AND name=?1",
+                    [t], |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(n, 1, "table {t} missing after upgrade");
+        }
+        let sup: i64 = conn.query_row("SELECT count(*) FROM supplier", [], |r| r.get(0)).unwrap();
+        assert_eq!(sup, 1, "FAW seeded exactly once");
+
+        // Costs still resolve, from the price list, for the same parts as before.
+        let (price_list, none): (i64, i64) = conn
+            .query_row(
+                "SELECT SUM(basis='price_list'), SUM(basis='none') FROM part_current_cost",
+                [], |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        println!("COSTS   price_list={price_list} none={none}");
+        assert_eq!(price_list, 159);
+        assert_eq!(none, 2);
+
+        // ── the opening balance, on the upgraded live copy ──────────────────
+        let before: i64 = conn
+            .query_row("SELECT COALESCE(SUM(delta),0) FROM stock_movement", [], |r| r.get(0))
+            .unwrap();
+        let rows_before: i64 = conn.query_row("SELECT count(*) FROM stock_movement", [], |r| r.get(0)).unwrap();
+
+        let mut conn = conn;
+        let loc: i64 = conn
+            .query_row(
+                "SELECT id FROM location WHERE deleted_at IS NULL ORDER BY id LIMIT 1",
+                [], |r| r.get(0),
+            )
+            .unwrap();
+        conn.execute(
+            "INSERT INTO goods_receipt (number, kind, location_id, received_at,
+                                        invoice_currency, fx_rate_ppm, status)
+             VALUES ('GR-REHEARSAL', 'opening', ?1, '2026-07-30 00:00:00',
+                     'ZAR', 1000000, 'draft')",
+            [loc],
+        )
+        .unwrap();
+        let rid = conn.last_insert_rowid();
+        let tx = conn.transaction().unwrap();
+        let res = purchasing::adopt_opening_stock(&tx, rid).unwrap();
+        tx.commit().unwrap();
+
+        let after: i64 = conn
+            .query_row("SELECT COALESCE(SUM(delta),0) FROM stock_movement", [], |r| r.get(0))
+            .unwrap();
+        let rows_after: i64 = conn.query_row("SELECT count(*) FROM stock_movement", [], |r| r.get(0)).unwrap();
+        let orphans: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM stock_movement
+                  WHERE reason='receipt' AND (ref_type IS NULL OR ref_type <> 'goods_receipt')",
+                [], |r| r.get(0),
+            )
+            .unwrap();
+        println!(
+            "OPENING units {before} -> {after} | rows {rows_before} -> {rows_after} | \
+             parts={} adopted={} uncosted={:?} | receipt movements pointing at nothing={orphans}",
+            res.parts, res.adopted, res.uncosted
+        );
+
+        assert_eq!(after, before, "adopting the opening balance must not move stock");
+        assert_eq!(rows_after, rows_before, "and must not add a ledger row");
+        assert_eq!(res.adopted, 160);
+        assert_eq!(res.parts, 160);
+        assert_eq!(res.units, 834);
+        assert_eq!(orphans, 0, "every receipt movement now traces to a receipt");
+    }
+
+    /// IAN'S ACTUAL CASE, and it is not the path the upgrade rehearsal covers.
+    ///
+    /// His database was migrated to v23 by an accidental launch on 10 September.
+    /// So when he installs the new build, `init_db` will meet a database that is
+    /// ALREADY current. Every migration gate is `if ver < N`, so all of them
+    /// should skip — but "should" is exactly the word that produced the
+    /// accident, so it is asserted instead.
+    ///
+    /// Set CTP_CURRENT_DB to a COPY of a v23 database.
+    #[test]
+    fn an_already_current_database_is_opened_and_not_touched() {
+        let Ok(path) = std::env::var("CTP_CURRENT_DB") else {
+            eprintln!("skipped: set CTP_CURRENT_DB to a COPY of a v23 database");
+            return;
+        };
+        let p = PathBuf::from(&path);
+
+        // A fingerprint of everything that must not move. Taken before the
+        // binary is allowed anywhere near the file.
+        let snapshot = |c: &Connection| -> (i64, i64, i64, i64, i64, i64, i64) {
+            (
+                c.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap(),
+                c.query_row("SELECT count(*) FROM part WHERE deleted_at IS NULL", [], |r| r.get(0)).unwrap(),
+                c.query_row("SELECT count(*) FROM stock_movement", [], |r| r.get(0)).unwrap(),
+                c.query_row("SELECT COALESCE(SUM(delta),0) FROM stock_movement", [], |r| r.get(0)).unwrap(),
+                c.query_row("SELECT count(*) FROM location WHERE deleted_at IS NULL", [], |r| r.get(0)).unwrap(),
+                c.query_row("SELECT count(*) FROM supplier", [], |r| r.get(0)).unwrap(),
+                c.query_row("SELECT count(*) FROM part_cost", [], |r| r.get(0)).unwrap(),
+            )
+        };
+
+        let before = { let c = Connection::open(&p).unwrap(); snapshot(&c) };
+        println!("BEFORE  {before:?}");
+        assert_eq!(before.0, 23, "this test needs a v23 database to be meaningful");
+
+        // Open it the way the app does. Twice — because the app is opened many
+        // times, and a runner that is only idempotent on the first pass is not
+        // idempotent.
+        let after1 = { let c = init_db(&p).expect("first open"); snapshot(&c) };
+        println!("OPEN 1  {after1:?}");
+        let after2 = { let c = init_db(&p).expect("second open"); snapshot(&c) };
+        println!("OPEN 2  {after2:?}");
+
+        assert_eq!(after1, before, "opening a current database must change nothing");
+        assert_eq!(after2, before, "and must still change nothing the second time");
+
+        // The seeded supplier is the specific thing at risk: 0024 ends with an
+        // INSERT. If a migration re-ran, this is where it would show.
+        assert_eq!(after2.5, 1, "FAW must not be seeded twice");
+
+        // And the one that would be catastrophic rather than untidy: 0023's
+        // location consolidation re-running against a ledger it has already
+        // repointed.
+        assert_eq!(after2.3, before.3, "stock must not move on an ordinary open");
+
+        let c = Connection::open(&p).unwrap();
+        let ok: String = c.query_row("PRAGMA integrity_check", [], |r| r.get(0)).unwrap();
+        assert_eq!(ok, "ok");
+        println!("INTEGRITY {ok}");
+    }
+}
