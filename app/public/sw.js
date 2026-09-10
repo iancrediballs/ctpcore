@@ -50,6 +50,12 @@ const ASSET_HOST = "hkzmydowyiajkbakxfkj.supabase.co";
 // broken image rather than a spinner and concludes the app is broken.
 const IMAGE_TIMEOUT_MS = 10000;
 
+// The shell is different: a cached copy is always available after the first
+// visit, so there is no reason to wait long for a fresher one. Two seconds is
+// enough to pick up a new deploy on a working connection and short enough that
+// a bad one never costs the launch.
+const SHELL_TIMEOUT_MS = 2000;
+
 self.addEventListener("install", (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(["/"])));
   self.skipWaiting();
@@ -128,24 +134,67 @@ self.addEventListener("fetch", (e) => {
     return;
   }
 
-  // Rule 2: the app shell — network-first, cache fallback.
+  // Rule 2a: HASHED BUILD ASSETS — cache-first, because they are immutable.
+  //
+  // Vite names every build output by a hash of its contents: index-B1vJNIsq.js
+  // becomes index-<something else>.js the moment one byte changes. So a cached
+  // /assets/ file can NEVER be stale — a new deploy asks for a different
+  // filename. Going to the network for these is pure cost.
+  //
+  // And it was a large cost. Measured on the live site, through this same
+  // worker, on files that were ALREADY in the cache:
+  //
+  //     cache-first  (Rule 1, images)      2-14 ms
+  //     network-first (the old Rule 2)     690-819 ms, on EVERY load
+  //
+  // That was most of the ~3.5 seconds the app took to reach its login screen.
+  // It was never PowerSync's WASM — that does not load until after sign-in,
+  // which the running app confirmed and the source code had suggested
+  // otherwise.
+  if (url.origin === self.location.origin && url.pathname.startsWith("/assets/")) {
+    e.respondWith((async () => {
+      const cache = await caches.open(CACHE);
+      const hit = await cache.match(e.request);
+      if (hit) return hit;
+      try {
+        const res = await fetch(e.request);
+        if (storable(res)) {
+          const copy = res.clone();
+          cache.put(e.request, copy).catch(() => {});
+        }
+        return res;
+      } catch {
+        return (await cache.match(e.request)) ?? Response.error();
+      }
+    })());
+    return;
+  }
+
+  // Rule 2b: everything else same-origin — the HTML document, the manifest,
+  // the icons, the brand images. Network-first WITH A DEADLINE, cache fallback.
+  //
+  // Network-first is right here and only here: "/" is not content-hashed, so
+  // this is what picks up a new deploy. But it must not be able to stall the
+  // launch — a slow connection should cost a moment, not the whole start-up —
+  // so a response that has not arrived within SHELL_TIMEOUT_MS falls back to
+  // the cached copy.
   if (url.origin === self.location.origin) {
-    e.respondWith(
-      fetch(e.request)
-        .then((res) => {
-          if (storable(res)) {
-            const copy = res.clone();
-            caches.open(CACHE).then((c) => c.put(e.request, copy)).catch(() => {});
-          }
-          return res;
-        })
-        .catch(async () => {
-          const hit = await caches.match(e.request);
-          // An offline navigation falls back to the cached shell.
-          return hit ?? (e.request.mode === "navigate"
-            ? (await caches.match("/")) ?? Response.error()
-            : Response.error());
-        })
-    );
+    e.respondWith((async () => {
+      const cache = await caches.open(CACHE);
+      try {
+        const res = await fetchWithTimeout(e.request, SHELL_TIMEOUT_MS);
+        if (storable(res)) {
+          const copy = res.clone();
+          cache.put(e.request, copy).catch(() => {});
+        }
+        return res;
+      } catch {
+        const hit = await cache.match(e.request);
+        // An offline navigation falls back to the cached shell.
+        return hit ?? (e.request.mode === "navigate"
+          ? (await cache.match("/")) ?? Response.error()
+          : Response.error());
+      }
+    })());
   }
 });
