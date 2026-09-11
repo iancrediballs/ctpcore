@@ -45,16 +45,29 @@
 const CACHE = "ctp-core-v2";
 const ASSET_HOST = "hkzmydowyiajkbakxfkj.supabase.co";
 
-// A stalled image must not hold a connection open indefinitely. Ten seconds is
-// long enough for a slow shed connection and short enough that a person sees a
-// broken image rather than a spinner and concludes the app is broken.
-const IMAGE_TIMEOUT_MS = 10000;
+// ── TIMEOUTS, and the mistake the first version of this file made with them.
+//
+// v2 set the image deadline to TEN SECONDS and the shell deadline to TWO,
+// calibrated from a browser in a datacentre where a photo took 1-2 s. On the
+// connection this app is actually used from, in KwaZulu-Natal, the same fetch
+// measured 3.6-5.7 s for a SINGLE image with nothing else loading. A diagram
+// page loads a dozen at once and they share the line. So every image hit the
+// deadline, the catch returned the 504 fallback, and the fix that was meant to
+// stop images hanging made every image fail instead. The 2 s shell deadline did
+// the same to a 10 KB icon.
+//
+// THE PURPOSE OF A TIMEOUT HERE IS TO STOP AN INDEFINITE HANG. It is not a
+// performance budget imposed on a customer's connection. A slow image that
+// eventually appears is enormously better than a fast failure. Sixty seconds
+// stops a hang; it does not stop a slow line from finishing.
+const IMAGE_TIMEOUT_MS = 60000;
 
-// The shell is different: a cached copy is always available after the first
-// visit, so there is no reason to wait long for a fresher one. Two seconds is
-// enough to pick up a new deploy on a working connection and short enough that
-// a bad one never costs the launch.
-const SHELL_TIMEOUT_MS = 2000;
+// The shell only gets a SHORT deadline when there is a cached copy to fall
+// back to — that is the whole point of racing the network, and without a
+// cached copy a short deadline turns "slow" into "broken" for no gain. See
+// Rule 2b. With nothing cached the deadline is the long one.
+const SHELL_TIMEOUT_MS = 3000;
+const SHELL_TIMEOUT_UNCACHED_MS = 60000;
 
 self.addEventListener("install", (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(["/"])));
@@ -181,15 +194,20 @@ self.addEventListener("fetch", (e) => {
   if (url.origin === self.location.origin) {
     e.respondWith((async () => {
       const cache = await caches.open(CACHE);
+      // Only race the network against a deadline when losing that race has
+      // somewhere to land. First visit, nothing cached: wait for the network,
+      // however long the line takes.
+      const cached = await cache.match(e.request);
+      const deadline = cached ? SHELL_TIMEOUT_MS : SHELL_TIMEOUT_UNCACHED_MS;
       try {
-        const res = await fetchWithTimeout(e.request, SHELL_TIMEOUT_MS);
+        const res = await fetchWithTimeout(e.request, deadline);
         if (storable(res)) {
           const copy = res.clone();
           cache.put(e.request, copy).catch(() => {});
         }
         return res;
       } catch {
-        const hit = await cache.match(e.request);
+        const hit = cached ?? (await cache.match(e.request));
         // An offline navigation falls back to the cached shell.
         return hit ?? (e.request.mode === "navigate"
           ? (await cache.match("/")) ?? Response.error()
