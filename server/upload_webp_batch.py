@@ -69,7 +69,7 @@ def main():
     with open(a.manifest) as f:
         items = json.load(f)
 
-    print(f"{'part':5} {'key':44} {'orig KB':>8} {'webp KB':>8}  status")
+    print(f"{'part':7} {'key':44} {'orig KB':>8} {'webp KB':>8}  status")
     ok = fail = 0
     for it in items:
         rel = it["key"]
@@ -78,10 +78,10 @@ def main():
 
         # ── refuse without a verified original ───────────────────────────────
         if not os.path.exists(orig):
-            print(f"{it['part']:<5} {rel:44} {'':>8} {'':>8}  REFUSED: no original backed up"); fail += 1; continue
+            print(f"{str(it.get('part', it.get('kind','?'))):<7} {rel:44} {'':>8} {'':>8}  REFUSED: no original backed up"); fail += 1; continue
         with open(orig, "rb") as f:
             if hashlib.sha256(f.read()).hexdigest() != it["orig_sha256"]:
-                print(f"{it['part']:<5} {rel:44} {'':>8} {'':>8}  REFUSED: original hash mismatch"); fail += 1; continue
+                print(f"{str(it.get('part', it.get('kind','?'))):<7} {rel:44} {'':>8} {'':>8}  REFUSED: original hash mismatch"); fail += 1; continue
         with Image.open(orig) as im:
             im.load(); osz = im.size
 
@@ -91,17 +91,17 @@ def main():
         with Image.open(io.BytesIO(body)) as im:
             im.load()
             if im.format != "WEBP" or im.size != osz:
-                print(f"{it['part']:<5} {rel:44} {'':>8} {'':>8}  REFUSED: staged is {im.format} {im.size}, original {osz}"); fail += 1; continue
+                print(f"{str(it.get('part', it.get('kind','?'))):<7} {rel:44} {'':>8} {'':>8}  REFUSED: staged is {im.format} {im.size}, original {osz}"); fail += 1; continue
 
         if a.dry_run:
-            print(f"{it['part']:<5} {rel:44} {it['orig_bytes']/1024:8.0f} {len(body)/1024:8.0f}  would upload"); ok += 1; continue
+            print(f"{str(it.get('part', it.get('kind','?'))):<7} {rel:44} {it['orig_bytes']/1024:8.0f} {len(body)/1024:8.0f}  would upload"); ok += 1; continue
 
         # ── upload, same key, correct type, immutable cache header ───────────
         status, resp = api(f"/storage/v1/object/{BUCKET}/{urllib.parse.quote(rel)}", key, "POST", body,
                            {"Content-Type": "image/webp", "x-upsert": "true",
                             "Cache-Control": "public, max-age=31536000, immutable"})
         if status not in (200, 201):
-            print(f"{it['part']:<5} {rel:44} {'':>8} {'':>8}  FAILED {status}: {resp[:120].decode('utf-8','replace')}"); fail += 1; continue
+            print(f"{str(it.get('part', it.get('kind','?'))):<7} {rel:44} {'':>8} {'':>8}  FAILED {status}: {resp[:120].decode('utf-8','replace')}"); fail += 1; continue
 
         # ── verify the way a browser will see it: public url, no auth ───────
         try:
@@ -110,11 +110,11 @@ def main():
             with Image.open(io.BytesIO(got)) as im:
                 im.load(); fmt, sz = im.format, im.size
             if ct.startswith("image/webp") and fmt == "WEBP" and sz == osz and len(got) == len(body):
-                print(f"{it['part']:<5} {rel:44} {it['orig_bytes']/1024:8.0f} {len(got)/1024:8.0f}  OK  {ct}"); ok += 1
+                print(f"{str(it.get('part', it.get('kind','?'))):<7} {rel:44} {it['orig_bytes']/1024:8.0f} {len(got)/1024:8.0f}  OK  {ct}"); ok += 1
             else:
-                print(f"{it['part']:<5} {rel:44} {'':>8} {'':>8}  UPLOADED BUT READ-BACK WRONG: ct={ct} fmt={fmt} size={sz} bytes={len(got)}"); fail += 1
+                print(f"{str(it.get('part', it.get('kind','?'))):<7} {rel:44} {'':>8} {'':>8}  UPLOADED BUT READ-BACK WRONG: ct={ct} fmt={fmt} size={sz} bytes={len(got)}"); fail += 1
         except Exception as e:
-            print(f"{it['part']:<5} {rel:44} {'':>8} {'':>8}  UPLOADED BUT READ-BACK FAILED: {e}"); fail += 1
+            print(f"{str(it.get('part', it.get('kind','?'))):<7} {rel:44} {'':>8} {'':>8}  UPLOADED BUT READ-BACK FAILED: {e}"); fail += 1
 
     print(f"\n{ok} ok, {fail} failed.  Originals (the undo) are in {a.originals}")
     sys.exit(1 if fail else 0)
