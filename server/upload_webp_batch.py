@@ -31,7 +31,7 @@ USAGE (in your own terminal, with the key in your own shell)
     PowerShell:  $env:CTP_SERVICE_KEY = '<service_role key>'
                  python server/upload_webp_batch.py --manifest D:\ctpbuild\image_webp\manifest_eight.json
     Add --dry-run to see the plan and change nothing.
-r"""
+"""
 import argparse, hashlib, io, json, os, sys, urllib.error, urllib.parse, urllib.request
 from PIL import Image
 
