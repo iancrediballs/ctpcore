@@ -342,3 +342,29 @@ textarea.st-in{resize:vertical;line-height:1.45;font-size:15px}
   .st-body{max-width:680px;margin:0 auto;width:100%}
   .st-tabs{max-width:680px;margin:0 auto;width:100%}
 }
+
+/* ── hotspot markers (viewer) and the editor ─────────────────────────────── */
+.mb-lb-marks{position:absolute;pointer-events:none;will-change:transform;transform-origin:center center}
+.mb-hs-mk{position:absolute;transform:translate(-50%,-50%);min-width:26px;height:26px;border-radius:50%;
+  border:2.5px solid var(--amber);background:rgba(240,180,60,.22);color:#fff;font:700 12px var(--mono, monospace);
+  display:flex;align-items:center;justify-content:center;padding:0 4px;pointer-events:auto;cursor:pointer;
+  box-shadow:0 0 0 2px rgba(0,0,0,.45);touch-action:none}
+.mb-hs-mk.unl{border-color:var(--dim);background:rgba(125,141,161,.25)}
+.mb-hs-mk.sel{border-color:#fff;box-shadow:0 0 0 6px rgba(240,180,60,.35);z-index:4}
+.mb-hs-mk.dirty{border-style:dashed}
+.mb-hs-mk.new{border-style:dashed;background:rgba(240,180,60,.35)}
+.mb-hs-stage{position:relative;flex:1;overflow:auto;-webkit-overflow-scrolling:touch;touch-action:pan-y;
+  display:block;line-height:0}
+.mb-hs-img{display:block;width:100%;height:auto;user-select:none;-webkit-user-drag:none}
+.mb-hs-stage .mb-hs-mk{line-height:1}
+.mb-hs-panel{flex:0 0 auto;padding:8px 12px calc(var(--safe-b, 0px) + 10px);border-top:1px solid var(--line);
+  background:var(--panel, #0b0f14);display:flex;flex-direction:column;gap:8px}
+.mb-hs-row{display:flex;align-items:center;gap:8px;font-size:13px}
+.mb-hs-in{flex:1;min-width:0;background:var(--bg, #05070a);border:1px solid var(--line);color:var(--text);
+  border-radius:8px;padding:8px 10px;font-size:14px;outline:none}
+.mb-hs-in:focus{border-color:var(--amber)}
+.mb-hs-hits{display:flex;flex-direction:column;gap:4px;max-height:38vh;overflow:auto}
+.mb-hs-hit{text-align:left;background:transparent;border:1px solid var(--line);border-radius:8px;
+  padding:8px 10px;color:var(--text);font-size:13px;cursor:pointer}
+.mb-hs-hit:active{background:rgba(240,180,60,.12)}
+.mb-dim{color:var(--dim);font-weight:500}
