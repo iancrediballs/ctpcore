@@ -969,6 +969,108 @@ async function requestParts(a: Record<string, unknown>): Promise<unknown> {
 
 // ─── registry ────────────────────────────────────────────────────────────────
 
+
+// ─── hotspots on the WEB ────────────────────────────────────────────────────
+//
+// WHY THIS IS HERE AND NOT ON THE DESKTOP. The desktop has had a hotspot
+// editor from the start, and every marker placed there stays there: the
+// desktop does not yet sync. Ian was about to spend a weekend placing markers
+// that would have reached nobody. His hotspot data belongs in the cloud, which
+// is where the web app already reads and writes — so the editor goes where
+// the data is, and the sync dependency disappears for this purpose.
+//
+// THE COORDINATE CONVENTION, matched to the desktop EXACTLY so the two are
+// compatible the day sync lands:
+//   x, y     image-PIXEL coordinates in the diagram's own frame
+//   frame    diagram.img_w / img_h if set, else the image's naturalWidth/Height
+//   render   left = x / frame_w * 100%, top = y / frame_h * 100%
+// DiagramsView.tsx (desktop) computes x = (clientX - rect.left) / rect.width
+// * frame_w. Nothing here invents a second convention.
+//
+// img_w / img_h ARE PERSISTED. The SEC diagrams carry NULL in both columns and
+// the desktop re-derives them from the loaded image every time. That is what
+// made its editor fragile — the frame existed only while the image was on
+// screen. setDiagramDims writes them once, only where NULL, so the frame the
+// markers were placed against is recorded rather than assumed.
+//
+// Writes go straight through PostgREST under RLS: hotspot_staff_write is FOR
+// ALL to authenticated USING (is_staff()), and diagram has the same shape. No
+// SECURITY DEFINER function is needed because there is no rule to enforce
+// beyond "staff only", and that one the policy already enforces.
+
+type HotspotRow = {
+  id: number; diagram_id: number; part_id: number | null; item_no: string | null;
+  x: number; y: number; radius: number; client_uuid: string | null;
+  part: { sku: string; name: string } | null;
+};
+
+/** The diagram row and its live markers, resolved from the image path the
+ *  viewer already has. */
+async function listHotspots(a: Record<string, unknown>): Promise<unknown> {
+  const path = str(a["path"]);
+  const { data: d, error: e1 } = await supabase
+    .from("diagram").select("id, img_w, img_h, drawing_key")
+    .eq("image_path", path).is("deleted_at", null).maybeSingle();
+  if (e1) throw new Error(`[CTP web] diagram lookup failed: ${e1.message}`);
+  if (!d) return { diagram_id: null, img_w: null, img_h: null, hotspots: [] };
+  const { data: hs, error: e2 } = await supabase
+    .from("hotspot")
+    .select("id, diagram_id, part_id, item_no, x, y, radius, client_uuid, part:part_id(sku, name)")
+    .eq("diagram_id", d.id).is("deleted_at", null).order("id");
+  if (e2) throw new Error(`[CTP web] hotspot read failed: ${e2.message}`);
+  return {
+    diagram_id: d.id, drawing_key: d.drawing_key, img_w: d.img_w, img_h: d.img_h,
+    hotspots: ((hs ?? []) as unknown as HotspotRow[]).map((h) => ({
+      id: h.id, part_id: h.part_id, item_no: h.item_no, x: h.x, y: h.y,
+      radius: h.radius, client_uuid: h.client_uuid,
+      sku: h.part?.sku ?? null, name: h.part?.name ?? null,
+    })),
+  };
+}
+
+/** Insert or move a marker. Keyed on client_uuid (UNIQUE since 0036), so a
+ *  save that is retried after a dropped connection lands once. */
+async function saveHotspot(a: Record<string, unknown>): Promise<unknown> {
+  const row = {
+    client_uuid: str(a["clientUuid"]),
+    diagram_id: numId(a["diagramId"], "diagramId"),
+    x: Number(a["x"]), y: Number(a["y"]),
+    part_id: a["partId"] == null ? null : numId(a["partId"], "partId"),
+    item_no: a["itemNo"] == null || a["itemNo"] === "" ? null : String(a["itemNo"]),
+    origin: "mobile",
+  };
+  if (!row.client_uuid) throw new Error("[CTP web] a hotspot needs a client_uuid.");
+  if (!Number.isFinite(row.x) || !Number.isFinite(row.y)) throw new Error("[CTP web] hotspot x/y must be numbers.");
+  const { data, error } = await supabase
+    .from("hotspot").upsert(row, { onConflict: "client_uuid" })
+    .select("id").single();
+  if (error) throw new Error(`[CTP web] could not save marker: ${error.message}`);
+  return data?.id;
+}
+
+/** Soft delete, like everything else here. The row stays for history. */
+async function deleteHotspot(a: Record<string, unknown>): Promise<unknown> {
+  const id = numId(a["id"], "id");
+  const { error } = await supabase.from("hotspot")
+    .update({ deleted_at: new Date().toISOString() }).eq("id", id);
+  if (error) throw new Error(`[CTP web] could not remove marker: ${error.message}`);
+  return null;
+}
+
+/** Record the frame the markers are placed against. Writes ONLY where the
+ *  columns are NULL — a frame that has been recorded is never overwritten by
+ *  whatever happens to be loaded later. */
+async function setDiagramDims(a: Record<string, unknown>): Promise<unknown> {
+  const id = numId(a["diagramId"], "diagramId");
+  const w = Number(a["w"]), h = Number(a["h"]);
+  if (!(w > 0 && h > 0)) throw new Error("[CTP web] diagram dimensions must be positive.");
+  const { data, error } = await supabase.from("diagram")
+    .update({ img_w: Math.round(w), img_h: Math.round(h) })
+    .eq("id", id).is("img_w", null).select("id, img_w, img_h").maybeSingle();
+  if (error) throw new Error(`[CTP web] could not record diagram size: ${error.message}`);
+  return data; // null when the frame was already recorded — that is not an error
+}
+
 const PORTED: Record<string, Handler> = {
   search_parts: (a) => searchParts(String(a["query"] ?? "")),
   part_detail: (a) => partDetail(Number(a["partId"])),
@@ -986,6 +1088,10 @@ const PORTED: Record<string, Handler> = {
   staff_orders: () => staffOrders(),
   price_quote: (a) => priceQuote(a),
   quote_price_check: (a) => quotePriceCheck(a),
+  list_hotspots: (a) => listHotspots(a),
+  save_hotspot: (a) => saveHotspot(a),
+  delete_hotspot: (a) => deleteHotspot(a),
+  set_diagram_dims: (a) => setDiagramDims(a),
   fill_quote_from_list: (a) => fillFromList(a),
   device_audit: () => deviceAudit(),
   admin_delete_photo: (a) => adminDeletePhoto(a),

@@ -238,3 +238,27 @@ export const pullPoLines = (receiptId: number, orderId: number) =>
 export const createOpeningReceipt = <T>() => call<T>("create_opening_receipt");
 export const listDiscrepancies = <T>(receiptId: number) =>
   call<T>("list_discrepancies", { receiptId });
+
+// ─── hotspots (web) ──────────────────────────────────────────────────────
+// The editor lives on the WEB because that is where the data lives. Coordinates
+// are image-pixel in the diagram's own frame, identical to the desktop's
+// DiagramsView — see backend.web.ts for the convention spelled out.
+export type WebHotspot = {
+  id: number; part_id: number | null; item_no: string | null;
+  x: number; y: number; radius: number; client_uuid: string | null;
+  sku: string | null; name: string | null;
+};
+export type DiagramHotspots = {
+  diagram_id: number | null; drawing_key?: string;
+  img_w: number | null; img_h: number | null; hotspots: WebHotspot[];
+};
+export const listHotspots = (path: string) => call<DiagramHotspots>("list_hotspots", { path });
+export const saveHotspot = (a: {
+  clientUuid: string; diagramId: number; x: number; y: number;
+  partId: number | null; itemNo?: string | null;
+}) => call<number>("save_hotspot", a as unknown as Record<string, unknown>);
+// deleteHotspot: the existing binding above serves both surfaces - the web
+// handler soft-deletes, the desktop command is unchanged.
+/** Records img_w/img_h on the diagram row, only where they are NULL. */
+export const setDiagramDims = (diagramId: number, w: number, h: number) =>
+  call<unknown>("set_diagram_dims", { diagramId, w, h });

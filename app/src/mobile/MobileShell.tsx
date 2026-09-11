@@ -18,6 +18,7 @@ import { useStatus } from "@powersync/react";
 import * as api from "../data/api";
 import { assetUrl } from "../assets";
 import { makeUuid } from "../data/uuid";
+import type { WebHotspot } from "../data/api";
 import { useAuth, type Role } from "../auth/AuthProvider";
 import SettingsView from "../admin/SettingsView";
 import "./mobile.css";
@@ -255,7 +256,7 @@ export default function MobileShell() {
   const [sheetOpen, setSheetOpen] = useState(false);
   const [counterOpen, setCounterOpen] = useState(false);
   const [toast, setToast] = useState<Toast | null>(null);
-  const [viewer, setViewer] = useState<{ items: { path: string; label: string }[]; idx: number } | null>(null);
+  const [viewer, setViewer] = useState<{ items: { path: string; label: string; diagram?: boolean }[]; idx: number } | null>(null);
   const [cart, setCart] = useState<{ id: number; sku: string; name: string; qty: number }[]>([]);
   const [note, setNote] = useState("");
   const [sending, setSending] = useState(false);
@@ -267,6 +268,7 @@ export default function MobileShell() {
   // at null forever and the view sat on "Loading…" with no way out — one bad row
   // anywhere in the batch silently took down the whole order desk.
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [hotspotEditor, setHotspotEditor] = useState<{ path: string; label: string } | null>(null);
   const [ordersErr, setOrdersErr] = useState<string | null>(null);
   const [mineErr, setMineErr] = useState<string | null>(null);
   const [openOrder, setOpenOrder] = useState<number | null>(null);
@@ -836,7 +838,7 @@ const parseRand = (s: string): number => {
           if (!s?.diagram) return null;
           return (
             <div className="mb-dgm" role="button" style={{ marginTop: 4 }}
-              onClick={() => setViewer({ items: [{ path: s.diagram!, label: s.name }], idx: 0 })}>
+              onClick={() => setViewer({ items: [{ path: s.diagram!, label: s.name, diagram: true }], idx: 0 })}>
               <img src={assetUrl(s.diagram)} alt={s.name} loading="lazy" />
               <span className="mb-zoomtag">⤢</span>
               <div className="mb-dgm-cap">
@@ -1313,7 +1315,7 @@ const parseRand = (s: string): number => {
             {d.diagram_image && (
               <div className="mb-dgm" role="button"
                 onClick={() => setViewer({
-                  items: [{ path: d.diagram_image!, label: `${d.drawing_no ?? d.category_name ?? "Diagram"}${d.diagram_item ? ` · item ${d.diagram_item}` : ""}` }],
+                  items: [{ path: d.diagram_image!, label: `${d.drawing_no ?? d.category_name ?? "Diagram"}${d.diagram_item ? ` · item ${d.diagram_item}` : ""}`, diagram: true }],
                   idx: 0,
                 })}>
                 <img src={assetUrl(d.diagram_image)} alt="Section diagram" loading="lazy" />
@@ -1452,8 +1454,16 @@ const parseRand = (s: string): number => {
         : tab === "cart" ? (isClient ? cartView : ordersView)
         : listView}
       {sheet}
-      {viewer && (
-        <Lightbox items={viewer.items} start={viewer.idx} onClose={() => setViewer(null)} />
+      {viewer && !hotspotEditor && (
+        <Lightbox items={viewer.items} start={viewer.idx} onClose={() => setViewer(null)}
+          canEdit={!isClient}
+          onOpenPart={(pid) => { setViewer(null); void openPart(pid); }}
+          onEditMarkers={(path, label) => setHotspotEditor({ path, label })} />
+      )}
+      {hotspotEditor && (
+        <HotspotEditor path={hotspotEditor.path} label={hotspotEditor.label} canEdit={!isClient}
+          onClose={() => setHotspotEditor(null)}
+          onOpenPart={(pid) => { setHotspotEditor(null); setViewer(null); void openPart(pid); }} />
       )}
 
       {/* A margin-floor refusal. Deliberately NOT a toast: a toast is for
@@ -1557,14 +1567,22 @@ const parseRand = (s: string): number => {
 // T while holding some c fixed — the point under your fingers stays under
 // your fingers.
 
-function Lightbox({ items, start, onClose }: {
-  items: { path: string; label: string }[];
+function Lightbox({ items, start, onClose, canEdit, onOpenPart, onEditMarkers }: {
+  items: { path: string; label: string; diagram?: boolean }[];
   start: number;
   onClose: () => void;
+  canEdit?: boolean;
+  onOpenPart?: (partId: number) => void;
+  onEditMarkers?: (path: string, label: string) => void;
 }) {
   const [idx, setIdx] = useState(Math.min(Math.max(start, 0), items.length - 1));
   const stageRef = useRef<HTMLDivElement>(null);
   const imgRef = useRef<HTMLImageElement>(null);
+  // Markers live in a SIBLING layer that mirrors the image's box and transform,
+  // so the <img> itself — and everything about how photos and diagrams render
+  // today — is untouched. The layer exists only when a diagram has markers.
+  const marksRef = useRef<HTMLDivElement>(null);
+  const [marks, setMarks] = useState<{ frame: { w: number; h: number }; hots: WebHotspot[] } | null>(null);
   const t = useRef({ s: 1, x: 0, y: 0 });
   const ptrs = useRef(new Map<number, { x: number; y: number }>());
   const pinch = useRef<{ d0: number; s0: number; cx: number; cy: number } | null>(null);
@@ -1577,6 +1595,14 @@ function Lightbox({ items, start, onClose }: {
     if (!el) return;
     el.style.transition = animate ? "transform .18s ease-out" : "none";
     el.style.transform = `translate(${t.current.x}px, ${t.current.y}px) scale(${t.current.s})`;
+    const m = marksRef.current;
+    if (m) {
+      // Same box, same origin, same transform: the markers move with the image.
+      m.style.left = el.offsetLeft + "px"; m.style.top = el.offsetTop + "px";
+      m.style.width = el.offsetWidth + "px"; m.style.height = el.offsetHeight + "px";
+      m.style.transition = el.style.transition;
+      m.style.transform = el.style.transform;
+    }
     setZoomed(t.current.s > 1.01);
   };
   const resetView = (animate = false) => { t.current = { s: 1, x: 0, y: 0 }; apply(animate); };
@@ -1672,18 +1698,58 @@ function Lightbox({ items, start, onClose }: {
   };
 
   const item = items[idx];
+
+  useEffect(() => {
+    setMarks(null);
+    if (!item.diagram) return;
+    let live = true;
+    api.listHotspots(item.path).then((d) => {
+      if (!live || d.hotspots.length === 0) return;
+      // Frame from the database if recorded, else from the image once loaded.
+      if (d.img_w && d.img_h) setMarks({ frame: { w: d.img_w, h: d.img_h }, hots: d.hotspots });
+      else {
+        const img = imgRef.current;
+        const set = () => { if (img && img.naturalWidth) setMarks({ frame: { w: img.naturalWidth, h: img.naturalHeight }, hots: d.hotspots }); };
+        if (img && img.complete && img.naturalWidth) set(); else img?.addEventListener("load", set, { once: true });
+      }
+    }).catch((e) => console.error("hotspots:", e));
+    return () => { live = false; };
+  }, [item.path, item.diagram]);
+
+  // Re-mirror the layer once it exists (apply() runs on load before setMarks lands).
+  useEffect(() => { if (marks) apply(); }, [marks]);
+
   return (
     <div className="mb-lb">
       <div className="mb-lb-head">
         <button className="mb-back" onClick={onClose}>✕</button>
         <span className="mb-lb-cap">{item.label}</span>
         {zoomed && <button className="mb-chip" onClick={() => resetView(true)}>Fit</button>}
+        {item.diagram && canEdit && onEditMarkers && (
+          <button className="mb-chip on" onClick={() => onEditMarkers(item.path, item.label)}>
+            {marks ? "Edit markers" : "Add markers"}
+          </button>
+        )}
       </div>
       <div ref={stageRef} className="mb-lb-stage"
         onPointerDown={onDown} onPointerMove={onMove}
         onPointerUp={onUp} onPointerCancel={onUp} onWheel={onWheel}>
         <img ref={imgRef} className="mb-lb-img" src={assetUrl(item.path)} alt={item.label}
           draggable={false} onLoad={() => resetView()} />
+        {marks && (
+          <div ref={marksRef} className="mb-lb-marks" aria-hidden={false}>
+            {marks.hots.map((h) => (
+              <button key={h.id} type="button"
+                className={"mb-hs-mk" + (h.part_id ? "" : " unl")}
+                style={{ left: (h.x / marks.frame.w) * 100 + "%", top: (h.y / marks.frame.h) * 100 + "%" }}
+                title={h.name ? `${h.item_no ? "#" + h.item_no + " · " : ""}${h.name}` : "no part linked"}
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={(e) => { e.stopPropagation(); if (h.part_id && onOpenPart) onOpenPart(h.part_id); }}>
+                {h.item_no ?? "•"}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
       {items.length > 1 && (
         <div className="mb-lb-dots">
@@ -1830,6 +1896,255 @@ function Counter({ d, onPost, onMove, onClose }: {
           </>
         )}
       </div>
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   HOTSPOT EDITOR — WEB
+   ═══════════════════════════════════════════════════════════════════════════
+
+   Why it exists here: the desktop editor's markers never leave the desktop,
+   because the desktop does not yet sync. Ian's markers belong in the cloud,
+   which is where this app reads and writes. So the editor lives here.
+
+   The coordinate convention is the desktop's, exactly. x and y are pixels in
+   the diagram's own frame; the frame is diagram.img_w/img_h if recorded, else
+   the image's natural size; a marker renders at left = x/frame_w * 100%.
+   DiagramsView.tsx computes the click the same way. There is one convention.
+
+   The frame IS recorded, the first time a staff member opens the editor on a
+   diagram whose img_w/img_h are NULL. That NULL is what made the desktop
+   editor fragile: its frame existed only while the image was on screen.
+
+   Deliberately simple: fit-to-width, tap to place, tap a marker to select it,
+   drag to move, pick the part by searching. No pinch-zoom in here — the
+   viewer has that, and a marker placed at fit-to-width on a 1600 px diagram
+   is accurate to a couple of pixels, which is finer than a fingertip. */
+
+type EditorHotspot = WebHotspot & { dirty?: boolean };
+
+function HotspotEditor({ path, label, canEdit, onClose, onOpenPart }: {
+  path: string; label: string; canEdit: boolean;
+  onClose: () => void; onOpenPart: (partId: number) => void;
+}) {
+  const [diagramId, setDiagramId] = useState<number | null>(null);
+  const [frame, setFrame] = useState<{ w: number; h: number } | null>(null);
+  const [frameFrom, setFrameFrom] = useState<"db" | "image" | null>(null);
+  const [hots, setHots] = useState<EditorHotspot[]>([]);
+  const [sel, setSel] = useState<number | null>(null);
+  const [placing, setPlacing] = useState<{ x: number; y: number } | null>(null);
+  const [term, setTerm] = useState("");
+  const [hits, setHits] = useState<Hit[]>([]);
+  const [itemNo, setItemNo] = useState("");
+  const [msg, setMsg] = useState("");
+  const [busy, setBusy] = useState(false);
+  const imgRef = useRef<HTMLImageElement>(null);
+  const dragging = useRef<{ id: number; moved: boolean } | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      const d = await api.listHotspots(path);
+      setDiagramId(d.diagram_id);
+      setHots(d.hotspots);
+      if (d.img_w && d.img_h) { setFrame({ w: d.img_w, h: d.img_h }); setFrameFrom("db"); }
+    } catch (e) { setMsg("✕ " + String(e)); }
+  }, [path]);
+  useEffect(() => { void load(); }, [load]);
+
+  /** The frame comes from the database if recorded, else from the image once
+   *  it loads — and in that second case it is written back so the next load
+   *  gets it from the database. */
+  const onImgLoad = async (e: React.SyntheticEvent<HTMLImageElement>) => {
+    const w = e.currentTarget.naturalWidth, h = e.currentTarget.naturalHeight;
+    if (frame) return;
+    setFrame({ w, h }); setFrameFrom("image");
+    if (canEdit && diagramId != null) {
+      try {
+        const r = await api.setDiagramDims(diagramId, w, h);
+        if (r) setFrameFrom("db");
+      } catch (err) { console.error("could not persist diagram frame:", err); }
+    }
+  };
+
+  /** Pointer position -> image-pixel coordinates in the diagram's frame. The
+   *  desktop's imgCoords(), verbatim. */
+  const toImage = (e: { clientX: number; clientY: number }) => {
+    const img = imgRef.current;
+    if (!img || !frame) return null;
+    const r = img.getBoundingClientRect();
+    return {
+      x: ((e.clientX - r.left) / r.width) * frame.w,
+      y: ((e.clientY - r.top) / r.height) * frame.h,
+    };
+  };
+
+  useEffect(() => {
+    if (term.trim().length < 2) { setHits([]); return; }
+    let live = true;
+    api.searchParts<Hit[]>(term).then((h) => { if (live) setHits(h.slice(0, 8)); }).catch(() => {});
+    return () => { live = false; };
+  }, [term]);
+
+  const onStageClick = (e: React.MouseEvent) => {
+    if (!canEdit) return;
+    if (dragging.current?.moved) { dragging.current = null; return; }
+    const p = toImage(e);
+    if (!p) return;
+    setSel(null); setPlacing(p); setTerm(""); setHits([]); setItemNo("");
+  };
+
+  const commitNew = async (part: Hit | null) => {
+    if (!placing || diagramId == null) return;
+    setBusy(true); setMsg("");
+    try {
+      const uuid = makeUuid();
+      const id = await api.saveHotspot({
+        clientUuid: uuid, diagramId, x: placing.x, y: placing.y,
+        partId: part?.id ?? null, itemNo: itemNo || null,
+      });
+      setHots((h) => [...h, {
+        id, part_id: part?.id ?? null, item_no: itemNo || null,
+        x: placing.x, y: placing.y, radius: 58, client_uuid: uuid,
+        sku: part?.sku ?? null, name: part?.name ?? null,
+      }]);
+      setPlacing(null);
+      setMsg(part ? `marker placed on ${part.sku}` : "marker placed, no part linked yet");
+    } catch (e) { setMsg("✕ " + String(e)); } finally { setBusy(false); }
+  };
+
+  const relink = async (h: EditorHotspot, part: Hit) => {
+    if (!h.client_uuid || diagramId == null) { setMsg("✕ this marker predates idempotency keys and must be re-placed to change it"); return; }
+    setBusy(true);
+    try {
+      await api.saveHotspot({ clientUuid: h.client_uuid, diagramId, x: h.x, y: h.y, partId: part.id, itemNo: h.item_no });
+      setHots((all) => all.map((x) => x.id === h.id ? { ...x, part_id: part.id, sku: part.sku, name: part.name } : x));
+      setMsg(`linked to ${part.sku}`); setTerm(""); setHits([]);
+    } catch (e) { setMsg("✕ " + String(e)); } finally { setBusy(false); }
+  };
+
+  const remove = async (h: EditorHotspot) => {
+    if (!window.confirm(`Remove this marker${h.sku ? ` (${h.sku})` : ""}?`)) return;
+    setBusy(true);
+    try {
+      await api.deleteHotspot(h.id);
+      setHots((all) => all.filter((x) => x.id !== h.id)); setSel(null);
+    } catch (e) { setMsg("✕ " + String(e)); } finally { setBusy(false); }
+  };
+
+  // ── drag to move: commit on release, through the same idempotent save ──
+  const startDrag = (h: EditorHotspot, e: React.PointerEvent) => {
+    if (!canEdit) return;
+    e.stopPropagation();
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    dragging.current = { id: h.id, moved: false };
+  };
+  const onDrag = (e: React.PointerEvent) => {
+    if (!dragging.current) return;
+    const p = toImage(e); if (!p) return;
+    dragging.current.moved = true;
+    setHots((all) => all.map((x) => x.id === dragging.current!.id ? { ...x, x: p.x, y: p.y, dirty: true } : x));
+  };
+  const endDrag = async () => {
+    const d = dragging.current;
+    if (!d) return;
+    if (!d.moved) { dragging.current = null; return; }
+    const h = hots.find((x) => x.id === d.id);
+    dragging.current = { ...d }; // keep `moved` so the stage click that follows is ignored
+    if (h && h.client_uuid && diagramId != null) {
+      try {
+        await api.saveHotspot({ clientUuid: h.client_uuid, diagramId, x: h.x, y: h.y, partId: h.part_id, itemNo: h.item_no });
+        setHots((all) => all.map((x) => x.id === h.id ? { ...x, dirty: false } : x));
+      } catch (e) { setMsg("✕ move not saved: " + String(e)); }
+    } else if (h && !h.client_uuid) {
+      setMsg("✕ this marker predates idempotency keys — remove and re-place it to move it");
+      void load();
+    }
+  };
+
+  const selected = hots.find((h) => h.id === sel) ?? null;
+
+  return (
+    <div className="mb-lb">
+      <div className="mb-lb-head">
+        <button className="mb-back" onClick={onClose}>✕</button>
+        <span className="mb-lb-cap">{label} · {canEdit ? "editing markers" : "markers"}</span>
+        <span className="mb-chip" style={{ fontSize: 10 }}>{hots.length}</span>
+      </div>
+
+      {canEdit && (
+        <div className="mb-note" style={{ margin: "0 12px 8px" }}>
+          Tap the diagram to place a marker. Tap a marker to pick it; drag to move it.
+          {frame && frameFrom === "image" && " · frame recorded from the image"}
+        </div>
+      )}
+
+      <div className="mb-hs-stage" onClick={onStageClick}
+        onPointerMove={onDrag} onPointerUp={endDrag} onPointerCancel={endDrag}>
+        <img ref={imgRef} className="mb-hs-img" src={assetUrl(path)} alt={label}
+          draggable={false} onLoad={onImgLoad} />
+        {frame && hots.map((h) => (
+          <button key={h.id} type="button"
+            className={"mb-hs-mk" + (h.part_id ? "" : " unl") + (h.id === sel ? " sel" : "") + (h.dirty ? " dirty" : "")}
+            style={{ left: (h.x / frame.w) * 100 + "%", top: (h.y / frame.h) * 100 + "%" }}
+            title={h.name ? `${h.item_no ? "#" + h.item_no + " · " : ""}${h.name}` : "no part linked"}
+            onPointerDown={(e) => startDrag(h, e)}
+            onClick={(e) => {
+              e.stopPropagation();
+              if (dragging.current?.moved) { dragging.current = null; return; }
+              if (canEdit) { setSel(h.id === sel ? null : h.id); setPlacing(null); setTerm(""); setHits([]); }
+              else if (h.part_id) onOpenPart(h.part_id);
+            }}>
+            {h.item_no ?? "•"}
+          </button>
+        ))}
+        {frame && placing && (
+          <span className="mb-hs-mk new"
+            style={{ left: (placing.x / frame.w) * 100 + "%", top: (placing.y / frame.h) * 100 + "%" }}>+</span>
+        )}
+      </div>
+
+      {/* ── the part picker: for a new marker, or to relink a selected one ── */}
+      {canEdit && (placing || selected) && (
+        <div className="mb-hs-panel">
+          {selected && (
+            <div className="mb-hs-row">
+              <b>{selected.sku ?? "no part linked"}</b>
+              <span className="mb-dim">{selected.name ?? ""}</span>
+              <span style={{ flex: 1 }} />
+              {selected.part_id && (
+                <button className="mb-chip" onClick={() => onOpenPart(selected.part_id!)}>Open part</button>
+              )}
+              <button className="mb-chip" onClick={() => remove(selected)} disabled={busy}>Remove</button>
+            </div>
+          )}
+          <div className="mb-hs-row">
+            <input className="mb-hs-in" placeholder={selected ? "search to link a different part…" : "which part is this? search…"}
+              value={term} onChange={(e) => setTerm(e.target.value)} autoFocus />
+            <input className="mb-hs-in" style={{ width: 70, flex: "0 0 auto" }} placeholder="item #"
+              value={selected ? (selected.item_no ?? "") : itemNo}
+              onChange={(e) => selected ? setHots((all) => all.map((x) => x.id === selected.id ? { ...x, item_no: e.target.value } : x)) : setItemNo(e.target.value)} />
+            {placing && (
+              <button className="mb-chip" onClick={() => commitNew(null)} disabled={busy} title="Place it now, link the part later">
+                Place unlinked
+              </button>
+            )}
+            <button className="mb-chip" onClick={() => { setPlacing(null); setSel(null); }}>Cancel</button>
+          </div>
+          {hits.length > 0 && (
+            <div className="mb-hs-hits">
+              {hits.map((p) => (
+                <button key={p.id} className="mb-hs-hit" disabled={busy}
+                  onClick={() => placing ? commitNew(p) : selected && relink(selected, p)}>
+                  <b>{p.sku}</b> <span className="mb-dim">{p.name}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {msg && <div className={"mb-note" + (msg.startsWith("✕") ? " err" : "")} style={{ margin: "6px 12px" }}>{msg}</div>}
     </div>
   );
 }
