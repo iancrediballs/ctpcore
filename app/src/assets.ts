@@ -42,3 +42,27 @@ export function assetUrl(path: string | null | undefined): string {
   const rel = path.replace(/^\/+/, "");
   return isTauri ? `/${rel}` : `${ASSET_BASE}/${rel}`;
 }
+
+/**
+ * The web-sized variant of a catalogue photo, or "" when there is none to try.
+ *
+ * Masters under assets/photos/ are full camera frames — 1600x1067 in which the
+ * part may be 60 px wide — and scaling a frame down to a thumbnail makes the
+ * part vanish. The web variants (server/upload_web_variants.py, 2026-09-14)
+ * are the same photographs cropped to their content: square, white, at most
+ * 1200 px, ~13 KB. They live at assets/photos/web/<master basename>.webp, so
+ * the key is derived from the master path the row already carries and no
+ * database column is involved. Callers try this first and fall back to
+ * assetUrl(path) on error — a master with no variant yet still renders.
+ *
+ * Diagrams, brand art and anything outside assets/photos/ have no variant.
+ * The desktop bundle has none either (public/ is masters only).
+ */
+export function photoWebUrl(path: string | null | undefined): string {
+  if (!path || isTauri) return "";
+  if (/^(https?:|data:|blob:)/i.test(path)) return "";
+  const rel = path.replace(/^\/+/, "");
+  if (!rel.startsWith("assets/photos/") || rel.startsWith("assets/photos/web/")) return "";
+  const base = rel.slice(rel.lastIndexOf("/") + 1).replace(/\.[^.]*$/, "");
+  return base ? `${ASSET_BASE}/assets/photos/web/${base}.webp` : "";
+}

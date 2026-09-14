@@ -16,7 +16,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useStatus } from "@powersync/react";
 import * as api from "../data/api";
-import { assetUrl } from "../assets";
+import { assetUrl, photoWebUrl } from "../assets";
 import { makeUuid } from "../data/uuid";
 import { buildDocHTML, openPrintWindow, type DocCompany, type DocOrder } from "../invoiceDoc";
 import type { WebHotspot } from "../data/api";
@@ -215,6 +215,26 @@ async function shrinkImage(file: File, maxSide = 1600): Promise<Blob> {
   } finally {
     URL.revokeObjectURL(url);
   }
+}
+
+// ─── a part photo: web variant first, master if that 404s ────────────────────
+//
+// Thumbs, the hero and the admin gallery all show the cropped web variant
+// (see photoWebUrl). The lightbox deliberately does NOT — it is the "see the
+// original" surface, and pinch-zoom on the master gives the same pixels the
+// crop would. The fallback is keyed on the path so a re-render with a new
+// photo starts again from the variant rather than inheriting a stale "failed".
+function PhotoImg({ path, alt, className, onClick }: {
+  path: string; alt: string; className?: string; onClick?: () => void;
+}) {
+  const web = photoWebUrl(path);
+  const [failed, setFailed] = useState<string | null>(null);
+  const useWeb = !!web && failed !== path;
+  return (
+    <img className={className} src={useWeb ? web : assetUrl(path)} alt={alt} loading="lazy"
+      onClick={onClick}
+      onError={useWeb ? () => setFailed(path) : undefined} />
+  );
 }
 
 // ─── icons (inline so the shell has zero icon deps) ──────────────────────────
@@ -858,7 +878,7 @@ const parseRand = (s: string): number => {
         {cards.map((p) => (
           <button key={p.id} className="mb-card" onClick={() => openPart(p.id)}>
             {p.image
-              ? <img className="mb-thumb" src={assetUrl(p.image)} alt="" loading="lazy" />
+              ? <PhotoImg className="mb-thumb" path={p.image} alt="" />
               : <span className="mb-thumb ph"><IcPin /></span>}
             <span className="mb-cbody">
               <span className="mb-cname">{p.name}</span>
@@ -1392,7 +1412,7 @@ const parseRand = (s: string): number => {
                   items: d.images.map((i, n) => ({ path: i.path, label: `${d.sku} · photo ${n + 1} of ${d.images.length}` })),
                   idx: Math.max(0, d.images.findIndex((i) => i.path === hero)),
                 })}>
-                <img src={assetUrl(hero)} alt={d.name} />
+                <PhotoImg path={hero} alt={d.name} />
                 <span className="mb-zoomtag">⤢</span>
               </div>
             )}
@@ -1465,7 +1485,7 @@ const parseRand = (s: string): number => {
                 <div className="mb-padmin">
                   {d.images.map((i, n) => (
                     <div className={"mb-pcell" + (i.is_primary ? " star" : "")} key={i.id}>
-                      <img src={assetUrl(i.path)} alt="" loading="lazy"
+                      <PhotoImg path={i.path} alt=""
                         onClick={() => setViewer({
                           items: d.images.map((im, m) => ({ path: im.path, label: `${d.sku} · photo ${m + 1} of ${d.images.length}` })),
                           idx: n,
