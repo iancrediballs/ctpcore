@@ -355,6 +355,7 @@ textarea.st-in{resize:vertical;line-height:1.45;font-size:15px}
 .mb-hs-mk.new{border-style:dashed;background:rgba(240,180,60,.35)}
 .mb-hs-stage{position:relative;flex:1;overflow:auto;-webkit-overflow-scrolling:touch;touch-action:pan-y;
   display:block;line-height:0}
+.mb-hs-canvas{position:relative;width:100%;line-height:0}
 .mb-hs-img{display:block;width:100%;height:auto;user-select:none;-webkit-user-drag:none}
 .mb-hs-stage .mb-hs-mk{line-height:1}
 .mb-hs-panel{flex:0 0 auto;padding:8px 12px calc(var(--safe-b, 0px) + 10px);border-top:1px solid var(--line);

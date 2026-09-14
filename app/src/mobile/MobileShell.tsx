@@ -2144,9 +2144,12 @@ function HotspotEditor({ path, label, canEdit, onClose, onOpenPart }: {
     const img = imgRef.current;
     if (!img || !frame) return null;
     const r = img.getBoundingClientRect();
+    // Clamped to the frame: a marker cannot be off the drawing, and a stored
+    // coordinate outside it is by definition a bug (see 14 Sep).
+    const cl = (v: number, max: number) => Math.min(max, Math.max(0, v));
     return {
-      x: ((e.clientX - r.left) / r.width) * frame.w,
-      y: ((e.clientY - r.top) / r.height) * frame.h,
+      x: cl(((e.clientX - r.left) / r.width) * frame.w, frame.w),
+      y: cl(((e.clientY - r.top) / r.height) * frame.h, frame.h),
     };
   };
 
@@ -2249,6 +2252,17 @@ function HotspotEditor({ path, label, canEdit, onClose, onOpenPart }: {
 
       <div className="mb-hs-stage" onClick={onStageClick}
         onPointerMove={onDrag} onPointerUp={endDrag} onPointerCancel={endDrag}>
+        {/* The markers' containing block is the IMAGE, not the scrolling stage.
+            They used to be children of the stage, so their percentages were
+            fractions of whatever height the stage happened to have: on a phone
+            that is the image, on a desktop window it is not, and it changes
+            the moment the picker panel opens. Symptoms Ian hit on 14 Sep: a
+            marker rendered off its part, every marker jumping when one was
+            selected, and a drag that moved faster than the pointer - and
+            the coordinates saved from that drag were wrong by the same ratio
+            (three markers landed below the frame). The canvas is exactly the
+            image's box, so a percentage of it is a percentage of the image. */}
+        <div className="mb-hs-canvas">
         <img ref={imgRef} className="mb-hs-img" src={assetUrl(path)} alt={label}
           draggable={false} onLoad={onImgLoad} />
         {frame && hots.map((h) => (
@@ -2270,6 +2284,7 @@ function HotspotEditor({ path, label, canEdit, onClose, onOpenPart }: {
           <span className="mb-hs-mk new"
             style={{ left: (placing.x / frame.w) * 100 + "%", top: (placing.y / frame.h) * 100 + "%" }}>+</span>
         )}
+        </div>
       </div>
 
       {/* ── the part picker: for a new marker, or to relink a selected one ── */}
