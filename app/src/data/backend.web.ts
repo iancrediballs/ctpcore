@@ -538,6 +538,22 @@ async function listLocations(): Promise<unknown[]> {
 }
 
 async function getCompany(): Promise<unknown> {
+  // The document prints from the OWNER'S settings - name, VAT and registration
+  // numbers, bank details, terms - which live on the company row in Postgres.
+  // The synced copy carries only seven of those columns, so read the live row
+  // first and fall back to the synced one when there is no line.
+  try {
+    const { data, error } = await supabase.from("company")
+      .select("name,address,phone,email,tax_id,reg_no,bank_details,terms,currency")
+      .eq("id", 1).maybeSingle();
+    if (!error && data) {
+      return {
+        name: str(data.name), address: nstr(data.address), phone: nstr(data.phone),
+        email: nstr(data.email), tax_id: nstr(data.tax_id), currency: str(data.currency),
+        terms: nstr(data.terms), reg_no: nstr(data.reg_no), bank_details: nstr(data.bank_details),
+      };
+    }
+  } catch { /* offline: the synced row below still has the letterhead basics */ }
   // Rust reads `WHERE id=1`; there is only ever one company row.
   const c =
     (await one(`SELECT name, address, phone, email, tax_id, currency, terms
@@ -733,7 +749,9 @@ async function staffOrders(): Promise<unknown[]> {
   const orders = await all(
     `SELECT so.id, so.number, so.status, so.currency, so.notes, so.created_at,
             so.fulfilled_at, so.tax_rate_bps, so.client_response, so.client_responded_at,
-            c.name AS customer_name, c.contact AS customer_contact
+            c.name AS customer_name, c.contact AS customer_contact,
+            c.phone AS customer_phone, c.email AS customer_email,
+            (SELECT l.code FROM location l WHERE l.id = so.location_id) AS location_code
        FROM sales_order so LEFT JOIN customer c ON c.id = so.customer_id
       WHERE so.deleted_at IS NULL
       ORDER BY so.created_at DESC, CAST(so.id AS INTEGER) DESC
@@ -766,6 +784,9 @@ async function staffOrders(): Promise<unknown[]> {
       status,
       customer_name: nstr(o["customer_name"]) ?? "—",
       customer_contact: nstr(o["customer_contact"]),
+      customer_phone: nstr(o["customer_phone"]),
+      customer_email: nstr(o["customer_email"]),
+      location_code: nstr(o["location_code"]),
       notes: nstr(o["notes"]),
       created_at: str(o["created_at"]),
       fulfilled_at: nstr(o["fulfilled_at"]),

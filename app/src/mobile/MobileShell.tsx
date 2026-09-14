@@ -18,6 +18,7 @@ import { useStatus } from "@powersync/react";
 import * as api from "../data/api";
 import { assetUrl } from "../assets";
 import { makeUuid } from "../data/uuid";
+import { buildDocHTML, openPrintWindow, type DocCompany, type DocOrder } from "../invoiceDoc";
 import type { WebHotspot } from "../data/api";
 import { useAuth, type Role } from "../auth/AuthProvider";
 import SettingsView from "../admin/SettingsView";
@@ -78,6 +79,7 @@ type StaffLine = {
 type StaffOrder = {
   id: number; number: string; status: string;
   customer_name: string; customer_contact: string | null;
+  customer_phone: string | null; customer_email: string | null; location_code: string | null;
   notes: string | null; created_at: string; fulfilled_at: string | null; tax_rate_bps: number;
   client_response: string | null; client_responded_at: string | null;
   unpriced: number; total_minor: number;
@@ -1001,6 +1003,33 @@ const parseRand = (s: string): number => {
   );
 
   // ─── staff: the order desk ─────────────────────────────────────────────────
+
+  /** The quote or invoice as a document, from the same builder the desktop
+   *  prints with. Title follows status (quote/confirmed → Quotation, else
+   *  Tax Invoice); the letterhead is the owner's Settings → Company row. The
+   *  arithmetic is the desktop's tax_of(): half-up in cents. */
+  const printOrder = async (o: StaffOrder) => {
+    try {
+      const company = await api.getCompany<DocCompany>();
+      const lines = o.lines.map((l) => ({
+        sku: l.catalogue_pn ?? l.sku, name: l.name, qty: l.qty,
+        unit_price_minor: l.unit_price_minor, line_total_minor: l.unit_price_minor * l.qty,
+      }));
+      const subtotal_minor = lines.reduce((t, l) => t + l.line_total_minor, 0);
+      const tax_minor = Math.floor((subtotal_minor * o.tax_rate_bps + 5000) / 10000);
+      const doc: DocOrder = {
+        number: o.number, status: o.status, created_at: o.created_at, fulfilled_at: o.fulfilled_at,
+        customer_name: o.customer_name, customer_contact: o.customer_contact,
+        customer_phone: o.customer_phone, customer_email: o.customer_email,
+        location_code: o.location_code ?? "",
+        lines, subtotal_minor, tax_rate_bps: o.tax_rate_bps, tax_minor, total_minor: subtotal_minor + tax_minor,
+      };
+      openPrintWindow(buildDocHTML(doc, company));
+    } catch (e) { setToast({ text: "Could not build the document: " + String(e), err: true }); }
+  };
+  const docLabel = (o: StaffOrder) =>
+    o.status === "quote" || o.status === "confirmed" ? "Print quote / PDF" : "Print invoice / PDF";
+
   const STAGES: { key: string; label: string; hint: string }[] = [
     { key: "to_price",      label: "Needs pricing",   hint: "came in from a customer" },
     { key: "with_customer", label: "With the customer", hint: "quoted, waiting on their answer" },
@@ -1100,6 +1129,13 @@ const parseRand = (s: string): number => {
                             <span className="mb-rv">sent {timeAgo(o.created_at)} · they see it on their phone</span>
                           </div>
                         )}
+                        {o.stage !== "to_price" && (
+                          <div className="mb-row">
+                            <button className="mb-btn s" style={{ height: 46 }} onClick={() => { void printOrder(o); }}>
+                              {docLabel(o)}
+                            </button>
+                          </div>
+                        )}
                         {o.stage === "to_pick" && (
                           <div className="mb-row">
                             <span className="mb-rk">Accepted</span>
@@ -1176,6 +1212,11 @@ const parseRand = (s: string): number => {
                         <div className="mb-row">
                           <span className="mb-rk" style={{ textTransform: "capitalize" }}>{o.status}</span>
                           <span className="mb-rv">{timeAgo(when)}</span>
+                        </div>
+                        <div className="mb-row">
+                          <button className="mb-btn s" style={{ height: 46 }} onClick={() => { void printOrder(o); }}>
+                            {docLabel(o)}
+                          </button>
                         </div>
                       </>
                     )}
