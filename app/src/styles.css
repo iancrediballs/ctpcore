@@ -633,3 +633,12 @@ tr:hover .rmbtn{opacity:1}
 .connbadge-sw{background:none;border:1px solid var(--line);border-radius:5px;
   color:#8b949e;font-size:10.5px;padding:2px 7px;cursor:pointer;transition:.12s}
 .connbadge-sw:hover{border-color:var(--accent2);color:var(--accent2)}
+
+/* ---- first-sync gate: same card as the login, one bar, real numbers ---- */
+.sync-gate { gap: 10px; }
+.sync-head { font-size: 15px; font-weight: 700; color: #e6edf3; }
+.sync-bar { height: 6px; border-radius: 3px; background: #16202c; overflow: hidden; }
+.sync-fill { height: 100%; background: #11a06a; border-radius: 3px; transition: width .25s ease-out; }
+.sync-fill.idle { width: 35%; animation: sync-idle 1.4s ease-in-out infinite; }
+@keyframes sync-idle { 0% { transform: translateX(-100%); } 100% { transform: translateX(300%); } }
+.sync-stall { color: #f0b43c; font-size: 12.5px; }

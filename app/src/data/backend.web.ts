@@ -161,13 +161,12 @@ const PART_DETAIL_SQL = `
 // Verified against Postgres on 2026-08-06: 161/161 live parts resolve to a SEC*
 // section view and 122 carry a diagram_ref, so the DATA gaps are closed. What
 // remains is not data.
+// Keep this list TRUE. An earlier version said images were broken on the web
+// after they had been fixed, and a later one described 3D models after they
+// had been retired from the app; each sent someone hunting a bug that did not
+// exist. Photos and diagrams resolve from the ctp-assets bucket via assetUrl().
 const GAPS = [
-  "3D models (.glb) are desktop-only — 37MB is not a thing to hand a phone. " +
-    "Photos and diagrams DO resolve on web: they come from the ctp-assets " +
-    "bucket via assetUrl(). (This line used to say images were broken on the " +
-    "web. They were, until M2; leaving that text in sent the next person " +
-    "hunting a bug that had already been fixed.)",
-  "jefrey_learn / jefrey_forget — part_alias syncs now, but these are WRITES " +
+  "jefrey_learn / jefrey_forget — part_alias syncs, but these are WRITES " +
     "and the PowerSync upload path is not ported yet (M0.3)",
 ];
 let gapsLogged = false;

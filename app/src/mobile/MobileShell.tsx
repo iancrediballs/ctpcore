@@ -732,6 +732,9 @@ const parseRand = (s: string): number => {
   }, [hits, parts, chip, tab]);
 
   const connected = status.connected;
+  // "synced" used to mean "the socket is up", which during a first sync is
+  // exactly when nothing has arrived yet. Say what is actually true.
+  const syncLabel = connected ? (status.hasSynced ? "synced" : "syncing") : "offline";
 
   // ─── views ─────────────────────────────────────────────────────────────────
 
@@ -751,7 +754,7 @@ const parseRand = (s: string): number => {
           <Brand />
           <span className="mb-vlabel">Catalogue</span>
           <span className={"mb-sync" + (connected ? "" : " off")}>
-            <span className="mb-dot" />{connected ? "synced" : "offline"}
+            <span className="mb-dot" />{syncLabel}
           </span>
         </div>
         <div className="mb-searchwrap">
@@ -801,7 +804,7 @@ const parseRand = (s: string): number => {
           <Brand />
           <span className="mb-vlabel">{tab === "shelf" ? "Shelf walk" : "Warehouse"}</span>
           <span className={"mb-sync" + (connected ? "" : " off")}>
-            <span className="mb-dot" />{connected ? "synced" : "offline"}
+            <span className="mb-dot" />{syncLabel}
           </span>
         </div>
         {tab === "find" && (
@@ -894,7 +897,7 @@ const parseRand = (s: string): number => {
           <Brand />
           <span className="mb-vlabel">This device</span>
           <span className={"mb-sync" + (connected ? "" : " off")}>
-            <span className="mb-dot" />{connected ? "synced" : "offline"}
+            <span className="mb-dot" />{syncLabel}
           </span>
         </div>
       </div>
@@ -1014,7 +1017,7 @@ const parseRand = (s: string): number => {
           <Brand />
           <span className="mb-vlabel">Orders</span>
           <span className={"mb-sync" + (connected ? "" : " off")}>
-            <span className="mb-dot" />{connected ? "synced" : "offline"}
+            <span className="mb-dot" />{syncLabel}
           </span>
         </div>
       </div>
