@@ -78,7 +78,7 @@ type StaffLine = {
 type StaffOrder = {
   id: number; number: string; status: string;
   customer_name: string; customer_contact: string | null;
-  notes: string | null; created_at: string;
+  notes: string | null; created_at: string; fulfilled_at: string | null; tax_rate_bps: number;
   client_response: string | null; client_responded_at: string | null;
   unpriced: number; total_minor: number;
   stage: "to_price" | "with_customer" | "to_pick" | string;
@@ -1116,6 +1116,75 @@ const parseRand = (s: string): number => {
             </div>
           );
         })}
+        {/* Everything the queue is finished with. staffOrders() always returned
+            these; the desk only ever drew its three lanes, so four invoiced
+            Hermans orders were on the phone and invisible. Same card as the
+            lanes, newest first (the query's order), no actions. */}
+        {orders && (() => {
+          const done = orders.filter((o) => !STAGES.some((s) => s.key === o.stage))
+            .sort((a, b) => (b.fulfilled_at ?? b.created_at).localeCompare(a.fulfilled_at ?? a.created_at));
+          if (done.length === 0) return null;
+          // The invoice total, the way the desktop prints it: tax_of() in
+          // main.rs rounds half-up in cents. The card must agree with the paper.
+          const grand = (o: StaffOrder) => o.total_minor + Math.floor((o.total_minor * o.tax_rate_bps + 5000) / 10000);
+          return (
+            <div>
+              <div className="mb-count">Completed · {done.length} — invoiced and closed</div>
+              {done.map((o) => {
+                const open = openOrder === o.id;
+                const when = o.fulfilled_at ?? o.created_at;
+                return (
+                  <div className="mb-rows" key={o.id} style={{ marginBottom: 12 }}>
+                    <button className="mb-row" style={{ width: "100%", background: "none", border: 0, textAlign: "left" }}
+                      onClick={() => { setOpenOrder(open ? null : o.id); setDraftPrices({}); }}>
+                      <span style={{ flex: 1, minWidth: 0 }}>
+                        <div className="mb-cname">{o.customer_name}</div>
+                        <div className="mb-csku mb-mono">
+                          {o.number} · {o.lines.length} line{o.lines.length === 1 ? "" : "s"} · {when.slice(0, 10)}
+                        </div>
+                      </span>
+                      <span className="mb-rv">
+                        <div>{fmtR(grand(o))}</div>
+                        <div className="mb-csku" style={{ textTransform: "capitalize" }}>
+                          {o.status}{o.tax_rate_bps > 0 ? " · incl. VAT" : ""}
+                        </div>
+                      </span>
+                    </button>
+                    {open && (
+                      <>
+                        {o.notes && (
+                          <div className="mb-row">
+                            <span className="mb-rk">Their note</span>
+                            <span className="mb-rv">{o.notes}</span>
+                          </div>
+                        )}
+                        {o.lines.map((l) => (
+                          <div className="mb-row" key={l.id}>
+                            <span style={{ flex: 1, minWidth: 0 }}>
+                              <div className="mb-cname">{l.qty} × {l.name}</div>
+                              <div className="mb-csku mb-mono">{l.catalogue_pn ?? l.sku}</div>
+                            </span>
+                            <span className="mb-rv">{fmtR(l.unit_price_minor * l.qty)}</span>
+                          </div>
+                        ))}
+                        {o.tax_rate_bps > 0 && (
+                          <div className="mb-row">
+                            <span className="mb-rk">VAT {(o.tax_rate_bps / 100).toFixed(0)}%</span>
+                            <span className="mb-rv">{fmtR(grand(o) - o.total_minor)}</span>
+                          </div>
+                        )}
+                        <div className="mb-row">
+                          <span className="mb-rk" style={{ textTransform: "capitalize" }}>{o.status}</span>
+                          <span className="mb-rv">{timeAgo(when)}</span>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })()}
         {orders && orders.length === 0 && (
           <div className="mb-empty">
             <h3>No orders yet</h3>

@@ -732,7 +732,7 @@ async function myRequests(): Promise<unknown[]> {
 async function staffOrders(): Promise<unknown[]> {
   const orders = await all(
     `SELECT so.id, so.number, so.status, so.currency, so.notes, so.created_at,
-            so.client_response, so.client_responded_at,
+            so.fulfilled_at, so.tax_rate_bps, so.client_response, so.client_responded_at,
             c.name AS customer_name, c.contact AS customer_contact
        FROM sales_order so LEFT JOIN customer c ON c.id = so.customer_id
       WHERE so.deleted_at IS NULL
@@ -768,6 +768,8 @@ async function staffOrders(): Promise<unknown[]> {
       customer_contact: nstr(o["customer_contact"]),
       notes: nstr(o["notes"]),
       created_at: str(o["created_at"]),
+      fulfilled_at: nstr(o["fulfilled_at"]),
+      tax_rate_bps: Number(o["tax_rate_bps"] ?? 0),
       client_response: nstr(o["client_response"]),
       client_responded_at: nstr(o["client_responded_at"]),
       unpriced,
