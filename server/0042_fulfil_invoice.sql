@@ -45,7 +45,12 @@
 --     * Midnight: a new day row starts at 01. The date leads, so numbers never
 --       go backwards.
 --     * The 100th invoice in a day becomes 260724100 — three digits rather
---       than a collision or a refusal. Unlikely; decided rather than left.
+--       than a collision or a refusal. DECIDED, not merely allowed: the count
+--       stays two digits because his issued invoices are two digits and the
+--       format must not change mid-year. The cost is that as TEXT '260724100'
+--       sorts before '26072499'. So nothing may order by the number string:
+--       the app and any export sort by invoiced_at, which is what the number
+--       is a label for. An index on invoiced_at is created below for that.
 --     * Uniqueness is enforced by the unique index on sales_order.invoice_no,
 --       not by trusting the counter; the counter never decrements.
 --   * VAT. request_parts (0020) inserted orders with the column default,
@@ -64,6 +69,9 @@ alter table public.sales_order add column if not exists invoice_no  text;
 alter table public.sales_order add column if not exists invoiced_at timestamptz;
 create unique index if not exists sales_order_invoice_no_uniq
   on public.sales_order (invoice_no) where invoice_no is not null;
+-- Ordering key for invoices. Never sort by invoice_no as text (see THE NUMBER).
+create index if not exists sales_order_invoiced_at_idx
+  on public.sales_order (invoiced_at) where invoiced_at is not null;
 
 comment on column public.sales_order.invoice_no is
   'Tax invoice number, minted by next_invoice_no() inside invoice_order() at '
@@ -85,6 +93,11 @@ returns text
 language plpgsql security definer set search_path = public, pg_temp
 as $$
 declare
+  -- The DAY is Johannesburg's, not the server's. Supabase runs on UTC; from
+  -- 22:00 to midnight local the server date is still yesterday, and an
+  -- invoice issued at 23:30 in Shakas Head would otherwise carry yesterday's
+  -- date and yesterday's count. (The night-surcharge bug of 2026-09-14 was
+  -- this exact substitution.) Do not "simplify" to current_date.
   v_day    date := (now() at time zone 'Africa/Johannesburg')::date;
   v_n      integer;
   v_prefix text;

@@ -1241,7 +1241,11 @@ const parseRand = (s: string): number => {
             lanes, newest first (the query's order), no actions. */}
         {orders && (() => {
           const done = orders.filter((o) => !STAGES.some((s) => s.key === o.stage))
-            .sort((a, b) => (b.fulfilled_at ?? b.created_at).localeCompare(a.fulfilled_at ?? a.created_at));
+            // Newest first by the time it was invoiced. Never by invoice_no:
+            // the count is two digits by design, so as text '260914100' would
+            // sort before '26091499' (0042).
+            .sort((a, b) => (b.invoiced_at ?? b.fulfilled_at ?? b.created_at)
+              .localeCompare(a.invoiced_at ?? a.fulfilled_at ?? a.created_at));
           if (done.length === 0) return null;
           // The invoice total, the way the desktop prints it: tax_of() in
           // main.rs rounds half-up in cents. The card must agree with the paper.
@@ -1251,7 +1255,7 @@ const parseRand = (s: string): number => {
               <div className="mb-count">Completed · {done.length} — invoiced and closed</div>
               {done.map((o) => {
                 const open = openOrder === o.id;
-                const when = o.fulfilled_at ?? o.created_at;
+                const when = o.invoiced_at ?? o.fulfilled_at ?? o.created_at;
                 return (
                   <div className="mb-rows" key={o.id} style={{ marginBottom: 12 }}>
                     <button className="mb-row" style={{ width: "100%", background: "none", border: 0, textAlign: "left" }}

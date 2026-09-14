@@ -25,9 +25,9 @@ const check = (name, ok, detail) => { results.push({ name, ok, detail }); consol
 
   // ── the repo's schema, in order ───────────────────────────────────────────
   const files = ["schema.postgres.sql", "rls.sql", "0014_powersync_b1_delta.sql", "0015_data_api_grants.sql", "0020_client_requests.sql",
-    "0021_client_quote_response.sql", "0022_staff_quoting.sql", "0028_settings_backbone.sql",
+    "0021_client_quote_response.sql", "0022_staff_quoting.sql", "0028_settings_backbone.sql", "0031_company_app_url.sql", "0033_company_profile_no_silent_blanking.sql",
     "0034_rev_triggers.sql", "0035_actor_identity_columns.sql", "0036_client_uuid_idempotency.sql",
-    "0037_actor_source_local_session.sql", "0042_fulfil_invoice.sql"];
+    "0037_actor_source_local_session.sql", "0042_fulfil_invoice.sql", "0043_prefix_settings.sql"];
   for (const f of files) {
     const sql = fs.readFileSync(path.join(SRV, f), "utf8");
     try { await exec(sql); console.log("loaded " + f); }
@@ -38,6 +38,7 @@ const check = (name, ok, detail) => { results.push({ name, ok, detail }); consol
   const STAFF = "11111111-1111-1111-1111-111111111111";
   const CUST = "22222222-2222-2222-2222-222222222222";
   const NOBODY = "33333333-3333-3333-3333-333333333333";
+  const ADMIN = "44444444-4444-4444-4444-444444444444";
   await exec(`
     insert into company (id, name, currency, invoice_prefix, quote_prefix, default_tax_bps) values (1, 'Test Co', 'ZAR', '', 'QT-', 1500)
       on conflict (id) do update set invoice_prefix = '', default_tax_bps = 1500;
@@ -46,7 +47,7 @@ const check = (name, ok, detail) => { results.push({ name, ok, detail }); consol
     insert into part (id, sku, name, category_id) values (1, 'T-A', 'Part A', 1), (2, 'T-B', 'Part B', 1);
     insert into stock_movement (part_id, location_id, delta, reason, client_uuid) values
       (1, 10, 5, 'receipt', 'seed-a'), (2, 10, 1, 'receipt', 'seed-b');
-    insert into app_user (id, role, display_name) values ('${STAFF}', 'warehouse', 'Staff'), ('${NOBODY}', 'customer', 'Nobody');
+    insert into app_user (id, role, display_name) values ('${STAFF}', 'warehouse', 'Staff'), ('${NOBODY}', 'customer', 'Nobody'), ('${ADMIN}', 'admin', 'Admin');
     insert into customer (id, code, name, auth_user_id) values (1, 'TESTC', 'Test Customer', '${CUST}');
     insert into app_user (id, role, display_name) values ('${CUST}', 'customer', 'Cust');
     -- orders in each state. O1: fulfil + invoice happy path. O2: short. O3/O4: mutual reservation. O5: quote. O6: empty.
@@ -160,6 +161,25 @@ const check = (name, ok, detail) => { results.push({ name, ok, detail }); consol
   err = await fails("select next_invoice_no()");
   check("authenticated cannot mint a number directly", /permission denied/i.test(err || ""), err);
   await exec("reset role");
+
+  // ── 9. 0043: the prefix settings can be set, cleared and left alone ──────
+  await asUser(ADMIN);
+  const setp = async (payload) => (await q("select invoice_prefix, quote_prefix from set_company_profile($1::jsonb)", [JSON.stringify(payload)]))[0];
+  let sp = await setp({ invoice_prefix: "INV-" });
+  check("invoice prefix can be set", sp.invoice_prefix === "INV-", JSON.stringify(sp));
+  sp = await setp({ invoice_prefix: "" });
+  check("invoice prefix can be CLEARED to '' (was impossible before 0043)", sp.invoice_prefix === "", JSON.stringify(sp));
+  sp = await setp({ name: "Test Co" });
+  check("a save that does not mention the prefix leaves it alone", sp.invoice_prefix === "" && sp.quote_prefix === "QT-", JSON.stringify(sp));
+  sp = await setp({ quote_prefix: "  " });
+  check("quote prefix cannot be blanked", sp.quote_prefix === "QT-", JSON.stringify(sp));
+  sp = await setp({ quote_prefix: "Q-" });
+  check("quote prefix can be changed", sp.quote_prefix === "Q-", JSON.stringify(sp));
+  n = (await q("select next_invoice_no() n"))[0].n;
+  check("minting after the round trip still yields a bare number", /^\d{8}$/.test(n), n);
+  await asUser(STAFF);
+  err = await fails("select set_company_profile('{}'::jsonb)");
+  check("warehouse staff cannot change company details", /manager or administrator/i.test(err || ""), err);
 
   const failed = results.filter((r) => !r.ok);
   console.log(`\n${results.length - failed.length}/${results.length} passed`);

@@ -172,10 +172,13 @@ function CompanyPanel({ flash, fail }: PanelProps) {
         onChange={(v) => { const b = bpsFromPct(v); if (!Number.isNaN(b)) set("default_tax_bps", b); }}
         suffix="%" hint="Applied to new orders. South African VAT is 15%." />
 
-      <div className="st-row2">
-        <Field label="Quote prefix" value={c.quote_prefix} onChange={(v) => set("quote_prefix", v)} />
-        <Field label="Invoice prefix" value={c.invoice_prefix} onChange={(v) => set("invoice_prefix", v)} />
-      </div>
+      {/* Each prefix says exactly what it drives. A setting that reads as if it
+          controls something it doesn't is worse than no setting: it gets
+          changed, nothing happens, and the whole screen stops being trusted. */}
+      <Field label="Tax invoice number prefix" value={c.invoice_prefix} onChange={(v) => set("invoice_prefix", v)}
+        hint={`Goes in front of every invoice number the app issues: prefix + date + count for the day, e.g. ${c.invoice_prefix}${todayYYMMDD()}01. Leave blank for the bare number your existing invoices use. Numbers already issued never change.`} />
+      <Field label="Quote number prefix" value={c.quote_prefix} onChange={(v) => set("quote_prefix", v)}
+        hint="Goes in front of quotes staff raise themselves — on the desktop now, and on the phone once walk-in quotes arrive. Requests that customers send from their phone are always numbered RQ-, because a request is not a quote until it has been priced." />
 
       <Field label="Banking details" value={c.bank_details ?? ""} onChange={(v) => set("bank_details", v)} multiline
         hint="Printed in the invoice footer so customers can pay without asking." />
@@ -524,6 +527,14 @@ function TiersPanel({ flash, fail }: PanelProps) {
 }
 
 /* ── small shared inputs ─────────────────────────────────────────────────── */
+
+/** Today in Johannesburg as YYMMDD — only for the example in the hint. The
+ *  real number is minted in the database (0042), never here. */
+function todayYYMMDD(): string {
+  const d = new Date(new Date().toLocaleString("en-US", { timeZone: "Africa/Johannesburg" }));
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${p(d.getFullYear() % 100)}${p(d.getMonth() + 1)}${p(d.getDate())}`;
+}
 
 function Field({ label, value, onChange, hint, multiline, suffix }: {
   label: string; value: string; onChange: (v: string) => void;
