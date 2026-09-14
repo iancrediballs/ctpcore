@@ -94,7 +94,11 @@
   font-size:22px;cursor:pointer;display:grid;place-items:center}
 .mb-shead-t{font-size:13px;font-weight:800;color:var(--dim);letter-spacing:1px;text-transform:uppercase}
 .mb-sbody{flex:1;overflow-y:auto;padding:0 16px calc(96px + var(--safe-b))}
-.mb-hero{background:#fff;border-radius:var(--r);height:210px;margin:16px 0 14px;display:grid;place-items:center;overflow:hidden}
+.mb-hero{background:#fff;border-radius:var(--r);height:210px;margin:16px 0 14px;display:flex;align-items:center;justify-content:center;overflow:hidden}
+/* flex, not grid: the img's height:100% must resolve against the 210px box.
+   In a grid the auto row track took the image's own height, so a square
+   web variant rendered 390px tall in a 210px box and only its blank top
+   showed (same trap the diagram stage had). */
 .mb-hero img{width:100%;height:100%;object-fit:contain;padding:10px}
 .mb-pname{font-size:25px;font-weight:850;line-height:1.15;letter-spacing:-.4px;margin:0 0 8px}
 .mb-psku{font-size:14px;font-weight:750;color:var(--amber);letter-spacing:.6px;margin-bottom:16px}
