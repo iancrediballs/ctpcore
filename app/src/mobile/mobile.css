@@ -172,7 +172,11 @@
 .mb-lb-head{display:flex;align-items:center;gap:12px;padding:calc(var(--safe-t) + 10px) 12px 10px;flex:0 0 auto}
 .mb-lb-cap{flex:1;font-size:13.5px;font-weight:800;color:var(--dim);letter-spacing:.5px;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.mb-lb-stage{flex:1;position:relative;overflow:hidden;touch-action:none;display:grid;place-items:center;
+/* A flex box, not a grid: the image's max-height:100% needs a definite height
+   to resolve against. As a grid with an auto row it never resolved, so on a
+   desktop window a 1600x1063 drawing rendered at its natural size - 79 px
+   clipped off the bottom at 1920x1080 and none of the spare width used. */
+.mb-lb-stage{flex:1;min-height:0;position:relative;overflow:hidden;touch-action:none;display:flex;align-items:center;justify-content:center;
   background:#fff;overscroll-behavior:contain}
 .mb-lb-img{max-width:100%;max-height:100%;will-change:transform;user-select:none;-webkit-user-drag:none;
   pointer-events:none}
