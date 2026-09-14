@@ -16,7 +16,6 @@ import { AuthProvider } from "./AuthProvider";
 import { AuthGate } from "./AuthGate";
 import { PowerSyncContext } from "@powersync/react";
 import { powerSync, connectPowerSync, disconnectPowerSync } from "../sync/system";
-import { SyncGate } from "../sync/SyncGate";
 
 const powerSyncAdapter = {
   connect: connectPowerSync,
@@ -28,9 +27,7 @@ export default function AuthedApp() {
     <PowerSyncContext.Provider value={powerSync}>
       <AuthProvider sync={powerSyncAdapter}>
         <AuthGate>
-          <SyncGate>
-            <MobileShell />
-          </SyncGate>
+          <MobileShell />
         </AuthGate>
       </AuthProvider>
     </PowerSyncContext.Provider>
