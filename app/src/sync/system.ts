@@ -67,8 +67,11 @@ export async function connectPowerSync() {
   setBoot({ phase: "starting", error: null, attempt: boot.attempt + 1 });
   try {
     await powerSync.init();
-    await powerSync.connect(new SupabaseConnector());
+    // The database is open: from here the SDK's own status tells the story
+    // (connecting, connected, progress), so hand over to it now rather than
+    // after connect() returns.
     setBoot({ phase: "started" });
+    await powerSync.connect(new SupabaseConnector());
   } catch (e) {
     setBoot({ phase: "failed", error: e instanceof Error ? e.message : String(e) });
     throw e;

@@ -734,7 +734,7 @@ const parseRand = (s: string): number => {
   const connected = status.connected;
   // "synced" used to mean "the socket is up", which during a first sync is
   // exactly when nothing has arrived yet. Say what is actually true.
-  const syncLabel = connected ? (status.hasSynced ? "synced" : "syncing") : "offline";
+  const syncLabel = connected ? (status.hasSynced ? "synced" : "syncing") : status.connecting ? "connecting" : "offline";
 
   // ─── views ─────────────────────────────────────────────────────────────────
 
