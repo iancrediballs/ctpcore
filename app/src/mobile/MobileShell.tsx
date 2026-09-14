@@ -81,9 +81,10 @@ type StaffOrder = {
   customer_name: string; customer_contact: string | null;
   customer_phone: string | null; customer_email: string | null; location_code: string | null;
   notes: string | null; created_at: string; fulfilled_at: string | null; tax_rate_bps: number;
+  invoice_no: string | null; invoiced_at: string | null;
   client_response: string | null; client_responded_at: string | null;
   unpriced: number; total_minor: number;
-  stage: "to_price" | "with_customer" | "to_pick" | string;
+  stage: "to_price" | "with_customer" | "to_pick" | "fulfilled" | string;
   lines: StaffLine[];
 };
 
@@ -297,6 +298,11 @@ export default function MobileShell() {
   // A blocked save is held here until the person chooses. Clearing it is the
   // only way past, so the choice cannot be missed by looking away.
   const [floorBlock, setFloorBlock] = useState<{ order: StaffOrder; message: string } | null>(null);
+  // Fulfil and invoice each ask once before they write. Neither can be undone
+  // from the phone: fulfilment appends to the ledger, invoicing spends a
+  // number. The strip names what is about to happen and the person taps the
+  // verb, not "OK".
+  const [pendingAct, setPendingAct] = useState<{ order: StaffOrder; kind: "fulfil" | "invoice" } | null>(null);
   const [draftPrices, setDraftPrices] = useState<Record<number, string>>({});
   const [savingOrder, setSavingOrder] = useState(false);
   const [photoBusy, setPhotoBusy] = useState(false);
@@ -665,6 +671,37 @@ const parseRand = (s: string): number => {
       setSavingOrder(false);
     }
   }, [draftPrices, showToast, loadOrders]);
+
+  /** Stock out. One server transaction (0042): refuses if any line is short,
+   *  names the shortfall, writes nothing in that case. Idempotent on retry. */
+  const fulfilOrder = useCallback(async (o: StaffOrder) => {
+    setSavingOrder(true);
+    try {
+      const r = await api.fulfilOrder<{ movements: number; already: boolean }>(o.id);
+      showToast({ text: r?.already
+        ? `${o.number} was already fulfilled — nothing changed.`
+        : `${o.number} fulfilled: ${r?.movements ?? 0} line${(r?.movements ?? 0) === 1 ? "" : "s"} taken out of stock.` });
+      loadOrders();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message.replace(/^\[CTP web\] could not fulfil: /, "") : "Could not fulfil.";
+      showToast({ text: msg, err: true });
+    } finally { setSavingOrder(false); }
+  }, [showToast, loadOrders]);
+
+  /** Issue the tax invoice: the database allocates the number now. */
+  const invoiceOrder = useCallback(async (o: StaffOrder) => {
+    setSavingOrder(true);
+    try {
+      const r = await api.invoiceOrder<{ invoice_no: string; already: boolean }>(o.id);
+      showToast({ text: r?.already
+        ? `${o.number} is already invoiced as ${r.invoice_no}.`
+        : `Invoice ${r?.invoice_no ?? ""} issued for ${o.number}.` });
+      loadOrders();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message.replace(/^\[CTP web\] could not issue the invoice: /, "") : "Could not issue the invoice.";
+      showToast({ text: msg, err: true });
+    } finally { setSavingOrder(false); }
+  }, [showToast, loadOrders]);
 
   const fillList = useCallback(async (o: StaffOrder) => {
     setSavingOrder(true);
@@ -1039,6 +1076,7 @@ const parseRand = (s: string): number => {
       const tax_minor = Math.floor((subtotal_minor * o.tax_rate_bps + 5000) / 10000);
       const doc: DocOrder = {
         number: o.number, status: o.status, created_at: o.created_at, fulfilled_at: o.fulfilled_at,
+        invoice_no: o.invoice_no, invoiced_at: o.invoiced_at,
         customer_name: o.customer_name, customer_contact: o.customer_contact,
         customer_phone: o.customer_phone, customer_email: o.customer_email,
         location_code: o.location_code ?? "",
@@ -1047,13 +1085,16 @@ const parseRand = (s: string): number => {
       openPrintWindow(buildDocHTML(doc, company));
     } catch (e) { setToast({ text: "Could not build the document: " + String(e), err: true }); }
   };
+  // A fulfilled order has no invoice yet: what prints is still the quotation
+  // (goods out, number not issued). Only 'invoiced' prints as an invoice.
   const docLabel = (o: StaffOrder) =>
-    o.status === "quote" || o.status === "confirmed" ? "Print quote / PDF" : "Print invoice / PDF";
+    o.status === "invoiced" ? "Print invoice / PDF" : "Print quote / PDF";
 
   const STAGES: { key: string; label: string; hint: string }[] = [
     { key: "to_price",      label: "Needs pricing",   hint: "came in from a customer" },
     { key: "with_customer", label: "With the customer", hint: "quoted, waiting on their answer" },
     { key: "to_pick",       label: "Ready to pick",   hint: "accepted — pull the stock" },
+    { key: "fulfilled",     label: "Goods out",       hint: "stock taken — invoice once paid" },
   ];
 
   const ordersView = (
@@ -1157,12 +1198,34 @@ const parseRand = (s: string): number => {
                           </div>
                         )}
                         {o.stage === "to_pick" && (
-                          <div className="mb-row">
-                            <span className="mb-rk">Accepted</span>
-                            <span className="mb-rv" style={{ color: "var(--green)" }}>
-                              {o.client_responded_at ? timeAgo(o.client_responded_at) : "by the customer"}
-                            </span>
-                          </div>
+                          <>
+                            <div className="mb-row">
+                              <span className="mb-rk">Accepted</span>
+                              <span className="mb-rv" style={{ color: "var(--green)" }}>
+                                {o.client_responded_at ? timeAgo(o.client_responded_at) : "by the customer"}
+                              </span>
+                            </div>
+                            <div className="mb-row">
+                              <button className="mb-btn p" style={{ height: 46 }} disabled={savingOrder}
+                                onClick={() => setPendingAct({ order: o, kind: "fulfil" })}>
+                                Fulfil — take stock out
+                              </button>
+                            </div>
+                          </>
+                        )}
+                        {o.stage === "fulfilled" && (
+                          <>
+                            <div className="mb-row">
+                              <span className="mb-rk">Goods out</span>
+                              <span className="mb-rv">{o.fulfilled_at ? timeAgo(o.fulfilled_at) : "—"}</span>
+                            </div>
+                            <div className="mb-row">
+                              <button className="mb-btn p" style={{ height: 46 }} disabled={savingOrder}
+                                onClick={() => setPendingAct({ order: o, kind: "invoice" })}>
+                                Issue tax invoice
+                              </button>
+                            </div>
+                          </>
                         )}
                       </>
                     )}
@@ -1196,7 +1259,7 @@ const parseRand = (s: string): number => {
                       <span style={{ flex: 1, minWidth: 0 }}>
                         <div className="mb-cname">{o.customer_name}</div>
                         <div className="mb-csku mb-mono">
-                          {o.number} · {o.lines.length} line{o.lines.length === 1 ? "" : "s"} · {when.slice(0, 10)}
+                          {o.invoice_no ? `${o.invoice_no} · ` : ""}{o.number} · {o.lines.length} line{o.lines.length === 1 ? "" : "s"} · {when.slice(0, 10)}
                         </div>
                       </span>
                       <span className="mb-rv">
@@ -1621,6 +1684,29 @@ const parseRand = (s: string): number => {
                 void savePrices(o, true);
               }}>
               Price it below the floor anyway
+            </button>
+          </div>
+        </div>
+      )}
+
+      {pendingAct && (
+        <div className="mb-toast"
+          style={{ display: "flex", flexDirection: "column", alignItems: "stretch", gap: 10 }}>
+          <span>
+            {pendingAct.kind === "fulfil"
+              ? `Take ${pendingAct.order.lines.reduce((t, l) => t + l.qty, 0)} item(s) out of stock for ${pendingAct.order.number}? This writes to the stock ledger and is not undone from here.`
+              : `Issue a tax invoice for ${pendingAct.order.number} (${fmtR(pendingAct.order.total_minor + Math.floor((pendingAct.order.total_minor * pendingAct.order.tax_rate_bps + 5000) / 10000))} incl. VAT)? The next invoice number is allocated now and cannot be reused.`}
+          </span>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button className="mb-chip" style={{ flex: 1 }} onClick={() => setPendingAct(null)}>
+              Not yet
+            </button>
+            <button className="mb-chip on" style={{ flex: 1 }} disabled={savingOrder}
+              onClick={() => {
+                const a = pendingAct; setPendingAct(null);
+                void (a.kind === "fulfil" ? fulfilOrder(a.order) : invoiceOrder(a.order));
+              }}>
+              {pendingAct.kind === "fulfil" ? "Fulfil" : "Issue invoice"}
             </button>
           </div>
         </div>

@@ -16,6 +16,9 @@ export type DocLine = {
 };
 export type DocOrder = {
   number: string; status: string; created_at: string; fulfilled_at: string | null;
+  // Allocated by the database when the invoice is issued (0042). When present
+  // it is THE document number and the order number becomes a reference line.
+  invoice_no?: string | null; invoiced_at?: string | null;
   customer_name: string; customer_contact: string | null;
   customer_phone: string | null; customer_email: string | null;
   location_code: string;
@@ -47,8 +50,12 @@ export function buildDocHTML(order: DocOrder, company: DocCompany): string {
   // Locale pinned rather than left to the machine: a printed tax invoice must
   // not change its number formatting depending on whose PC produced it.
   const m = (c: number) => sym + (c / 100).toLocaleString("en-ZA", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  const date = (order.fulfilled_at ?? order.created_at).slice(0, 10);
+  const invoiced = order.status === "invoiced" && !!order.invoice_no;
+  const date = (invoiced ? order.invoiced_at ?? order.fulfilled_at : order.fulfilled_at ?? order.created_at)
+    ?.slice(0, 10) ?? order.created_at.slice(0, 10);
   const title = docType(order.status, order.tax_rate_bps > 0);
+  const docNumber = invoiced ? order.invoice_no! : order.number;
+  const orderRef = invoiced ? `<br>Order: ${esc(order.number)}` : "";
 
   const rows = order.lines.map((l, i) => `
     <tr>
@@ -75,7 +82,7 @@ export function buildDocHTML(order: DocOrder, company: DocCompany): string {
     ? `<div class="terms"><div class="lbl">Payment details</div>${esc(company.bank_details.trim()).replace(/\r?\n/g, "<br>")}</div>`
     : "";
 
-  return `<!doctype html><html><head><meta charset="utf-8"><title>${esc(order.number)} — ${title}</title>
+  return `<!doctype html><html><head><meta charset="utf-8"><title>${esc(docNumber)} — ${title}</title>
 <style>
   @page { size: A4; margin: 16mm; }
   * { box-sizing: border-box; }
@@ -118,8 +125,8 @@ export function buildDocHTML(order: DocOrder, company: DocCompany): string {
     </div>
     <div class="doc">
       <div class="t">${title}</div>
-      <div class="num">${esc(order.number)}</div>
-      <div class="meta">Date: ${date}${fulfilledFrom}</div>
+      <div class="num">${esc(docNumber)}</div>
+      <div class="meta">Date: ${date}${orderRef}${fulfilledFrom}</div>
     </div>
   </div>
 

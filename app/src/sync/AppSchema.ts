@@ -78,6 +78,7 @@ const customer = new Table({
 const sales_order = new Table({
   number: column.text, customer_id: column.text, location_id: column.text, status: column.text,
   currency: column.text, notes: column.text, fulfilled_at: column.text, tax_rate_bps: column.integer,
+  invoice_no: column.text, invoiced_at: column.text,
   // what the CUSTOMER did, kept apart from `status`, which staff own (0021)
   client_response: column.text, client_responded_at: column.text,
   rev: column.integer, created_at: column.text, updated_at: column.text,

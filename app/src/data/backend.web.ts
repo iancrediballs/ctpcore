@@ -749,6 +749,7 @@ async function staffOrders(): Promise<unknown[]> {
   const orders = await all(
     `SELECT so.id, so.number, so.status, so.currency, so.notes, so.created_at,
             so.fulfilled_at, so.tax_rate_bps, so.client_response, so.client_responded_at,
+            so.invoice_no, so.invoiced_at,
             c.name AS customer_name, c.contact AS customer_contact,
             c.phone AS customer_phone, c.email AS customer_email,
             (SELECT l.code FROM location l WHERE l.id = so.location_id) AS location_code
@@ -790,6 +791,8 @@ async function staffOrders(): Promise<unknown[]> {
       notes: nstr(o["notes"]),
       created_at: str(o["created_at"]),
       fulfilled_at: nstr(o["fulfilled_at"]),
+      invoice_no: nstr(o["invoice_no"]),
+      invoiced_at: nstr(o["invoiced_at"]),
       tax_rate_bps: Number(o["tax_rate_bps"] ?? 0),
       client_response: nstr(o["client_response"]),
       client_responded_at: nstr(o["client_responded_at"]),
@@ -841,6 +844,23 @@ async function fillFromList(a: Record<string, unknown>): Promise<unknown> {
   const orderId = numId(a["orderId"], "orderId");
   const { data, error } = await supabase.rpc("fill_quote_from_list", { order_id: orderId });
   if (error) throw new Error(`[CTP web] could not fill prices: ${error.message}`);
+  return data;
+}
+
+/** Stock out + status → fulfilled, in one server transaction (0042). The
+ *  error text is the database's own sentence — it names the short lines. */
+async function fulfilOrder(a: Record<string, unknown>): Promise<unknown> {
+  const orderId = numId(a["orderId"], "orderId");
+  const { data, error } = await supabase.rpc("fulfil_order", { order_id: orderId });
+  if (error) throw new Error(`[CTP web] could not fulfil: ${error.message}`);
+  return data;
+}
+
+/** Allocate the invoice number and close the order (0042). */
+async function invoiceOrder(a: Record<string, unknown>): Promise<unknown> {
+  const orderId = numId(a["orderId"], "orderId");
+  const { data, error } = await supabase.rpc("invoice_order", { order_id: orderId });
+  if (error) throw new Error(`[CTP web] could not issue the invoice: ${error.message}`);
   return data;
 }
 
@@ -1122,6 +1142,8 @@ const PORTED: Record<string, Handler> = {
   request_parts: (a) => requestParts(a),
   my_requests: () => myRequests(),
   respond_to_quote: (a) => respondToQuote(a),
+  fulfil_order: (a) => fulfilOrder(a),
+  invoice_order: (a) => invoiceOrder(a),
   staff_orders: () => staffOrders(),
   price_quote: (a) => priceQuote(a),
   quote_price_check: (a) => quotePriceCheck(a),

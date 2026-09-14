@@ -125,6 +125,14 @@ export const quotePriceCheck = <T>(
 export const fillQuoteFromList = <T>(orderId: number) =>
   call<T>("fill_quote_from_list", { orderId });
 
+/** Take the stock out for an accepted order (writes 'sale' movements to the
+ *  ledger, idempotent on the line) and mark it fulfilled. Staff only; the
+ *  stock check and every other rule live in the database (0042). */
+export const fulfilOrder = <T>(orderId: number) => call<T>("fulfil_order", { orderId });
+/** Issue the tax invoice for a fulfilled order: allocates the next invoice
+ *  number at that moment and never again for this order (0042). */
+export const invoiceOrder = <T>(orderId: number) => call<T>("invoice_order", { orderId });
+
 /** Accept or decline one of your own quotes. */
 export const respondToQuote = <T>(orderId: number, accept: boolean) =>
   call<T>("respond_to_quote", { orderId, accept });
