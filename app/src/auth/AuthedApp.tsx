@@ -15,11 +15,12 @@ import MobileShell from "../mobile/MobileShell";
 import { AuthProvider } from "./AuthProvider";
 import { AuthGate } from "./AuthGate";
 import { PowerSyncContext } from "@powersync/react";
-import { powerSync, connectPowerSync, disconnectPowerSync } from "../sync/system";
+import { powerSync, connectPowerSync, disconnectPowerSync, clearPowerSync } from "../sync/system";
 
 const powerSyncAdapter = {
   connect: connectPowerSync,
   disconnect: disconnectPowerSync,
+  clear: clearPowerSync,
 };
 
 export default function AuthedApp() {

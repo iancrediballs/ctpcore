@@ -14,8 +14,13 @@ import { supabase } from "../sync/supabase";
  *  Injecting it means the web passes PowerSync and the desktop passes nothing,
  *  and neither surface can accidentally acquire the other's data layer. */
 export type SyncAdapter = {
-  connect: () => Promise<void>;
+  /** Start sync for this user. The id lets the surface notice a different
+   *  person signing in on a device that still holds someone else's data. */
+  connect: (userId: string) => Promise<void>;
   disconnect: () => Promise<void>;
+  /** Stop sync AND wipe the local database. Sign-out uses this: what synced
+   *  for one login must not be on the device for the next. */
+  clear: () => Promise<void>;
 };
 
 export type Role = "customer" | "sales" | "warehouse" | "manager" | "admin" | null;
@@ -64,11 +69,17 @@ export function AuthProvider(
     // start background sync, if this surface has one (non-fatal — reads still
     // work without it). The desktop passes no adapter: it syncs through its own
     // Rust client, not PowerSync.
-    sync?.connect().catch((e) => console.error("background sync connect failed:", e));
+    sync?.connect(session.user.id).catch((e) => console.error("background sync connect failed:", e));
   }, [session]);
 
+  // Sign-out wipes the device. Measured 14 Sep: after a staff sign-out the local
+  // database still held every price, cost, stock movement, customer and order,
+  // readable by whoever picked the phone up next - and a customer signing in
+  // on it saw that data until their own first sync replaced it. The cost of
+  // clearing is that the next sign-in on this device does a first sync again
+  // (a few seconds online); that is the right trade.
   const signOut = async () => {
-    await sync?.disconnect();
+    try { await sync?.clear(); } catch (e) { console.error("could not clear local data on sign-out:", e); }
     await supabase.auth.signOut();
   };
 
