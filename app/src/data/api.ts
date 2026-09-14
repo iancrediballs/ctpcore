@@ -253,8 +253,10 @@ export type DiagramHotspots = {
   img_w: number | null; img_h: number | null; hotspots: WebHotspot[];
 };
 export const listHotspots = (path: string) => call<DiagramHotspots>("list_hotspots", { path });
+/** Keyed on clientUuid when the marker has one; a marker that predates the
+ *  key (every one placed before 0036) is addressed by its id instead. */
 export const saveHotspot = (a: {
-  clientUuid: string; diagramId: number; x: number; y: number;
+  clientUuid: string | null; id?: number; diagramId: number; x: number; y: number;
   partId: number | null; itemNo?: string | null;
 }) => call<number>("save_hotspot", a as unknown as Record<string, unknown>);
 // deleteHotspot: the existing binding above serves both surfaces - the web

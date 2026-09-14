@@ -1039,8 +1039,22 @@ async function saveHotspot(a: Record<string, unknown>): Promise<unknown> {
     item_no: a["itemNo"] == null || a["itemNo"] === "" ? null : String(a["itemNo"]),
     origin: "mobile",
   };
-  if (!row.client_uuid) throw new Error("[CTP web] a hotspot needs a client_uuid.");
   if (!Number.isFinite(row.x) || !Number.isFinite(row.y)) throw new Error("[CTP web] hotspot x/y must be numbers.");
+  // Every marker Ian placed before 0036 has no client_uuid — all 22 on SEC101.
+  // Those are addressed by id: an UPDATE of the row that exists, which is just
+  // as idempotent as the upsert (the same values land however often it runs).
+  // Only a row with no key of either kind is refused.
+  const id = a["id"] == null ? null : numId(a["id"], "id");
+  if (!row.client_uuid && id != null) {
+    const { client_uuid: _u, origin: _o, ...patch } = row;
+    const { data, error } = await supabase
+      .from("hotspot").update(patch).eq("id", id).is("deleted_at", null)
+      .select("id").maybeSingle();
+    if (error) throw new Error(`[CTP web] could not save marker: ${error.message}`);
+    if (!data) throw new Error("[CTP web] that marker no longer exists.");
+    return data.id;
+  }
+  if (!row.client_uuid) throw new Error("[CTP web] a hotspot needs a client_uuid.");
   const { data, error } = await supabase
     .from("hotspot").upsert(row, { onConflict: "client_uuid" })
     .select("id").single();

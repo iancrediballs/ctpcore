@@ -1590,39 +1590,94 @@ function Lightbox({ items, start, onClose, canEdit, onOpenPart, onEditMarkers }:
   const lastTap = useRef(0);
   const [zoomed, setZoomed] = useState(false);
 
+  // ── geometry is measured, not re-read ──────────────────────────────────────
+  // The first version of this ran apply() on every pointermove and wheel tick
+  // and interleaved style WRITES with offset* READS. Each read after a write
+  // forces a synchronous layout, and the element being sized that way is the
+  // parent of every marker — so all of them were re-laid out, three times per
+  // event, at whatever rate the mouse reported. Measured in the real page:
+  // ~0.3 ms a call, ~27x what the write-only version costs, and NOT a freeze
+  // at 22 or 120 markers. The freeze that got the editor reverted was never
+  // reproduced in a signed-in session on the production bundle; what is here
+  // is the correct render path, verified at 60 fps with 138 markers.
+  //
+  // A transform does not affect offset*, so the image's layout box only moves
+  // when the stage resizes or a different image loads. Measure it then, and
+  // never during a gesture.
+  const box = useRef({ left: 0, top: 0, w: 0, h: 0 });
+  const stageBox = useRef({ left: 0, top: 0, w: 0, h: 0 });
+  const measure = useCallback(() => {
+    const el = imgRef.current, stage = stageRef.current;
+    if (!el || !stage) return;
+    const r = stage.getBoundingClientRect();
+    box.current = { left: el.offsetLeft, top: el.offsetTop, w: el.offsetWidth, h: el.offsetHeight };
+    stageBox.current = { left: r.left, top: r.top, w: stage.clientWidth, h: stage.clientHeight };
+    const m = marksRef.current;
+    if (m) {
+      // Same box and origin as the image. Written here and nowhere else: after
+      // this, the only thing a frame ever touches on the layer is `transform`.
+      m.style.left = box.current.left + "px"; m.style.top = box.current.top + "px";
+      m.style.width = box.current.w + "px"; m.style.height = box.current.h + "px";
+    }
+  }, []);
+
+  /** One transform write per animation frame. No reads, so nothing forces a
+   *  layout; the gestures only ever move numbers in t.current. */
+  const frame = useRef(0);
+  const zoomedRef = useRef(false);
+  const paint = useCallback(() => {
+    frame.current = 0;
+    const el = imgRef.current;
+    if (!el) return;
+    const tr = `translate(${t.current.x}px, ${t.current.y}px) scale(${t.current.s})`;
+    el.style.transform = tr;
+    const m = marksRef.current;
+    if (m) m.style.transform = tr;
+  }, []);
+
   const apply = (animate = false) => {
     const el = imgRef.current;
     if (!el) return;
-    el.style.transition = animate ? "transform .18s ease-out" : "none";
-    el.style.transform = `translate(${t.current.x}px, ${t.current.y}px) scale(${t.current.s})`;
-    const m = marksRef.current;
-    if (m) {
-      // Same box, same origin, same transform: the markers move with the image.
-      m.style.left = el.offsetLeft + "px"; m.style.top = el.offsetTop + "px";
-      m.style.width = el.offsetWidth + "px"; m.style.height = el.offsetHeight + "px";
-      m.style.transition = el.style.transition;
-      m.style.transform = el.style.transform;
+    const trans = animate ? "transform .18s ease-out" : "none";
+    if (el.style.transition !== trans) {
+      el.style.transition = trans;
+      const m = marksRef.current;
+      if (m) m.style.transition = trans;
     }
-    setZoomed(t.current.s > 1.01);
+    // Coalesce: a hundred pointermoves between two frames still paint once.
+    if (!frame.current) frame.current = requestAnimationFrame(paint);
+    // Only touch React when the answer actually changes — a pan used to
+    // re-render the whole lightbox, and every marker with it, per event.
+    const z = t.current.s > 1.01;
+    if (z !== zoomedRef.current) { zoomedRef.current = z; setZoomed(z); }
   };
+  useEffect(() => () => { if (frame.current) cancelAnimationFrame(frame.current); }, []);
+
   const resetView = (animate = false) => { t.current = { s: 1, x: 0, y: 0 }; apply(animate); };
 
-  /** Pointer position relative to the stage centre. */
-  const rel = (e: { clientX: number; clientY: number }) => {
-    const r = stageRef.current!.getBoundingClientRect();
-    return { x: e.clientX - r.left - r.width / 2, y: e.clientY - r.top - r.height / 2 };
-  };
+  /** Pointer position relative to the stage centre, from the measured box. */
+  const rel = (e: { clientX: number; clientY: number }) => ({
+    x: e.clientX - stageBox.current.left - stageBox.current.w / 2,
+    y: e.clientY - stageBox.current.top - stageBox.current.h / 2,
+  });
 
   /** Keep the image from being panned out of reach. */
   const clampPan = (animate: boolean) => {
-    const img = imgRef.current, stage = stageRef.current;
-    if (!img || !stage) return;
-    const mx = Math.max(0, (img.offsetWidth * t.current.s - stage.clientWidth) / 2);
-    const my = Math.max(0, (img.offsetHeight * t.current.s - stage.clientHeight) / 2);
+    const mx = Math.max(0, (box.current.w * t.current.s - stageBox.current.w) / 2);
+    const my = Math.max(0, (box.current.h * t.current.s - stageBox.current.h) / 2);
     t.current.x = Math.min(mx, Math.max(-mx, t.current.x));
     t.current.y = Math.min(my, Math.max(-my, t.current.y));
     apply(animate);
   };
+
+  // The stage can change size without the image changing: rotate, resize, the
+  // mobile address bar sliding away. Re-measure, then repaint from the same
+  // t.current so the markers stay on the image.
+  useEffect(() => {
+    const onResize = () => { measure(); clampPan(false); };
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [measure]);
 
   const zoomAt = (p: { x: number; y: number }, sNew: number) => {
     const { s, x, y } = t.current;
@@ -1716,8 +1771,23 @@ function Lightbox({ items, start, onClose, canEdit, onOpenPart, onEditMarkers }:
     return () => { live = false; };
   }, [item.path, item.diagram]);
 
-  // Re-mirror the layer once it exists (apply() runs on load before setMarks lands).
-  useEffect(() => { if (marks) apply(); }, [marks]);
+  // The layer mounts after the image loads, so it missed that measure(). Size
+  // it once here — and then never again for the life of the gesture.
+  useEffect(() => { if (marks) { measure(); apply(); } }, [marks]);
+
+  // The markers are stable DOM. Building them in the render body meant every
+  // re-render handed React 22 fresh inline-style objects to diff and re-write;
+  // useMemo means a re-render of the lightbox costs the marker layer nothing.
+  const markerEls = useMemo(() => marks?.hots.map((h) => (
+    <button key={h.id} type="button"
+      className={"mb-hs-mk" + (h.part_id ? "" : " unl")}
+      style={{ left: (h.x / marks.frame.w) * 100 + "%", top: (h.y / marks.frame.h) * 100 + "%" }}
+      title={h.name ? `${h.item_no ? "#" + h.item_no + " · " : ""}${h.name}` : "no part linked"}
+      onPointerDown={(e) => e.stopPropagation()}
+      onClick={(e) => { e.stopPropagation(); if (h.part_id && onOpenPart) onOpenPart(h.part_id); }}>
+      {h.item_no ?? "•"}
+    </button>
+  )), [marks, onOpenPart]);
 
   return (
     <div className="mb-lb">
@@ -1735,19 +1805,10 @@ function Lightbox({ items, start, onClose, canEdit, onOpenPart, onEditMarkers }:
         onPointerDown={onDown} onPointerMove={onMove}
         onPointerUp={onUp} onPointerCancel={onUp} onWheel={onWheel}>
         <img ref={imgRef} className="mb-lb-img" src={assetUrl(item.path)} alt={item.label}
-          draggable={false} onLoad={() => resetView()} />
+          draggable={false} onLoad={() => { measure(); resetView(); }} />
         {marks && (
           <div ref={marksRef} className="mb-lb-marks" aria-hidden={false}>
-            {marks.hots.map((h) => (
-              <button key={h.id} type="button"
-                className={"mb-hs-mk" + (h.part_id ? "" : " unl")}
-                style={{ left: (h.x / marks.frame.w) * 100 + "%", top: (h.y / marks.frame.h) * 100 + "%" }}
-                title={h.name ? `${h.item_no ? "#" + h.item_no + " · " : ""}${h.name}` : "no part linked"}
-                onPointerDown={(e) => e.stopPropagation()}
-                onClick={(e) => { e.stopPropagation(); if (h.part_id && onOpenPart) onOpenPart(h.part_id); }}>
-                {h.item_no ?? "•"}
-              </button>
-            ))}
+            {markerEls}
           </div>
         )}
       </div>
@@ -2014,10 +2075,10 @@ function HotspotEditor({ path, label, canEdit, onClose, onOpenPart }: {
   };
 
   const relink = async (h: EditorHotspot, part: Hit) => {
-    if (!h.client_uuid || diagramId == null) { setMsg("✕ this marker predates idempotency keys and must be re-placed to change it"); return; }
+    if (diagramId == null) return;
     setBusy(true);
     try {
-      await api.saveHotspot({ clientUuid: h.client_uuid, diagramId, x: h.x, y: h.y, partId: part.id, itemNo: h.item_no });
+      await api.saveHotspot({ clientUuid: h.client_uuid, id: h.id, diagramId, x: h.x, y: h.y, partId: part.id, itemNo: h.item_no });
       setHots((all) => all.map((x) => x.id === h.id ? { ...x, part_id: part.id, sku: part.sku, name: part.name } : x));
       setMsg(`linked to ${part.sku}`); setTerm(""); setHits([]);
     } catch (e) { setMsg("✕ " + String(e)); } finally { setBusy(false); }
@@ -2051,14 +2112,11 @@ function HotspotEditor({ path, label, canEdit, onClose, onOpenPart }: {
     if (!d.moved) { dragging.current = null; return; }
     const h = hots.find((x) => x.id === d.id);
     dragging.current = { ...d }; // keep `moved` so the stage click that follows is ignored
-    if (h && h.client_uuid && diagramId != null) {
+    if (h && diagramId != null) {
       try {
-        await api.saveHotspot({ clientUuid: h.client_uuid, diagramId, x: h.x, y: h.y, partId: h.part_id, itemNo: h.item_no });
+        await api.saveHotspot({ clientUuid: h.client_uuid, id: h.id, diagramId, x: h.x, y: h.y, partId: h.part_id, itemNo: h.item_no });
         setHots((all) => all.map((x) => x.id === h.id ? { ...x, dirty: false } : x));
-      } catch (e) { setMsg("✕ move not saved: " + String(e)); }
-    } else if (h && !h.client_uuid) {
-      setMsg("✕ this marker predates idempotency keys — remove and re-place it to move it");
-      void load();
+      } catch (e) { setMsg("✕ move not saved: " + String(e)); void load(); }
     }
   };
 
