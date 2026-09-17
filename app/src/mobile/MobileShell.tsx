@@ -17,6 +17,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useStatus } from "@powersync/react";
 import * as api from "../data/api";
 import { assetUrl, photoWebUrl } from "../assets";
+import { DiagramCanvas, Marker, type CanvasApi, type Frame, type Pt } from "./DiagramCanvas";
 import { makeUuid } from "../data/uuid";
 import { buildDocHTML, openPrintWindow, type DocCompany, type DocOrder } from "../invoiceDoc";
 import type { WebHotspot } from "../data/api";
@@ -1777,15 +1778,11 @@ const parseRand = (s: string): number => {
 }
 
 // ─── the lightbox ────────────────────────────────────────────────────────────
-// Fullscreen viewer for photos and diagrams. Hand-rolled gestures, no deps:
-//   pinch = zoom (1×–6×) · one finger = pan when zoomed, swipe to change photo
-//   at 1× · double-tap = zoom in on that spot / back out · mouse wheel on PC.
-//
-// The transform model: the image sits centred in the stage with
-// `translate(x,y) scale(s)` (origin centre), so a screen point q and an image
-// point c relate as q = c·s + T. Every gesture below is just solving that for
-// T while holding some c fixed — the point under your fingers stays under
-// your fingers.
+// Fullscreen viewer for photos and diagrams, on DiagramCanvas: one SVG whose
+// viewBox is the drawing's natural units, image and markers in one transformed
+// group. Pinch / wheel / double-tap / buttons zoom; one finger pans when
+// zoomed; a swipe at fit scale flips through photos. Marker positions are
+// never touched by zoom or resize — see DiagramCanvas.tsx for why.
 
 function Lightbox({ items, start, onClose, canEdit, onOpenPart, onEditMarkers }: {
   items: { path: string; label: string; diagram?: boolean }[];
@@ -1796,251 +1793,67 @@ function Lightbox({ items, start, onClose, canEdit, onOpenPart, onEditMarkers }:
   onEditMarkers?: (path: string, label: string) => void;
 }) {
   const [idx, setIdx] = useState(Math.min(Math.max(start, 0), items.length - 1));
-  const stageRef = useRef<HTMLDivElement>(null);
-  const imgRef = useRef<HTMLImageElement>(null);
-  // Markers live in a SIBLING layer that mirrors the image's box and transform,
-  // so the <img> itself — and everything about how photos and diagrams render
-  // today — is untouched. The layer exists only when a diagram has markers.
-  const marksRef = useRef<HTMLDivElement>(null);
-  const [marks, setMarks] = useState<{ frame: { w: number; h: number }; hots: WebHotspot[] } | null>(null);
-  const t = useRef({ s: 1, x: 0, y: 0 });
-  const ptrs = useRef(new Map<number, { x: number; y: number }>());
-  const pinch = useRef<{ d0: number; s0: number; cx: number; cy: number } | null>(null);
-  const drag = useRef<{ px: number; py: number; x0: number; y0: number; moved: boolean } | null>(null);
-  const lastTap = useRef(0);
   const [zoomed, setZoomed] = useState(false);
-
-  // ── geometry is measured, not re-read ──────────────────────────────────────
-  // The first version of this ran apply() on every pointermove and wheel tick
-  // and interleaved style WRITES with offset* READS. Each read after a write
-  // forces a synchronous layout, and the element being sized that way is the
-  // parent of every marker — so all of them were re-laid out, three times per
-  // event, at whatever rate the mouse reported. Measured in the real page:
-  // ~0.3 ms a call, ~27x what the write-only version costs, and NOT a freeze
-  // at 22 or 120 markers. The freeze that got the editor reverted was never
-  // reproduced in a signed-in session on the production bundle; what is here
-  // is the correct render path, verified at 60 fps with 138 markers.
-  //
-  // A transform does not affect offset*, so the image's layout box only moves
-  // when the stage resizes or a different image loads. Measure it then, and
-  // never during a gesture.
-  const box = useRef({ left: 0, top: 0, w: 0, h: 0 });
-  const stageBox = useRef({ left: 0, top: 0, w: 0, h: 0 });
-  const measure = useCallback(() => {
-    const el = imgRef.current, stage = stageRef.current;
-    if (!el || !stage) return;
-    const r = stage.getBoundingClientRect();
-    box.current = { left: el.offsetLeft, top: el.offsetTop, w: el.offsetWidth, h: el.offsetHeight };
-    stageBox.current = { left: r.left, top: r.top, w: stage.clientWidth, h: stage.clientHeight };
-    const m = marksRef.current;
-    if (m) {
-      // Same box and origin as the image. Written here and nowhere else: after
-      // this, the only thing a frame ever touches on the layer is `transform`.
-      m.style.left = box.current.left + "px"; m.style.top = box.current.top + "px";
-      m.style.width = box.current.w + "px"; m.style.height = box.current.h + "px";
-    }
-  }, []);
-
-  /** One transform write per animation frame. No reads, so nothing forces a
-   *  layout; the gestures only ever move numbers in t.current. */
-  const frame = useRef(0);
-  const zoomedRef = useRef(false);
-  const paint = useCallback(() => {
-    frame.current = 0;
-    const el = imgRef.current;
-    if (!el) return;
-    const tr = `translate(${t.current.x}px, ${t.current.y}px) scale(${t.current.s})`;
-    el.style.transform = tr;
-    const m = marksRef.current;
-    if (m) m.style.transform = tr;
-  }, []);
-
-  const apply = (animate = false) => {
-    const el = imgRef.current;
-    if (!el) return;
-    const trans = animate ? "transform .18s ease-out" : "none";
-    if (el.style.transition !== trans) {
-      el.style.transition = trans;
-      const m = marksRef.current;
-      if (m) m.style.transition = trans;
-    }
-    // Coalesce: a hundred pointermoves between two frames still paint once.
-    if (!frame.current) frame.current = requestAnimationFrame(paint);
-    // Only touch React when the answer actually changes — a pan used to
-    // re-render the whole lightbox, and every marker with it, per event.
-    const z = t.current.s > 1.01;
-    if (z !== zoomedRef.current) { zoomedRef.current = z; setZoomed(z); }
-  };
-  useEffect(() => () => { if (frame.current) cancelAnimationFrame(frame.current); }, []);
-
-  const resetView = (animate = false) => { t.current = { s: 1, x: 0, y: 0 }; apply(animate); };
-
-  /** Pointer position relative to the stage centre, from the measured box. */
-  const rel = (e: { clientX: number; clientY: number }) => ({
-    x: e.clientX - stageBox.current.left - stageBox.current.w / 2,
-    y: e.clientY - stageBox.current.top - stageBox.current.h / 2,
-  });
-
-  /** Keep the image from being panned out of reach. */
-  const clampPan = (animate: boolean) => {
-    const mx = Math.max(0, (box.current.w * t.current.s - stageBox.current.w) / 2);
-    const my = Math.max(0, (box.current.h * t.current.s - stageBox.current.h) / 2);
-    t.current.x = Math.min(mx, Math.max(-mx, t.current.x));
-    t.current.y = Math.min(my, Math.max(-my, t.current.y));
-    apply(animate);
-  };
-
-  // The stage can change size without the image changing: rotate, resize, the
-  // mobile address bar sliding away. Re-measure, then repaint from the same
-  // t.current so the markers stay on the image.
-  useEffect(() => {
-    const onResize = () => { measure(); clampPan(false); };
-    window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
-  }, [measure]);
-
-  const zoomAt = (p: { x: number; y: number }, sNew: number) => {
-    const { s, x, y } = t.current;
-    const c = { x: (p.x - x) / s, y: (p.y - y) / s };
-    t.current = { s: sNew, x: p.x - c.x * sNew, y: p.y - c.y * sNew };
-    if (sNew <= 1.01) t.current = { s: 1, x: 0, y: 0 };
-    clampPan(true);
-  };
-
-  const onDown = (e: React.PointerEvent) => {
-    stageRef.current?.setPointerCapture(e.pointerId);
-    ptrs.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
-    if (ptrs.current.size === 2) {
-      const [a, b] = [...ptrs.current.values()];
-      const d0 = Math.hypot(a.x - b.x, a.y - b.y);
-      const m = rel({ clientX: (a.x + b.x) / 2, clientY: (a.y + b.y) / 2 });
-      const { s, x, y } = t.current;
-      pinch.current = { d0: Math.max(d0, 1), s0: s, cx: (m.x - x) / s, cy: (m.y - y) / s };
-      drag.current = null;
-    } else if (ptrs.current.size === 1) {
-      const now = Date.now();
-      if (now - lastTap.current < 300) {
-        // double-tap: zoom into that spot, or all the way back out
-        zoomAt(rel(e), t.current.s > 1.01 ? 1 : 2.6);
-        lastTap.current = 0;
-        return;
-      }
-      lastTap.current = now;
-      drag.current = { px: e.clientX, py: e.clientY, x0: t.current.x, y0: t.current.y, moved: false };
-    }
-  };
-
-  const onMove = (e: React.PointerEvent) => {
-    if (!ptrs.current.has(e.pointerId)) return;
-    ptrs.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
-    if (pinch.current && ptrs.current.size >= 2) {
-      const [a, b] = [...ptrs.current.values()];
-      const d = Math.max(Math.hypot(a.x - b.x, a.y - b.y), 1);
-      const m = rel({ clientX: (a.x + b.x) / 2, clientY: (a.y + b.y) / 2 });
-      const s = Math.min(6, Math.max(1, pinch.current.s0 * (d / pinch.current.d0)));
-      t.current = { s, x: m.x - pinch.current.cx * s, y: m.y - pinch.current.cy * s };
-      apply();
-    } else if (drag.current) {
-      const dx = e.clientX - drag.current.px, dy = e.clientY - drag.current.py;
-      if (Math.abs(dx) + Math.abs(dy) > 6) drag.current.moved = true;
-      if (t.current.s > 1.01) {
-        t.current.x = drag.current.x0 + dx;
-        t.current.y = drag.current.y0 + dy;
-        apply();
-      }
-    }
-  };
-
-  const onUp = (e: React.PointerEvent) => {
-    const wasDrag = drag.current;
-    ptrs.current.delete(e.pointerId);
-    if (ptrs.current.size < 2) pinch.current = null;
-    if (ptrs.current.size === 0) {
-      if (t.current.s > 1.01) {
-        clampPan(true);
-      } else if (wasDrag && wasDrag.moved && items.length > 1) {
-        // swipe left/right at 1× flips through the photos
-        const dx = e.clientX - wasDrag.px;
-        if (dx < -60 && idx < items.length - 1) { setIdx(idx + 1); resetView(); }
-        else if (dx > 60 && idx > 0) { setIdx(idx - 1); resetView(); }
-      }
-      drag.current = null;
-    }
-  };
-
-  const onWheel = (e: React.WheelEvent) => {
-    zoomAt(rel(e), Math.min(6, Math.max(1, t.current.s * (e.deltaY < 0 ? 1.18 : 0.85))));
-  };
-
+  const [marks, setMarks] = useState<{ frame: Frame; hots: WebHotspot[] } | null>(null);
+  const [frame, setFrame] = useState<Frame | null>(null);
   const item = items[idx];
 
   useEffect(() => {
-    setMarks(null);
+    setMarks(null); setFrame(null); setZoomed(false);
     if (!item.diagram) return;
     let live = true;
     api.listHotspots(item.path).then((d) => {
-      if (!live || d.hotspots.length === 0) return;
-      // Frame from the database if recorded, else from the image once loaded.
-      if (d.img_w && d.img_h) setMarks({ frame: { w: d.img_w, h: d.img_h }, hots: d.hotspots });
-      else {
-        const img = imgRef.current;
-        const set = () => { if (img && img.naturalWidth) setMarks({ frame: { w: img.naturalWidth, h: img.naturalHeight }, hots: d.hotspots }); };
-        if (img && img.complete && img.naturalWidth) set(); else img?.addEventListener("load", set, { once: true });
+      if (!live) return;
+      // The frame is the drawing's recorded natural size — the space every
+      // hotspot is stored in. If it was never recorded, DiagramCanvas
+      // measures the file and reports back (onFrame below).
+      if (d.img_w && d.img_h) {
+        const f = { w: d.img_w, h: d.img_h };
+        setFrame(f);
+        if (d.hotspots.length) setMarks({ frame: f, hots: d.hotspots });
+      } else if (d.hotspots.length) {
+        setMarks({ frame: { w: 0, h: 0 }, hots: d.hotspots });
       }
     }).catch((e) => console.error("hotspots:", e));
     return () => { live = false; };
   }, [item.path, item.diagram]);
 
-  // The layer mounts after the image loads, so it missed that measure(). Size
-  // it once here — and then never again for the life of the gesture.
-  useEffect(() => { if (marks) { measure(); apply(); } }, [marks]);
-
-  // The markers are stable DOM. Building them in the render body meant every
-  // re-render handed React 22 fresh inline-style objects to diff and re-write;
-  // useMemo means a re-render of the lightbox costs the marker layer nothing.
   const markerEls = useMemo(() => marks?.hots.map((h) => (
-    <button key={h.id} type="button"
-      className={"mb-hs-mk" + (h.part_id ? "" : " unl")}
-      style={{ left: (h.x / marks.frame.w) * 100 + "%", top: (h.y / marks.frame.h) * 100 + "%" }}
+    <Marker key={h.id} x={h.x} y={h.y} r={Math.max(h.radius, (frame?.w ?? 0) * 0.022)}
+      label={h.item_no ?? "•"} state={h.part_id ? "" : "unl"}
       title={h.name ? `${h.item_no ? "#" + h.item_no + " · " : ""}${h.name}` : "no part linked"}
-      onPointerDown={(e) => e.stopPropagation()}
-      onClick={(e) => { e.stopPropagation(); if (h.part_id && onOpenPart) onOpenPart(h.part_id); }}>
-      {h.item_no ?? "•"}
-    </button>
-  )), [marks, onOpenPart]);
+      onClick={(e) => { e.stopPropagation(); if (h.part_id && onOpenPart) onOpenPart(h.part_id); }} />
+  )), [marks, frame, onOpenPart]);
 
   return (
     <div className="mb-lb">
       <div className="mb-lb-head">
         <button className="mb-back" onClick={onClose}>✕</button>
         <span className="mb-lb-cap">{item.label}</span>
-        {zoomed && <button className="mb-chip" onClick={() => resetView(true)}>Fit</button>}
         {item.diagram && canEdit && onEditMarkers && (
           <button className="mb-chip on" onClick={() => onEditMarkers(item.path, item.label)}>
             {marks ? "Edit markers" : "Add markers"}
           </button>
         )}
       </div>
-      <div ref={stageRef} className="mb-lb-stage"
-        onPointerDown={onDown} onPointerMove={onMove}
-        onPointerUp={onUp} onPointerCancel={onUp} onWheel={onWheel}>
-        <img ref={imgRef} className="mb-lb-img" src={assetUrl(item.path)} alt={item.label}
-          draggable={false} onLoad={() => { measure(); resetView(); }} />
-        {marks && (
-          <div ref={marksRef} className="mb-lb-marks" aria-hidden={false}>
-            {markerEls}
-          </div>
-        )}
+      <div className="mb-lb-stage">
+        <DiagramCanvas key={item.path} href={assetUrl(item.path)} frame={frame}
+          onFrame={(f) => setFrame(f)} onZoomed={setZoomed}
+          onSwipe={items.length > 1 ? (dir) => {
+            const n = idx + dir;
+            if (n >= 0 && n < items.length) setIdx(n);
+          } : undefined}>
+          {markerEls}
+        </DiagramCanvas>
       </div>
       {items.length > 1 && (
         <div className="mb-lb-dots">
           {items.map((_, n) => (
-            <span key={n} className={"mb-lb-dot" + (n === idx ? " on" : "")}
-              onClick={() => { setIdx(n); resetView(); }} />
+            <span key={n} className={"mb-lb-dot" + (n === idx ? " on" : "")} onClick={() => setIdx(n)} />
           ))}
         </div>
       )}
-      {!zoomed && <div className="mb-lb-hint">pinch or double-tap to zoom{items.length > 1 ? " · swipe for more" : ""}</div>}
+      {!zoomed && <div className="mb-lb-hint">pinch, wheel or double-tap to zoom · + − ⟲ buttons{items.length > 1 ? " · swipe for more" : ""}</div>}
     </div>
   );
 }
@@ -2205,23 +2018,28 @@ function Counter({ d, onPost, onMove, onClose }: {
 
 type EditorHotspot = WebHotspot & { dirty?: boolean };
 
+// The editor sits on the same canvas as the viewer, so what Ian places is what
+// a customer sees: same viewBox, same units, same transform. A drag converts
+// the pointer through the SVG's own matrix (CanvasApi.toDrawing) — never
+// through a rendered width — and commits on release via the idempotent save.
 function HotspotEditor({ path, label, canEdit, onClose, onOpenPart }: {
   path: string; label: string; canEdit: boolean;
   onClose: () => void; onOpenPart: (partId: number) => void;
 }) {
   const [diagramId, setDiagramId] = useState<number | null>(null);
-  const [frame, setFrame] = useState<{ w: number; h: number } | null>(null);
+  const [frame, setFrame] = useState<Frame | null>(null);
   const [frameFrom, setFrameFrom] = useState<"db" | "image" | null>(null);
   const [hots, setHots] = useState<EditorHotspot[]>([]);
   const [sel, setSel] = useState<number | null>(null);
-  const [placing, setPlacing] = useState<{ x: number; y: number } | null>(null);
+  const [placing, setPlacing] = useState<Pt | null>(null);
   const [term, setTerm] = useState("");
   const [hits, setHits] = useState<Hit[]>([]);
   const [itemNo, setItemNo] = useState("");
   const [msg, setMsg] = useState("");
   const [busy, setBusy] = useState(false);
-  const imgRef = useRef<HTMLImageElement>(null);
-  const dragging = useRef<{ id: number; moved: boolean } | null>(null);
+  const canvas = useRef<CanvasApi | null>(null);
+  const bind = useCallback((a: CanvasApi) => { canvas.current = a; }, []);
+  const dragging = useRef<{ id: number; moved: boolean; pointerId: number } | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -2233,34 +2051,15 @@ function HotspotEditor({ path, label, canEdit, onClose, onOpenPart }: {
   }, [path]);
   useEffect(() => { void load(); }, [load]);
 
-  /** The frame comes from the database if recorded, else from the image once
-   *  it loads — and in that second case it is written back so the next load
-   *  gets it from the database. */
-  const onImgLoad = async (e: React.SyntheticEvent<HTMLImageElement>) => {
-    const w = e.currentTarget.naturalWidth, h = e.currentTarget.naturalHeight;
+  /** No recorded frame: the canvas measured the file. Record it so every
+   *  device uses the same units from now on. */
+  const onFrame = async (f: Frame) => {
     if (frame) return;
-    setFrame({ w, h }); setFrameFrom("image");
+    setFrame(f); setFrameFrom("image");
     if (canEdit && diagramId != null) {
-      try {
-        const r = await api.setDiagramDims(diagramId, w, h);
-        if (r) setFrameFrom("db");
-      } catch (err) { console.error("could not persist diagram frame:", err); }
+      try { if (await api.setDiagramDims(diagramId, f.w, f.h)) setFrameFrom("db"); }
+      catch (err) { console.error("could not persist diagram frame:", err); }
     }
-  };
-
-  /** Pointer position -> image-pixel coordinates in the diagram's frame. The
-   *  desktop's imgCoords(), verbatim. */
-  const toImage = (e: { clientX: number; clientY: number }) => {
-    const img = imgRef.current;
-    if (!img || !frame) return null;
-    const r = img.getBoundingClientRect();
-    // Clamped to the frame: a marker cannot be off the drawing, and a stored
-    // coordinate outside it is by definition a bug (see 14 Sep).
-    const cl = (v: number, max: number) => Math.min(max, Math.max(0, v));
-    return {
-      x: cl(((e.clientX - r.left) / r.width) * frame.w, frame.w),
-      y: cl(((e.clientY - r.top) / r.height) * frame.h, frame.h),
-    };
   };
 
   useEffect(() => {
@@ -2270,11 +2069,8 @@ function HotspotEditor({ path, label, canEdit, onClose, onOpenPart }: {
     return () => { live = false; };
   }, [term]);
 
-  const onStageClick = (e: React.MouseEvent) => {
+  const onTap = (p: Pt) => {
     if (!canEdit) return;
-    if (dragging.current?.moved) { dragging.current = null; return; }
-    const p = toImage(e);
-    if (!p) return;
     setSel(null); setPlacing(p); setTerm(""); setHits([]); setItemNo("");
   };
 
@@ -2316,25 +2112,27 @@ function HotspotEditor({ path, label, canEdit, onClose, onOpenPart }: {
     } catch (e) { setMsg("✕ " + String(e)); } finally { setBusy(false); }
   };
 
-  // ── drag to move: commit on release, through the same idempotent save ──
-  const startDrag = (h: EditorHotspot, e: React.PointerEvent) => {
+  // ── drag to move: pointer → drawing units through the SVG matrix ────────
+  const startDrag = (h: EditorHotspot, e: React.PointerEvent<SVGGElement>) => {
     if (!canEdit) return;
     e.stopPropagation();
-    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-    dragging.current = { id: h.id, moved: false };
+    canvas.current?.capture(e.pointerId);
+    dragging.current = { id: h.id, moved: false, pointerId: e.pointerId };
   };
-  const onDrag = (e: React.PointerEvent) => {
-    if (!dragging.current) return;
-    const p = toImage(e); if (!p) return;
-    dragging.current.moved = true;
-    setHots((all) => all.map((x) => x.id === dragging.current!.id ? { ...x, x: p.x, y: p.y, dirty: true } : x));
+  const onDragMove = (e: React.PointerEvent) => {
+    const d = dragging.current;
+    if (!d || e.pointerId !== d.pointerId) return;
+    const p = canvas.current?.toDrawing(e.clientX, e.clientY);
+    if (!p) return;
+    d.moved = true;
+    setHots((all) => all.map((x) => x.id === d.id ? { ...x, x: p.x, y: p.y, dirty: true } : x));
   };
   const endDrag = async () => {
     const d = dragging.current;
     if (!d) return;
-    if (!d.moved) { dragging.current = null; return; }
+    dragging.current = null;
+    if (!d.moved) return;
     const h = hots.find((x) => x.id === d.id);
-    dragging.current = { ...d }; // keep `moved` so the stage click that follows is ignored
     if (h && diagramId != null) {
       try {
         await api.saveHotspot({ clientUuid: h.client_uuid, id: h.id, diagramId, x: h.x, y: h.y, partId: h.part_id, itemNo: h.item_no });
@@ -2344,6 +2142,7 @@ function HotspotEditor({ path, label, canEdit, onClose, onOpenPart }: {
   };
 
   const selected = hots.find((h) => h.id === sel) ?? null;
+  const r = Math.max(58, (frame?.w ?? 0) * 0.022);
 
   return (
     <div className="mb-lb">
@@ -2355,46 +2154,28 @@ function HotspotEditor({ path, label, canEdit, onClose, onOpenPart }: {
 
       {canEdit && (
         <div className="mb-note" style={{ margin: "0 12px 8px" }}>
-          Tap the diagram to place a marker. Tap a marker to pick it; drag to move it.
+          Tap the diagram to place a marker. Tap a marker to pick it; drag to move it. Wheel, pinch or + − to zoom.
           {frame && frameFrom === "image" && " · frame recorded from the image"}
         </div>
       )}
 
-      <div className="mb-hs-stage" onClick={onStageClick}
-        onPointerMove={onDrag} onPointerUp={endDrag} onPointerCancel={endDrag}>
-        {/* The markers' containing block is the IMAGE, not the scrolling stage.
-            They used to be children of the stage, so their percentages were
-            fractions of whatever height the stage happened to have: on a phone
-            that is the image, on a desktop window it is not, and it changes
-            the moment the picker panel opens. Symptoms Ian hit on 14 Sep: a
-            marker rendered off its part, every marker jumping when one was
-            selected, and a drag that moved faster than the pointer - and
-            the coordinates saved from that drag were wrong by the same ratio
-            (three markers landed below the frame). The canvas is exactly the
-            image's box, so a percentage of it is a percentage of the image. */}
-        <div className="mb-hs-canvas">
-        <img ref={imgRef} className="mb-hs-img" src={assetUrl(path)} alt={label}
-          draggable={false} onLoad={onImgLoad} />
-        {frame && hots.map((h) => (
-          <button key={h.id} type="button"
-            className={"mb-hs-mk" + (h.part_id ? "" : " unl") + (h.id === sel ? " sel" : "") + (h.dirty ? " dirty" : "")}
-            style={{ left: (h.x / frame.w) * 100 + "%", top: (h.y / frame.h) * 100 + "%" }}
-            title={h.name ? `${h.item_no ? "#" + h.item_no + " · " : ""}${h.name}` : "no part linked"}
-            onPointerDown={(e) => startDrag(h, e)}
-            onClick={(e) => {
-              e.stopPropagation();
-              if (dragging.current?.moved) { dragging.current = null; return; }
-              if (canEdit) { setSel(h.id === sel ? null : h.id); setPlacing(null); setTerm(""); setHits([]); }
-              else if (h.part_id) onOpenPart(h.part_id);
-            }}>
-            {h.item_no ?? "•"}
-          </button>
-        ))}
-        {frame && placing && (
-          <span className="mb-hs-mk new"
-            style={{ left: (placing.x / frame.w) * 100 + "%", top: (placing.y / frame.h) * 100 + "%" }}>+</span>
-        )}
-        </div>
+      {/* The drag handlers live on the stage (capture is on the SVG, so the
+          moves arrive here regardless of where the pointer wanders). */}
+      <div className="mb-hs-stage dg-host" onPointerMove={onDragMove} onPointerUp={endDrag} onPointerCancel={endDrag}>
+        <DiagramCanvas href={assetUrl(path)} frame={frame} onFrame={onFrame} onTap={onTap} bind={bind}>
+          {hots.map((h) => (
+            <Marker key={h.id} x={h.x} y={h.y} r={r} label={h.item_no ?? "•"}
+              state={h.id === sel ? "sel" : h.dirty ? "dirty" : h.part_id ? "" : "unl"}
+              title={h.name ? `${h.item_no ? "#" + h.item_no + " · " : ""}${h.name}` : "no part linked"}
+              onPointerDown={(e) => startDrag(h, e)}
+              onClick={(e) => {
+                e.stopPropagation();
+                if (canEdit) { setSel(h.id === sel ? null : h.id); setPlacing(null); setTerm(""); setHits([]); }
+                else if (h.part_id) onOpenPart(h.part_id);
+              }} />
+          ))}
+          {placing && <Marker x={placing.x} y={placing.y} r={r} label="+" state="new" />}
+        </DiagramCanvas>
       </div>
 
       {/* ── the part picker: for a new marker, or to relink a selected one ── */}
