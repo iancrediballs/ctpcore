@@ -139,6 +139,22 @@ function Brand() {
   );
 }
 
+/** ≥1024 CSS px: the one shell switch (DESKTOP_AUDIT.md §2.2), the same
+ *  boundary mobile.css uses for the desktop skin. Tracks live resizes. */
+function useIsDesktop(): boolean {
+  const [on, setOn] = useState<boolean>(
+    () => window.matchMedia?.("(min-width: 1024px)").matches ?? false
+  );
+  useEffect(() => {
+    const mq = window.matchMedia?.("(min-width: 1024px)");
+    if (!mq) return;
+    const onChange = (e: MediaQueryListEvent) => setOn(e.matches);
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
+  }, []);
+  return on;
+}
+
 /**
  * The `user_role` claim out of the access token, or null.
  *
@@ -308,6 +324,12 @@ export default function MobileShell() {
   const [photoBusy, setPhotoBusy] = useState(false);
   const fileRef = useRef<HTMLInputElement | null>(null);
   const toastTimer = useRef<number | undefined>(undefined);
+  // The search box (home or find — only one is mounted at a time).
+  const qRef = useRef<HTMLInputElement | null>(null);
+  // True while WE focus the search box, so the home box's onFocus (which
+  // jumps to Find for a person who tapped it) ignores a focus it did not ask for.
+  const quietFocus = useRef(false);
+  const isDesktop = useIsDesktop();
 
   // ── appearance ──
   const [themePref, setThemePref] = useState<ThemePref>(loadThemePref);
@@ -389,6 +411,32 @@ export default function MobileShell() {
     setToast(t);
     toastTimer.current = window.setTimeout(() => setToast(null), 6000);
   }, []);
+
+  // ── desktop keyboard (P12a) ──
+  // A mouse-and-keyboard user expects the cursor to be in the search box, and
+  // Escape to close whatever is on top. Both are desktop-only: a phone has no
+  // Escape key, and focusing an input there would raise the keyboard uninvited.
+  useEffect(() => {
+    if (!isDesktop || (tab !== "home" && tab !== "find")) return;
+    const el = qRef.current;
+    if (!el || document.activeElement === el) return;
+    quietFocus.current = true;
+    el.focus();
+    quietFocus.current = false;
+  }, [isDesktop, tab]);
+  useEffect(() => {
+    if (!isDesktop) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      // top-most first: the zoom viewer, then the counter, then the part sheet
+      if (viewer && !hotspotEditor) { setViewer(null); e.preventDefault(); return; }
+      if (hotspotEditor) return;                 // has its own ✕ and a part picker; leave it
+      if (counterOpen) { setCounterOpen(false); e.preventDefault(); return; }
+      if (sheetOpen) { setSheetOpen(false); e.preventDefault(); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [isDesktop, viewer, hotspotEditor, counterOpen, sheetOpen]);
 
   // ── staff photo admin ──
   //
@@ -816,9 +864,9 @@ const parseRand = (s: string): number => {
         <div className="mb-searchwrap">
           <div className="mb-sbox">
             <IcSearch />
-            <input className="mb-q" value={q} inputMode="search" enterKeyHint="search"
+            <input className="mb-q" ref={qRef} value={q} inputMode="search" enterKeyHint="search"
               placeholder="Search everything…"
-              onFocus={() => setTab("find")}
+              onFocus={() => { if (!quietFocus.current) setTab("find"); }}
               onChange={(e) => { setQ(e.target.value); setTab("find"); }} />
           </div>
         </div>
@@ -867,7 +915,7 @@ const parseRand = (s: string): number => {
           <div className="mb-searchwrap">
             <div className="mb-sbox">
               <IcSearch />
-              <input className="mb-q" value={q} inputMode="search" enterKeyHint="search"
+              <input className="mb-q" ref={qRef} value={q} inputMode="search" enterKeyHint="search"
                 placeholder="SKU · part no · bin · name…"
                 onChange={(e) => setQ(e.target.value)} />
               {q && <button className="mb-clr" onClick={() => setQ("")}>✕</button>}
@@ -912,6 +960,9 @@ const parseRand = (s: string): number => {
         <div className="mb-count">
           {hits ? `${cards.length} match${cards.length === 1 ? "" : "es"}` : `${cards.length} parts`}
         </div>
+        {/* .mb-cards is a plain block on a phone; at desktop widths it is the
+            auto-fill card grid (mobile.css, desktop skin). */}
+        <div className="mb-cards">
         {cards.map((p) => (
           <button key={p.id} className="mb-card" onClick={() => openPart(p.id)}>
             {p.image
@@ -934,6 +985,7 @@ const parseRand = (s: string): number => {
             </span>
           </button>
         ))}
+        </div>
         {cards.length === 0 && (
           <div className="mb-empty">
             <h3>{hits ? "No matches" : "Nothing synced yet"}</h3>
