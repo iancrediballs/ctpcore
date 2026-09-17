@@ -1818,11 +1818,13 @@ function Lightbox({ items, start, onClose, canEdit, onOpenPart, onEditMarkers }:
     return () => { live = false; };
   }, [item.path, item.diagram]);
 
+  // Only a marker on a LIVE part opens one; a retired/missing link is drawn
+  // as a fault (state "bad") and a tap says so instead of failing later.
   const markerEls = useMemo(() => marks?.hots.map((h) => (
     <Marker key={h.id} x={h.x} y={h.y} r={Math.max(h.radius, (frame?.w ?? 0) * 0.022)}
-      label={h.item_no ?? "•"} state={h.part_id ? "" : "unl"}
-      title={h.name ? `${h.item_no ? "#" + h.item_no + " · " : ""}${h.name}` : "no part linked"}
-      onClick={(e) => { e.stopPropagation(); if (h.part_id && onOpenPart) onOpenPart(h.part_id); }} />
+      label={h.item_no ?? "•"} state={markerState(h)}
+      title={markerTitle(h)}
+      onClick={(e) => { e.stopPropagation(); if (h.link === "ok" && h.part_id != null && onOpenPart) onOpenPart(h.part_id); }} />
   )), [marks, frame, onOpenPart]);
 
   return (
@@ -2018,6 +2020,22 @@ function Counter({ d, onPost, onMove, onClose }: {
 
 type EditorHotspot = WebHotspot & { dirty?: boolean };
 
+/** How a marker is drawn and what its tooltip says, from the backend's verdict.
+ *  One place for the viewer and the editor, so a bad row looks the same on
+ *  both — flagged, never blank. */
+function markerState(h: WebHotspot): "" | "unl" | "bad" {
+  return h.link === "ok" ? "" : h.link === "none" ? "unl" : "bad";
+}
+function markerTitle(h: WebHotspot): string {
+  const no = h.item_no ? "#" + h.item_no + " · " : "";
+  switch (h.link) {
+    case "ok": return `${no}${h.name ?? ""}`;
+    case "none": return `${no}no part linked`;
+    case "retired": return `${no}linked to a RETIRED part${h.was_sku ? ` (${h.was_sku})` : ""} — relink it in the editor`;
+    default: return `${no}linked to part #${h.part_id} which no longer exists — relink it in the editor`;
+  }
+}
+
 // The editor sits on the same canvas as the viewer, so what Ian places is what
 // a customer sees: same viewBox, same units, same transform. A drag converts
 // the pointer through the SVG's own matrix (CanvasApi.toDrawing) — never
@@ -2086,7 +2104,8 @@ function HotspotEditor({ path, label, canEdit, onClose, onOpenPart }: {
       setHots((h) => [...h, {
         id, part_id: part?.id ?? null, item_no: itemNo || null,
         x: placing.x, y: placing.y, radius: 58, client_uuid: uuid,
-        sku: part?.sku ?? null, name: part?.name ?? null,
+        link: part ? "ok" : "none",
+        sku: part?.sku ?? null, name: part?.name ?? null, was_sku: null,
       }]);
       setPlacing(null);
       setMsg(part ? `marker placed on ${part.sku}` : "marker placed, no part linked yet");
@@ -2098,7 +2117,7 @@ function HotspotEditor({ path, label, canEdit, onClose, onOpenPart }: {
     setBusy(true);
     try {
       await api.saveHotspot({ clientUuid: h.client_uuid, id: h.id, diagramId, x: h.x, y: h.y, partId: part.id, itemNo: h.item_no });
-      setHots((all) => all.map((x) => x.id === h.id ? { ...x, part_id: part.id, sku: part.sku, name: part.name } : x));
+      setHots((all) => all.map((x) => x.id === h.id ? { ...x, part_id: part.id, sku: part.sku, name: part.name, link: "ok", was_sku: null } : x));
       setMsg(`linked to ${part.sku}`); setTerm(""); setHits([]);
     } catch (e) { setMsg("✕ " + String(e)); } finally { setBusy(false); }
   };
@@ -2165,13 +2184,13 @@ function HotspotEditor({ path, label, canEdit, onClose, onOpenPart }: {
         <DiagramCanvas href={assetUrl(path)} frame={frame} onFrame={onFrame} onTap={onTap} bind={bind}>
           {hots.map((h) => (
             <Marker key={h.id} x={h.x} y={h.y} r={r} label={h.item_no ?? "•"}
-              state={h.id === sel ? "sel" : h.dirty ? "dirty" : h.part_id ? "" : "unl"}
-              title={h.name ? `${h.item_no ? "#" + h.item_no + " · " : ""}${h.name}` : "no part linked"}
+              state={h.id === sel ? "sel" : h.dirty ? "dirty" : markerState(h)}
+              title={markerTitle(h)}
               onPointerDown={(e) => startDrag(h, e)}
               onClick={(e) => {
                 e.stopPropagation();
                 if (canEdit) { setSel(h.id === sel ? null : h.id); setPlacing(null); setTerm(""); setHits([]); }
-                else if (h.part_id) onOpenPart(h.part_id);
+                else if (h.link === "ok" && h.part_id != null) onOpenPart(h.part_id);
               }} />
           ))}
           {placing && <Marker x={placing.x} y={placing.y} r={r} label="+" state="new" />}
@@ -2183,10 +2202,20 @@ function HotspotEditor({ path, label, canEdit, onClose, onOpenPart }: {
         <div className="mb-hs-panel">
           {selected && (
             <div className="mb-hs-row">
-              <b>{selected.sku ?? "no part linked"}</b>
-              <span className="mb-dim">{selected.name ?? ""}</span>
+              {selected.link === "ok" ? (
+                <><b>{selected.sku}</b><span className="mb-dim">{selected.name ?? ""}</span></>
+              ) : selected.link === "none" ? (
+                <b>no part linked</b>
+              ) : (
+                // The fault, in words, with the fix: search below to relink.
+                <b style={{ color: "var(--red, #e5484d)" }}>
+                  {selected.link === "retired"
+                    ? `linked to a retired part${selected.was_sku ? ` (${selected.was_sku})` : ""}`
+                    : `linked to part #${selected.part_id}, which no longer exists`} — search to relink
+                </b>
+              )}
               <span style={{ flex: 1 }} />
-              {selected.part_id && (
+              {selected.link === "ok" && selected.part_id != null && (
                 <button className="mb-chip" onClick={() => onOpenPart(selected.part_id!)}>Open part</button>
               )}
               <button className="mb-chip" onClick={() => remove(selected)} disabled={busy}>Remove</button>

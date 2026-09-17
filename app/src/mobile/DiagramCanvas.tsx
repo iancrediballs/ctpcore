@@ -267,7 +267,9 @@ export function DiagramCanvas({ href, frame, onFrame, children, onTap, onSwipe, 
  *  default), so it scales with the drawing like everything else. */
 export function Marker({ x, y, r, label, state, title, onPointerDown, onClick }: {
   x: number; y: number; r: number; label: string;
-  state?: "" | "unl" | "sel" | "dirty" | "new";
+  /** unl = placed, no part yet. bad = points at a retired or missing part:
+   *  drawn loud (red, dashed) so it gets fixed, never hidden. */
+  state?: "" | "unl" | "bad" | "sel" | "dirty" | "new";
   title?: string;
   onPointerDown?: (e: React.PointerEvent<SVGGElement>) => void;
   onClick?: (e: React.MouseEvent<SVGGElement>) => void;

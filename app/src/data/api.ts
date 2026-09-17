@@ -254,7 +254,11 @@ export const listDiscrepancies = <T>(receiptId: number) =>
 export type WebHotspot = {
   id: number; part_id: number | null; item_no: string | null;
   x: number; y: number; radius: number; client_uuid: string | null;
-  sku: string | null; name: string | null;
+  /** Decided by the backend, never by a reader: ok = live part, none =
+   *  unlinked, retired = the part is soft-deleted, missing = no such part.
+   *  sku/name are set only for ok; was_sku names a retired part. */
+  link: "ok" | "none" | "retired" | "missing";
+  sku: string | null; name: string | null; was_sku: string | null;
 };
 export type DiagramHotspots = {
   diagram_id: number | null; drawing_key?: string;

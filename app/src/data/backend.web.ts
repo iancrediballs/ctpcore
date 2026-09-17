@@ -1044,8 +1044,27 @@ async function requestParts(a: Record<string, unknown>): Promise<unknown> {
 type HotspotRow = {
   id: number; diagram_id: number; part_id: number | null; item_no: string | null;
   x: number; y: number; radius: number; client_uuid: string | null;
-  part: { sku: string; name: string } | null;
+  part: { sku: string; name: string; deleted_at: string | null } | null;
 };
+
+// THE JOIN IS NOT THE FILTER. part_read is USING (true), so the embed below
+// returns a retired part (deleted_at set) exactly like a live one, and a
+// marker on it would read as linked, then fail on tap. Every part query in
+// this file filters deleted_at IS NULL; a hotspot's part must be judged by
+// the same rule, or every retirement re-creates the bug. So the row carries
+// a verdict, decided HERE, and no reader has to remember it:
+//   ok        a live part — the marker links to it
+//   none      part_id NULL — placed, not yet linked (rows 92–94 on SEC202)
+//   retired   the part exists but is soft-deleted (row 87 → part 1126)
+//   missing   part_id set, no such row (hard-deleted, or not yet synced)
+// The last two are FLAGGED, not hidden: a marker that vanishes gets replaced
+// with a duplicate; a marker that says "retired part" gets relinked.
+export type HotspotLink = "ok" | "none" | "retired" | "missing";
+function hotspotLink(h: HotspotRow): HotspotLink {
+  if (h.part_id == null) return "none";
+  if (!h.part) return "missing";
+  return h.part.deleted_at ? "retired" : "ok";
+}
 
 /** The diagram row and its live markers, resolved from the image path the
  *  viewer already has. */
@@ -1058,16 +1077,27 @@ async function listHotspots(a: Record<string, unknown>): Promise<unknown> {
   if (!d) return { diagram_id: null, img_w: null, img_h: null, hotspots: [] };
   const { data: hs, error: e2 } = await supabase
     .from("hotspot")
-    .select("id, diagram_id, part_id, item_no, x, y, radius, client_uuid, part:part_id(sku, name)")
+    .select("id, diagram_id, part_id, item_no, x, y, radius, client_uuid, part:part_id(sku, name, deleted_at)")
     .eq("diagram_id", d.id).is("deleted_at", null).order("id");
   if (e2) throw new Error(`[CTP web] hotspot read failed: ${e2.message}`);
   return {
     diagram_id: d.id, drawing_key: d.drawing_key, img_w: d.img_w, img_h: d.img_h,
-    hotspots: ((hs ?? []) as unknown as HotspotRow[]).map((h) => ({
-      id: h.id, part_id: h.part_id, item_no: h.item_no, x: h.x, y: h.y,
-      radius: h.radius, client_uuid: h.client_uuid,
-      sku: h.part?.sku ?? null, name: h.part?.name ?? null,
-    })),
+    // One bad row must never take the drawing with it: every field a reader
+    // touches is normalised here, so a NULL, a retired part or a NaN
+    // coordinate becomes a flagged marker, not an exception in a .map.
+    hotspots: ((hs ?? []) as unknown as HotspotRow[]).map((h) => {
+      const link = hotspotLink(h);
+      return {
+        id: h.id, part_id: h.part_id, item_no: h.item_no ?? null,
+        x: Number(h.x) || 0, y: Number(h.y) || 0,
+        radius: Number(h.radius) > 0 ? Number(h.radius) : 58, client_uuid: h.client_uuid ?? null,
+        link,
+        // sku/name only for a LIVE part. A retired part's identity is kept
+        // separately so the flag can name it ("was CTP-CBY-002-C").
+        sku: link === "ok" ? h.part!.sku : null, name: link === "ok" ? h.part!.name : null,
+        was_sku: link === "retired" ? h.part!.sku : null,
+      };
+    }),
   };
 }
 
