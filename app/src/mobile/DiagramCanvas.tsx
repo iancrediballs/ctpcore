@@ -271,10 +271,12 @@ export function DiagramCanvas({ href, frame, onFrame, children, onTap, onSwipe, 
   );
 }
 
-/** A callout marker in drawing units. Radius is the hotspot's own (58 by
- *  default), so it scales with the drawing like everything else. */
+/** A callout marker in drawing units: an open ring, no number — the drawing's
+ *  printed callouts stay readable underneath. Radius is the hotspot's own (58
+ *  by default), so it scales with the drawing like everything else. `label`
+ *  is accepted for the tooltip fallback only; it is never drawn. */
 export function Marker({ x, y, r, label, state, title, onPointerDown, onClick }: {
-  x: number; y: number; r: number; label: string;
+  x: number; y: number; r: number; label?: string;
   /** unl = placed, no part yet. bad = points at a retired or missing part:
    *  drawn loud (red, dashed) so it gets fixed, never hidden. */
   state?: "" | "unl" | "bad" | "sel" | "dirty" | "new";
@@ -285,9 +287,8 @@ export function Marker({ x, y, r, label, state, title, onPointerDown, onClick }:
   return (
     <g className={"dg-mk" + (state ? " " + state : "")} transform={`translate(${x} ${y})`}
       data-marker="1" onPointerDown={onPointerDown} onClick={onClick}>
-      {title && <title>{title}</title>}
+      {(title ?? label) && <title>{title ?? label}</title>}
       <circle r={r} />
-      <text textAnchor="middle" dominantBaseline="central" fontSize={r * 1.1}>{label}</text>
     </g>
   );
 }

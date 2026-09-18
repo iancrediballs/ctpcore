@@ -172,7 +172,16 @@
 .mb-dgm{cursor:zoom-in}
 .mb-zoomtag{position:absolute;top:8px;right:8px;width:32px;height:32px;display:grid;place-items:center;
   border-radius:9px;background:rgba(11,13,16,.55);color:#fff;font-size:16px;pointer-events:none}
-.mb-lb{position:fixed;inset:0;z-index:70;background:#05070a;display:flex;flex-direction:column}
+/* The lightbox and the hotspot editor are ALWAYS dark — a drawing or a photo
+   belongs on a dark stage. So the dark token set is re-declared here, not
+   just the background: in light mode the theme flips --txt to near-black and
+   everything inside a hard-coded dark box vanished (measured 1.1:1 on the
+   editor panel, 18 Sep — "can't see the part it's attached to"). */
+.mb-lb{position:fixed;inset:0;z-index:70;background:#05070a;display:flex;flex-direction:column;
+  --bg:#0B0D10;--surf:#151A20;--surf2:#1D242C;--line:#2B343F;
+  --txt:#F4F7FA;--dim:#93A0AE;--dimmer:#6B7887;
+  --amber:#FF8A1F;--green:#31D07C;--warn:#FFC24B;--red:#E23A20;
+  color:var(--txt)}
 .mb-lb-head{display:flex;align-items:center;gap:12px;padding:calc(var(--safe-t) + 10px) 12px 10px;flex:0 0 auto}
 .mb-lb-cap{flex:1;font-size:13.5px;font-weight:800;color:var(--dim);letter-spacing:.5px;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -367,14 +376,15 @@ textarea.st-in{resize:vertical;line-height:1.45;font-size:15px}
 .mb-hs-img{display:block;width:100%;height:auto;user-select:none;-webkit-user-drag:none}
 .mb-hs-stage .mb-hs-mk{line-height:1}
 .mb-hs-panel{flex:0 0 auto;padding:8px 12px calc(var(--safe-b, 0px) + 10px);border-top:1px solid var(--line);
-  background:var(--panel, #0b0f14);display:flex;flex-direction:column;gap:8px}
+  background:var(--surf);display:flex;flex-direction:column;gap:8px}
 .mb-hs-row{display:flex;align-items:center;gap:8px;font-size:13px}
-.mb-hs-in{flex:1;min-width:0;background:var(--bg, #05070a);border:1px solid var(--line);color:var(--text);
+.mb-hs-in{flex:1;min-width:0;background:var(--bg);border:1px solid var(--line);color:var(--txt);
   border-radius:8px;padding:8px 10px;font-size:14px;outline:none}
+.mb-hs-in::placeholder{color:var(--dim)}
 .mb-hs-in:focus{border-color:var(--amber)}
 .mb-hs-hits{display:flex;flex-direction:column;gap:4px;max-height:38vh;overflow:auto}
 .mb-hs-hit{text-align:left;background:transparent;border:1px solid var(--line);border-radius:8px;
-  padding:8px 10px;color:var(--text);font-size:13px;cursor:pointer}
+  padding:8px 10px;color:var(--txt);font-size:13px;cursor:pointer}
 .mb-hs-hit:active{background:rgba(240,180,60,.12)}
 .mb-dim{color:var(--dim);font-weight:500}
 
@@ -389,15 +399,58 @@ textarea.st-in{resize:vertical;line-height:1.45;font-size:15px}
 .dg-ctl button{width:38px;height:38px;border-radius:10px;border:1px solid var(--line);background:rgba(21,26,32,.92);
   color:var(--txt);font:800 20px/1 -apple-system,"Segoe UI",Roboto,sans-serif;cursor:pointer}
 .dg-ctl button:disabled{opacity:.35;cursor:default}
+/* A marker is an open ring with a faint fill — no number. The exploded
+   drawings already carry printed callout numbers; stamping ours on top hid
+   the very thing Ian was aiming at. Identity lives in the panel and the
+   tooltip. The stroke is non-scaling so the ring stays a ring at every zoom. */
 .dg-mk{cursor:pointer}
-.dg-mk circle{fill:rgba(240,180,60,.22);stroke:var(--amber);stroke-width:5;vector-effect:non-scaling-stroke;paint-order:stroke}
+.dg-mk circle{fill:rgba(240,180,60,.14);stroke:var(--amber);stroke-width:3.5;vector-effect:non-scaling-stroke;paint-order:stroke}
+.dg-mk:hover circle{fill:rgba(240,180,60,.28)}
 .dg-mk text{fill:#fff;font-family:var(--mono,ui-monospace,monospace);font-weight:700;pointer-events:none;
   paint-order:stroke;stroke:rgba(0,0,0,.6);stroke-width:3px}
 .dg-mk.unl circle{stroke:var(--dim);fill:rgba(125,141,161,.25)}
 /* a marker whose part is retired or gone: the one thing on the drawing that
    must not look fine. Red, dashed, and the tooltip says what happened. */
 .dg-mk.bad circle{stroke:var(--red,#e5484d);fill:rgba(229,72,77,.22);stroke-dasharray:8 6}
-.dg-mk.sel circle{stroke:#fff;fill:rgba(240,180,60,.4)}
+.dg-mk.sel circle{stroke:#fff;stroke-width:5;fill:rgba(240,180,60,.34)}
 .dg-mk.dirty circle{stroke-dasharray:8 6}
 .dg-mk.new circle{stroke-dasharray:8 6;fill:rgba(240,180,60,.35)}
 .mb-hs-stage.dg-host{overflow:hidden;touch-action:none;display:flex}
+
+/* ── hotspot editor layout ──
+   Phone: drawing on top, panel below (a strip that grows with its content,
+   never past 55% of the height). Desktop (≥ 900px): the panel is a 360px
+   column beside the drawing, full height, always visible — the selection's
+   identity is never at the bottom of a tall stage. */
+.mb-hs-body{flex:1;min-height:0;display:flex;flex-direction:column}
+.mb-hs-ed .mb-hs-stage{flex:1;min-height:0}
+.mb-hs-ed .mb-hs-panel{max-height:55%;overflow:auto;border-top:1px solid var(--line)}
+@media (min-width:900px){
+  .mb-hs-body{flex-direction:row}
+  .mb-hs-ed .mb-hs-panel{flex:0 0 360px;max-height:none;height:auto;border-top:0;border-left:1px solid var(--line);padding:12px 14px}
+  .mb-hs-ed .mb-hs-hits{max-height:none}
+}
+.mb-hs-id{display:flex;align-items:center;gap:10px;min-height:28px}
+.mb-hs-idno{font-size:22px;font-weight:900;color:var(--amber);font-family:var(--mono,ui-monospace,monospace);line-height:1}
+.mb-hs-idk{font-size:11px;font-weight:800;letter-spacing:.6px;text-transform:uppercase;color:var(--dim)}
+.mb-hs-card{display:flex;gap:12px;align-items:flex-start}
+.mb-hs-card .mb-thumb{width:88px;height:88px}
+.mb-thumb.ph.bad{color:var(--red);font-weight:900;font-size:26px}
+.mb-hs-sku{font-size:15px;font-weight:900;font-family:var(--mono,ui-monospace,monospace);letter-spacing:.3px}
+.mb-hs-name{font-size:13px;color:var(--txt);margin-top:2px;line-height:1.3}
+.mb-hs-itemlbl{display:flex;align-items:center;gap:6px;flex:0 0 auto;font-size:11px;font-weight:800;letter-spacing:.5px;text-transform:uppercase;color:var(--dim)}
+.mb-hs-hit{display:flex;align-items:center;gap:10px}
+.mb-hs-hit.first{border-color:var(--amber)}
+.mb-hs-hit-th{width:40px;height:40px;flex:0 0 auto;border-radius:8px;background:#fff;object-fit:contain;padding:2px}
+.mb-hs-hit-th.ph{background:var(--surf2)}
+.mb-hs-enter{margin-left:8px;font-size:11px;color:var(--amber);font-weight:800}
+.mb-hs-list{display:flex;flex-direction:column;gap:3px}
+.mb-hs-li{display:flex;align-items:center;gap:10px;text-align:left;background:transparent;border:1px solid transparent;border-radius:8px;
+  padding:6px 8px;color:var(--txt);font-size:12.5px;cursor:pointer}
+.mb-hs-li:hover{background:var(--surf2)}
+.mb-hs-li.on{border-color:var(--amber);background:rgba(240,180,60,.10)}
+.mb-hs-lino{width:30px;flex:0 0 auto;text-align:center;font-weight:900;font-family:var(--mono,ui-monospace,monospace);color:var(--amber);
+  border:2px solid var(--amber);border-radius:50%;height:26px;line-height:22px;font-size:11.5px}
+.mb-hs-li.unl .mb-hs-lino{color:var(--dim);border-color:var(--dim)}
+.mb-hs-li.bad .mb-hs-lino{color:var(--red);border-color:var(--red);border-style:dashed}
+.mb-hs-litxt{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}

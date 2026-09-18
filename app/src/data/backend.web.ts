@@ -1044,7 +1044,8 @@ async function requestParts(a: Record<string, unknown>): Promise<unknown> {
 type HotspotRow = {
   id: number; diagram_id: number; part_id: number | null; item_no: string | null;
   x: number; y: number; radius: number; client_uuid: string | null;
-  part: { sku: string; name: string; deleted_at: string | null } | null;
+  part: { sku: string; name: string; deleted_at: string | null;
+          part_image: { path: string; is_primary: boolean | null; sort_order: number | null; deleted_at: string | null }[] | null } | null;
 };
 
 // THE JOIN IS NOT THE FILTER. part_read is USING (true), so the embed below
@@ -1077,7 +1078,7 @@ async function listHotspots(a: Record<string, unknown>): Promise<unknown> {
   if (!d) return { diagram_id: null, img_w: null, img_h: null, hotspots: [] };
   const { data: hs, error: e2 } = await supabase
     .from("hotspot")
-    .select("id, diagram_id, part_id, item_no, x, y, radius, client_uuid, part:part_id(sku, name, deleted_at)")
+    .select("id, diagram_id, part_id, item_no, x, y, radius, client_uuid, part:part_id(sku, name, deleted_at, part_image(path, is_primary, sort_order, deleted_at))")
     .eq("diagram_id", d.id).is("deleted_at", null).order("id");
   if (e2) throw new Error(`[CTP web] hotspot read failed: ${e2.message}`);
   return {
@@ -1087,7 +1088,12 @@ async function listHotspots(a: Record<string, unknown>): Promise<unknown> {
     // coordinate becomes a flagged marker, not an exception in a .map.
     hotspots: ((hs ?? []) as unknown as HotspotRow[]).map((h) => {
       const link = hotspotLink(h);
+      // The part's primary photo, so the editor can show WHAT the marker is
+      // on — these parts are identified by sight, not by number.
+      const imgs = (h.part?.part_image ?? []).filter((i) => !i.deleted_at);
+      imgs.sort((a, b) => Number(!!b.is_primary) - Number(!!a.is_primary) || (a.sort_order ?? 0) - (b.sort_order ?? 0));
       return {
+        image: link === "ok" ? (imgs[0]?.path ?? null) : null,
         id: h.id, part_id: h.part_id, item_no: h.item_no ?? null,
         x: Number(h.x) || 0, y: Number(h.y) || 0,
         radius: Number(h.radius) > 0 ? Number(h.radius) : 58, client_uuid: h.client_uuid ?? null,

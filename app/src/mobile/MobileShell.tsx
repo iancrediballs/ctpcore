@@ -2170,94 +2170,164 @@ function HotspotEditor({ path, label, canEdit, onClose, onOpenPart }: {
 
   const selected = hots.find((h) => h.id === sel) ?? null;
   const r = Math.max(58, (frame?.w ?? 0) * 0.022);
+  const linked = hots.filter((h) => h.link === "ok").length;
+  const faulty = hots.filter((h) => h.link === "retired" || h.link === "missing").length;
 
-  return (
-    <div className="mb-lb">
-      <div className="mb-lb-head">
-        <button className="mb-back" onClick={onClose}>✕</button>
-        <span className="mb-lb-cap">{label} · {canEdit ? "editing markers" : "markers"}</span>
-        <span className="mb-chip" style={{ fontSize: 10 }}>{hots.length}</span>
-      </div>
+  // Enter picks the first hit, Escape backs out: with ~136 markers to place,
+  // reaching for the mouse after every search is the friction that multiplies.
+  const onSearchKey = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter" && hits.length > 0) { e.preventDefault(); void (placing ? commitNew(hits[0]) : selected && relink(selected, hits[0])); }
+    else if (e.key === "Escape") { setPlacing(null); setSel(null); setTerm(""); setHits([]); }
+  };
 
-      {canEdit && (
-        <div className="mb-note" style={{ margin: "0 12px 8px" }}>
-          Tap the diagram to place a marker. Tap a marker to pick it; drag to move it. Wheel, pinch or + − to zoom.
-          {frame && frameFrom === "image" && " · frame recorded from the image"}
+  // ── the panel: who is selected, what it links to, and the way to fix it ──
+  // A side column on a desktop, the bottom strip on a phone (CSS). Always
+  // present so the identity of the selection is never off-screen.
+  const panel = (
+    <div className="mb-hs-panel">
+      {selected ? (
+        <>
+          {/* WHICH marker: its item number, large; and the part it is on. */}
+          <div className="mb-hs-id">
+            <span className="mb-hs-idno">{selected.item_no ? `#${selected.item_no}` : "#?"}</span>
+            <span className="mb-hs-idk">marker · item no. on the drawing</span>
+            <span style={{ flex: 1 }} />
+            <button className="mb-chip" onClick={() => { setSel(null); setTerm(""); setHits([]); }}>Done</button>
+          </div>
+          <div className="mb-hs-card">
+            {selected.link === "ok" && selected.image
+              ? <img className="mb-thumb" src={assetUrl(selected.image)} alt="" />
+              : <div className={"mb-thumb ph" + (selected.link === "ok" ? "" : " bad")}>{selected.link === "ok" ? "no photo" : selected.link === "none" ? "?" : "!"}</div>}
+            <div style={{ minWidth: 0, flex: 1 }}>
+              {selected.link === "ok" ? (
+                <>
+                  <div className="mb-hs-sku">{selected.sku}</div>
+                  <div className="mb-hs-name">{selected.name}</div>
+                </>
+              ) : selected.link === "none" ? (
+                <>
+                  <div className="mb-hs-sku" style={{ color: "var(--dim)" }}>no part linked</div>
+                  <div className="mb-hs-name">search below and pick the part this marker sits on</div>
+                </>
+              ) : (
+                <>
+                  <div className="mb-hs-sku" style={{ color: "var(--red)" }}>
+                    {selected.link === "retired" ? `retired part${selected.was_sku ? ` · was ${selected.was_sku}` : ""}` : `part #${selected.part_id} no longer exists`}
+                  </div>
+                  <div className="mb-hs-name">search below to relink it</div>
+                </>
+              )}
+              <div className="mb-hs-row" style={{ marginTop: 6 }}>
+                {selected.link === "ok" && selected.part_id != null && (
+                  <button className="mb-chip on" onClick={() => onOpenPart(selected.part_id!)}>Open part</button>
+                )}
+                {canEdit && <button className="mb-chip" onClick={() => remove(selected)} disabled={busy}>Remove marker</button>}
+              </div>
+            </div>
+          </div>
+        </>
+      ) : placing ? (
+        <div className="mb-hs-id">
+          <span className="mb-hs-idno">+</span>
+          <span className="mb-hs-idk">new marker — which part is it on?</span>
+          <span style={{ flex: 1 }} />
+          <button className="mb-chip" onClick={() => { setPlacing(null); setTerm(""); setHits([]); }}>Cancel</button>
+        </div>
+      ) : (
+        <div className="mb-hs-id">
+          <span className="mb-hs-idk">{hots.length} marker{hots.length === 1 ? "" : "s"} · {linked} linked{faulty ? ` · ${faulty} need relinking` : ""}</span>
         </div>
       )}
 
-      {/* The drag handlers live on the stage (capture is on the SVG, so the
-          moves arrive here regardless of where the pointer wanders). */}
-      <div className="mb-hs-stage dg-host" onPointerMove={onDragMove} onPointerUp={endDrag} onPointerCancel={endDrag}>
-        <DiagramCanvas href={assetUrl(path)} frame={frame} onFrame={onFrame} onTap={onTap} bind={bind}>
-          {hots.map((h) => (
-            <Marker key={h.id} x={h.x} y={h.y} r={r} label={h.item_no ?? "•"}
-              state={h.id === sel ? "sel" : h.dirty ? "dirty" : markerState(h)}
-              title={markerTitle(h)}
-              onPointerDown={(e) => startDrag(h, e)}
-              // canEdit: the select happens in endDrag (the SVG held capture,
-              // so no click reaches here). Read-only: no capture was taken,
-              // the click arrives, and a live part opens.
-              onClick={(e) => {
-                e.stopPropagation();
-                if (!canEdit && h.link === "ok" && h.part_id != null) onOpenPart(h.part_id);
-              }} />
-          ))}
-          {placing && <Marker x={placing.x} y={placing.y} r={r} label="+" state="new" />}
-        </DiagramCanvas>
-      </div>
-
-      {/* ── the part picker: for a new marker, or to relink a selected one ── */}
       {canEdit && (placing || selected) && (
-        <div className="mb-hs-panel">
-          {selected && (
-            <div className="mb-hs-row">
-              {selected.link === "ok" ? (
-                <><b>{selected.sku}</b><span className="mb-dim">{selected.name ?? ""}</span></>
-              ) : selected.link === "none" ? (
-                <b>no part linked</b>
-              ) : (
-                // The fault, in words, with the fix: search below to relink.
-                <b style={{ color: "var(--red, #e5484d)" }}>
-                  {selected.link === "retired"
-                    ? `linked to a retired part${selected.was_sku ? ` (${selected.was_sku})` : ""}`
-                    : `linked to part #${selected.part_id}, which no longer exists`} — search to relink
-                </b>
-              )}
-              <span style={{ flex: 1 }} />
-              {selected.link === "ok" && selected.part_id != null && (
-                <button className="mb-chip" onClick={() => onOpenPart(selected.part_id!)}>Open part</button>
-              )}
-              <button className="mb-chip" onClick={() => remove(selected)} disabled={busy}>Remove</button>
-            </div>
-          )}
+        <>
           <div className="mb-hs-row">
-            <input className="mb-hs-in" placeholder={selected ? "search to link a different part…" : "which part is this? search…"}
-              value={term} onChange={(e) => setTerm(e.target.value)} autoFocus />
-            <input className="mb-hs-in" style={{ width: 70, flex: "0 0 auto" }} placeholder="item #"
-              value={selected ? (selected.item_no ?? "") : itemNo}
-              onChange={(e) => selected ? setHots((all) => all.map((x) => x.id === selected.id ? { ...x, item_no: e.target.value } : x)) : setItemNo(e.target.value)} />
+            <input className="mb-hs-in" placeholder={selected ? "link a different part — type a part no. or name…" : "part no. or name…"}
+              value={term} onChange={(e) => setTerm(e.target.value)} onKeyDown={onSearchKey} autoFocus />
+            <label className="mb-hs-itemlbl">
+              <span>item no.</span>
+              <input className="mb-hs-in" style={{ width: 64, flex: "0 0 auto" }} placeholder="#"
+                value={selected ? (selected.item_no ?? "") : itemNo}
+                onChange={(e) => selected ? setHots((all) => all.map((x) => x.id === selected.id ? { ...x, item_no: e.target.value } : x)) : setItemNo(e.target.value)} />
+            </label>
             {placing && (
               <button className="mb-chip" onClick={() => commitNew(null)} disabled={busy} title="Place it now, link the part later">
                 Place unlinked
               </button>
             )}
-            <button className="mb-chip" onClick={() => { setPlacing(null); setSel(null); }}>Cancel</button>
           </div>
           {hits.length > 0 && (
             <div className="mb-hs-hits">
-              {hits.map((p) => (
-                <button key={p.id} className="mb-hs-hit" disabled={busy}
+              {hits.map((p, i) => (
+                <button key={p.id} className={"mb-hs-hit" + (i === 0 ? " first" : "")} disabled={busy}
                   onClick={() => placing ? commitNew(p) : selected && relink(selected, p)}>
-                  <b>{p.sku}</b> <span className="mb-dim">{p.name}</span>
+                  {p.thumb ? <img className="mb-hs-hit-th" src={assetUrl(p.thumb)} alt="" /> : <span className="mb-hs-hit-th ph" />}
+                  <span style={{ minWidth: 0 }}>
+                    <b>{p.sku}</b>{i === 0 && <span className="mb-hs-enter">↵</span>}
+                    <div className="mb-dim" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</div>
+                  </span>
                 </button>
               ))}
             </div>
           )}
-        </div>
+          {term.trim().length >= 2 && hits.length === 0 && <div className="mb-dim" style={{ fontSize: 12 }}>nothing matches "{term}"</div>}
+        </>
       )}
 
-      {msg && <div className={"mb-note" + (msg.startsWith("✕") ? " err" : "")} style={{ margin: "6px 12px" }}>{msg}</div>}
+      {msg && <div className={"mb-note" + (msg.startsWith("✕") ? " err" : "")} style={{ margin: 0 }}>{msg}</div>}
+
+      {/* Every marker on this drawing, so what is done and what is not is one
+          glance, and any marker is reachable without hunting for it. */}
+      {hots.length > 0 && !placing && (
+        <div className="mb-hs-list">
+          <div className="mb-hs-idk" style={{ padding: "6px 0 2px" }}>on this drawing</div>
+          {[...hots].sort((a, b) => (parseInt(a.item_no ?? "", 10) || 999) - (parseInt(b.item_no ?? "", 10) || 999) || a.id - b.id).map((h) => (
+            <button key={h.id} className={"mb-hs-li" + (h.id === sel ? " on" : "") + (h.link === "ok" ? "" : h.link === "none" ? " unl" : " bad")}
+              onClick={() => { setSel(h.id === sel ? null : h.id); setPlacing(null); setTerm(""); setHits([]); }}>
+              <span className="mb-hs-lino">{h.item_no ?? "·"}</span>
+              <span className="mb-hs-litxt">
+                {h.link === "ok" ? <><b>{h.sku}</b> <span className="mb-dim">{h.name}</span></>
+                  : h.link === "none" ? <span className="mb-dim">not linked yet</span>
+                  : <span style={{ color: "var(--red)" }}>{h.link === "retired" ? `retired${h.was_sku ? ` · was ${h.was_sku}` : ""}` : "part missing"}</span>}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+
+  return (
+    <div className="mb-lb mb-hs-ed">
+      <div className="mb-lb-head">
+        <button className="mb-back" onClick={onClose}>✕</button>
+        <span className="mb-lb-cap">{label} · {canEdit ? "editing markers" : "markers"}</span>
+        {canEdit && <span className="mb-dim" style={{ fontSize: 12 }}>tap the drawing to place · tap a ring to pick · drag to move · wheel or pinch to zoom{frame && frameFrom === "image" ? " · frame recorded from the image" : ""}</span>}
+      </div>
+
+      <div className="mb-hs-body">
+        {/* The drag handlers live on the stage (capture is on the SVG, so the
+            moves arrive here regardless of where the pointer wanders). */}
+        <div className="mb-hs-stage dg-host" onPointerMove={onDragMove} onPointerUp={endDrag} onPointerCancel={endDrag}>
+          <DiagramCanvas href={assetUrl(path)} frame={frame} onFrame={onFrame} onTap={onTap} bind={bind}>
+            {hots.map((h) => (
+              <Marker key={h.id} x={h.x} y={h.y} r={r}
+                state={h.id === sel ? "sel" : h.dirty ? "dirty" : markerState(h)}
+                title={markerTitle(h)}
+                onPointerDown={(e) => startDrag(h, e)}
+                // canEdit: the select happens in endDrag (the SVG held capture,
+                // so no click reaches here). Read-only: no capture was taken,
+                // the click arrives, and a live part opens.
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (!canEdit && h.link === "ok" && h.part_id != null) onOpenPart(h.part_id);
+                }} />
+            ))}
+            {placing && <Marker x={placing.x} y={placing.y} r={r} state="new" title="new marker" />}
+          </DiagramCanvas>
+        </div>
+        {panel}
+      </div>
     </div>
   );
 }

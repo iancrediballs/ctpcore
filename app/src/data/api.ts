@@ -259,6 +259,8 @@ export type WebHotspot = {
    *  sku/name are set only for ok; was_sku names a retired part. */
   link: "ok" | "none" | "retired" | "missing";
   sku: string | null; name: string | null; was_sku: string | null;
+  /** The live part's primary photo path, for the editor's identity card. */
+  image?: string | null;
 };
 export type DiagramHotspots = {
   diagram_id: number | null; drawing_key?: string;
