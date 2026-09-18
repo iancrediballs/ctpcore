@@ -2048,10 +2048,18 @@ function HotspotEditor({ path, label, canEdit, onClose, onOpenPart }: {
   const [diagramId, setDiagramId] = useState<number | null>(null);
   const [frame, setFrame] = useState<Frame | null>(null);
   const [frameFrom, setFrameFrom] = useState<"db" | "image" | null>(null);
+  // THE ONE THING THAT WAS NOT SAVED (18 Sep): the item-number field wrote
+  // to local state only, and reached the database only if the same marker
+  // was later dragged or relinked. Ian typed numbers, pressed Done, and lost
+  // them — hotspot 120 on SEC101 sits with item_no NULL where 99 (item 4)
+  // was deleted 32 s earlier. Now: the field is pending until written, and
+  // it is written on blur, Enter, Done, selecting anything else, or closing.
+  const [pendingItem, setPendingItem] = useState<number | null>(null);
   // Ian's "I can't resize": the ring size, one slider, remembered on the device.
   const [markerScale, setMarkerScale] = useState(loadMarkerScale);
   const setScale = (v: number) => { setMarkerScale(v); saveMarkerScale(v); };
   const [hots, setHots] = useState<EditorHotspot[]>([]);
+  const hotsRef = useRef<EditorHotspot[]>([]); hotsRef.current = hots;
   const [sel, setSel] = useState<number | null>(null);
   const [placing, setPlacing] = useState<Pt | null>(null);
   const [term, setTerm] = useState("");
@@ -2072,6 +2080,13 @@ function HotspotEditor({ path, label, canEdit, onClose, onOpenPart }: {
     } catch (e) { setMsg("✕ " + String(e)); }
   }, [path]);
   useEffect(() => { void load(); }, [load]);
+  // A tab closed mid-write, or with a number still pending, loses work.
+  useEffect(() => {
+    if (pendingItem == null && !busy) return;
+    const h = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = ""; };
+    window.addEventListener("beforeunload", h);
+    return () => window.removeEventListener("beforeunload", h);
+  }, [pendingItem, busy]);
 
   /** No recorded frame: the canvas measured the file. Record it so every
    *  device uses the same units from now on. */
@@ -2093,6 +2108,7 @@ function HotspotEditor({ path, label, canEdit, onClose, onOpenPart }: {
 
   const onTap = (p: Pt) => {
     if (!canEdit) return;
+    if (pendingItem != null) void saveItemNo(pendingItem);
     setSel(null); setPlacing(p); setTerm(""); setHits([]); setItemNo("");
   };
 
@@ -2116,14 +2132,36 @@ function HotspotEditor({ path, label, canEdit, onClose, onOpenPart }: {
     } catch (e) { setMsg("✕ " + String(e)); } finally { setBusy(false); }
   };
 
+  /** Write a marker's item number. Reads the CURRENT row from state (not a
+   *  closure), so the value written is the value on screen. */
+  const saveItemNo = async (id: number): Promise<boolean> => {
+    const h = hotsRef.current.find((x) => x.id === id);
+    if (!h || diagramId == null) { setPendingItem(null); return true; }
+    setBusy(true);
+    try {
+      await api.saveHotspot({ clientUuid: h.client_uuid, id: h.id, diagramId, x: h.x, y: h.y, partId: h.part_id, itemNo: h.item_no });
+      setPendingItem((p) => (p === id ? null : p));
+      setMsg(`✓ item no. ${h.item_no ? `#${h.item_no}` : "cleared"} saved`);
+      return true;
+    } catch (e) { setMsg("✕ item no. NOT saved: " + String(e)); return false; }
+    finally { setBusy(false); }
+  };
+  /** Anything that leaves the current marker goes through here first. */
+  const flushPending = async (): Promise<boolean> => (pendingItem == null ? true : saveItemNo(pendingItem));
+
   const relink = async (h: EditorHotspot, part: Hit) => {
     if (diagramId == null) return;
     setBusy(true);
+    const was = h.link === "ok" ? h.sku : h.link === "retired" ? h.was_sku : null;
     try {
       await api.saveHotspot({ clientUuid: h.client_uuid, id: h.id, diagramId, x: h.x, y: h.y, partId: part.id, itemNo: h.item_no });
-      setHots((all) => all.map((x) => x.id === h.id ? { ...x, part_id: part.id, sku: part.sku, name: part.name, link: "ok", was_sku: null } : x));
-      setMsg(`linked to ${part.sku}`); setTerm(""); setHits([]);
-    } catch (e) { setMsg("✕ " + String(e)); } finally { setBusy(false); }
+      // The card, the list row and the ring all change at once; the photo
+      // comes with the hit so the card does not fall back to "no photo".
+      setHots((all) => all.map((x) => x.id === h.id ? { ...x, part_id: part.id, sku: part.sku, name: part.name, link: "ok", was_sku: null, image: part.thumb ?? null } : x));
+      setPendingItem((p) => (p === h.id ? null : p));   // the write above carried the item no too
+      setMsg(`✓ now linked to ${part.sku} — ${part.name}${was && was !== part.sku ? ` (was ${was})` : ""}`);
+      setTerm(""); setHits([]);
+    } catch (e) { setMsg("✕ relink NOT saved: " + String(e)); } finally { setBusy(false); }
   };
 
   const remove = async (h: EditorHotspot) => {
@@ -2148,6 +2186,7 @@ function HotspotEditor({ path, label, canEdit, onClose, onOpenPart }: {
     dragging.current = { id: h.id, moved: false, pointerId: e.pointerId };
   };
   const selectMarker = (id: number) => {
+    if (pendingItem != null && pendingItem !== id) void saveItemNo(pendingItem);
     setSel((cur) => (cur === id ? null : id)); setPlacing(null); setTerm(""); setHits([]);
   };
   const onDragMove = (e: React.PointerEvent) => {
@@ -2168,6 +2207,7 @@ function HotspotEditor({ path, label, canEdit, onClose, onOpenPart }: {
       try {
         await api.saveHotspot({ clientUuid: h.client_uuid, id: h.id, diagramId, x: h.x, y: h.y, partId: h.part_id, itemNo: h.item_no });
         setHots((all) => all.map((x) => x.id === h.id ? { ...x, dirty: false } : x));
+        setPendingItem((p) => (p === h.id ? null : p));
       } catch (e) { setMsg("✕ move not saved: " + String(e)); void load(); }
     }
   };
@@ -2194,9 +2234,14 @@ function HotspotEditor({ path, label, canEdit, onClose, onOpenPart }: {
           {/* WHICH marker: its item number, large; and the part it is on. */}
           <div className="mb-hs-id">
             <span className="mb-hs-idno">{selected.item_no ? `#${selected.item_no}` : "#?"}</span>
-            <span className="mb-hs-idk">marker · item no. on the drawing</span>
+            <span className="mb-hs-idk">marker · item no. on the drawing{pendingItem === selected.id && <b className="mb-hs-pend"> · item no. not saved yet</b>}</span>
             <span style={{ flex: 1 }} />
-            <button className="mb-chip" onClick={() => { setSel(null); setTerm(""); setHits([]); }}>Done</button>
+            {/* "Done" saved nothing (18 Sep) — it only deselected. Now it
+                writes what is pending first, and is labelled for what it does. */}
+            <button className={"mb-chip" + (pendingItem === selected.id ? " on" : "")} disabled={busy}
+              onClick={async () => { if (await flushPending()) { setSel(null); setTerm(""); setHits([]); } }}>
+              {pendingItem === selected.id ? "Save" : "Done"}
+            </button>
           </div>
           <div className="mb-hs-card">
             {selected.link === "ok" && selected.image
@@ -2250,9 +2295,14 @@ function HotspotEditor({ path, label, canEdit, onClose, onOpenPart }: {
               value={term} onChange={(e) => setTerm(e.target.value)} onKeyDown={onSearchKey} autoFocus />
             <label className="mb-hs-itemlbl">
               <span>item no.</span>
-              <input className="mb-hs-in" style={{ width: 64, flex: "0 0 auto" }} placeholder="#"
+              <input className={"mb-hs-in" + (selected && pendingItem === selected.id ? " pending" : "")} style={{ width: 64, flex: "0 0 auto" }} placeholder="#"
                 value={selected ? (selected.item_no ?? "") : itemNo}
-                onChange={(e) => selected ? setHots((all) => all.map((x) => x.id === selected.id ? { ...x, item_no: e.target.value } : x)) : setItemNo(e.target.value)} />
+                onChange={(e) => {
+                  if (selected) { setHots((all) => all.map((x) => x.id === selected.id ? { ...x, item_no: e.target.value || null } : x)); setPendingItem(selected.id); }
+                  else setItemNo(e.target.value);
+                }}
+                onBlur={() => { if (selected && pendingItem === selected.id) void saveItemNo(selected.id); }}
+                onKeyDown={(e) => { if (e.key === "Enter" && selected) { e.preventDefault(); void saveItemNo(selected.id); } }} />
             </label>
             {placing && (
               <button className="mb-chip" onClick={() => commitNew(null)} disabled={busy} title="Place it now, link the part later">
@@ -2287,7 +2337,7 @@ function HotspotEditor({ path, label, canEdit, onClose, onOpenPart }: {
           <div className="mb-hs-idk" style={{ padding: "6px 0 2px" }}>on this drawing</div>
           {[...hots].sort((a, b) => (parseInt(a.item_no ?? "", 10) || 999) - (parseInt(b.item_no ?? "", 10) || 999) || a.id - b.id).map((h) => (
             <button key={h.id} className={"mb-hs-li" + (h.id === sel ? " on" : "") + (h.link === "ok" ? "" : h.link === "none" ? " unl" : " bad")}
-              onClick={() => { setSel(h.id === sel ? null : h.id); setPlacing(null); setTerm(""); setHits([]); }}>
+              onClick={() => selectMarker(h.id)}>
               <span className="mb-hs-lino">{h.item_no ?? "·"}</span>
               <span className="mb-hs-litxt">
                 {h.link === "ok" ? <><b>{h.sku}</b> <span className="mb-dim">{h.name}</span></>
@@ -2304,7 +2354,8 @@ function HotspotEditor({ path, label, canEdit, onClose, onOpenPart }: {
   return (
     <div className="mb-lb mb-hs-ed">
       <div className="mb-lb-head">
-        <button className="mb-back" onClick={onClose}>✕</button>
+        <button className="mb-back" title={pendingItem != null ? "saves the item number, then closes" : "close"}
+          onClick={async () => { if (await flushPending()) onClose(); }}>✕</button>
         <span className="mb-lb-cap">{label} · {canEdit ? "editing markers" : "markers"}</span>
         {canEdit && <span className="mb-dim" style={{ fontSize: 12 }}>tap the drawing to place · tap a ring to pick · drag to move · wheel or pinch to zoom{frame && frameFrom === "image" ? " · frame recorded from the image" : ""}</span>}
         {canEdit && (
@@ -2324,7 +2375,7 @@ function HotspotEditor({ path, label, canEdit, onClose, onOpenPart }: {
           <DiagramCanvas href={assetUrl(path)} frame={frame} onFrame={onFrame} onTap={onTap} bind={bind}>
             {hots.map((h) => (
               <Marker key={h.id} x={h.x} y={h.y} r={r}
-                state={h.id === sel ? "sel" : h.dirty ? "dirty" : markerState(h)}
+                state={h.id === sel ? "sel" : h.dirty || h.id === pendingItem ? "dirty" : markerState(h)}
                 title={markerTitle(h)}
                 onPointerDown={(e) => startDrag(h, e)}
                 // canEdit: the select happens in endDrag (the SVG held capture,

@@ -385,6 +385,8 @@ textarea.st-in{resize:vertical;line-height:1.45;font-size:15px}
 .mb-hs-in{flex:1;min-width:0;background:var(--bg);border:1px solid var(--line);color:var(--txt);
   border-radius:8px;padding:8px 10px;font-size:14px;outline:none}
 .mb-hs-in::placeholder{color:var(--dim)}
+.mb-hs-in.pending{border-color:var(--warn);box-shadow:0 0 0 2px rgba(255,194,75,.25)}
+.mb-hs-pend{color:var(--warn);text-transform:none;letter-spacing:0}
 .mb-hs-in:focus{border-color:var(--amber)}
 .mb-hs-hits{display:flex;flex-direction:column;gap:4px;max-height:38vh;overflow:auto}
 .mb-hs-hit{text-align:left;background:transparent;border:1px solid var(--line);border-radius:8px;
