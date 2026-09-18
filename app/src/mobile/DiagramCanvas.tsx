@@ -132,6 +132,11 @@ export function DiagramCanvas({ href, frame, onFrame, children, onTap, onSwipe, 
       anim.current = u < 1 ? requestAnimationFrame(step) : null;
     };
     anim.current = requestAnimationFrame(step);
+    // A background or occluded tab gets no animation frames at all. Then the
+    // destination still has to arrive: snap to it once the animation's time
+    // has clearly passed, so a click never leaves the drawing half-way.
+    const token = anim.current;
+    setTimeout(() => { if (anim.current === token || (anim.current != null && t.current.s !== to.s)) { cancelAnimationFrame(anim.current!); anim.current = null; t.current = { ...to }; apply(); } }, ms + 250);
   }, [apply]);
   const stopAnim = () => { if (anim.current) { cancelAnimationFrame(anim.current); anim.current = null; } };
   /** The transform that shows rect r with padding, clamped to the drawing. */

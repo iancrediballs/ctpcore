@@ -159,6 +159,16 @@ export function DiagramView({ drawings, start, onClose, canEdit, onOpenPart, onE
   };
 
   const step = (n: number) => { if (n >= 0 && n < drawings.length) { setIdx(n); writeHash(drawings[n].key ?? null, null); } };
+  // keyboard: Escape closes, ← → walk the drawings (not while typing a qty)
+  useEffect(() => {
+    const on = (e: KeyboardEvent) => {
+      if ((e.target as HTMLElement)?.tagName === "INPUT") return;
+      if (e.key === "Escape") onClose();
+      else if (e.key === "ArrowRight") step(idx + 1);
+      else if (e.key === "ArrowLeft") step(idx - 1);
+    };
+    window.addEventListener("keydown", on); return () => window.removeEventListener("keydown", on);
+  });
   const r = markerRadius(frame?.w ?? 0, markerScale);
 
   const list = (

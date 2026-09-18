@@ -520,3 +520,7 @@ a.dv-name:hover{color:var(--amber);text-decoration:underline}
 .dv-add{display:flex;align-items:center;gap:6px}
 .dv-qty{width:44px;height:34px;text-align:center;background:var(--bg);border:1px solid var(--line);border-radius:8px;color:var(--txt);font-weight:800}
 .dv-add .mb-chip{height:34px;padding:0 12px;font-size:12.5px}
+@media (max-width:480px){
+  .dv-row{flex-wrap:wrap}
+  .dv-side{flex-basis:100%;flex-direction:row;justify-content:flex-end;align-items:center;gap:10px}
+}
