@@ -272,6 +272,10 @@
 .mb-root.light .mb-toast{box-shadow:0 10px 30px rgba(30,40,50,.22)}
 .mb-root.light .mb-chip.on,.mb-root.light .mb-btn.p,.mb-root.light .mb-segbtn.on,
 .mb-root.light .mb-itembdg,.mb-root.light .mb-tabbadge{color:#fff}
+/* …but not inside the always-dark lightbox, where the token set is the dark
+   one and white-on-light-amber measured 3.5:1 (the "Open part" chip). */
+.mb-root.light .mb-lb .mb-chip.on,.mb-root.light .mb-lb .mb-btn.p{color:#12161A;background:var(--amber);border-color:var(--amber)}
+.mb-root.light .mb-lb .mb-back{background:var(--surf);color:var(--txt)}
 
 /* ─── settings ──────────────────────────────────────────────────────────────
    A deliberately plain, form-shaped area. Everything else in this app is built
@@ -404,17 +408,24 @@ textarea.st-in{resize:vertical;line-height:1.45;font-size:15px}
    the very thing Ian was aiming at. Identity lives in the panel and the
    tooltip. The stroke is non-scaling so the ring stays a ring at every zoom. */
 .dg-mk{cursor:pointer}
-.dg-mk circle{fill:rgba(240,180,60,.14);stroke:var(--amber);stroke-width:3.5;vector-effect:non-scaling-stroke;paint-order:stroke}
-.dg-mk:hover circle{fill:rgba(240,180,60,.28)}
+.dg-mk-hit{fill:transparent;stroke:none}                       /* the forgiving tap target */
+.dg-mk-ring{fill:rgba(255,138,31,.06);stroke:var(--amber);stroke-width:2.5;vector-effect:non-scaling-stroke;paint-order:stroke}
+.dg-mk:hover .dg-mk-ring{fill:rgba(255,138,31,.18);stroke-width:3.5}
 .dg-mk text{fill:#fff;font-family:var(--mono,ui-monospace,monospace);font-weight:700;pointer-events:none;
   paint-order:stroke;stroke:rgba(0,0,0,.6);stroke-width:3px}
-.dg-mk.unl circle{stroke:var(--dim);fill:rgba(125,141,161,.25)}
+.dg-mk.unl .dg-mk-ring{stroke:var(--dim);fill:rgba(125,141,161,.10)}
 /* a marker whose part is retired or gone: the one thing on the drawing that
    must not look fine. Red, dashed, and the tooltip says what happened. */
-.dg-mk.bad circle{stroke:var(--red,#e5484d);fill:rgba(229,72,77,.22);stroke-dasharray:8 6}
-.dg-mk.sel circle{stroke:#fff;stroke-width:5;fill:rgba(240,180,60,.34)}
-.dg-mk.dirty circle{stroke-dasharray:8 6}
-.dg-mk.new circle{stroke-dasharray:8 6;fill:rgba(240,180,60,.35)}
+.dg-mk.bad .dg-mk-ring{stroke:var(--red,#e5484d);fill:rgba(229,72,77,.10);stroke-dasharray:6 4}
+/* selected: weight and colour, not bulk — a white ring with an amber halo,
+   the centre still see-through */
+.dg-mk.sel .dg-mk-ring{stroke:#fff;stroke-width:4;fill:rgba(255,138,31,.12);filter:drop-shadow(0 0 3px var(--amber))}
+.dg-mk.dirty .dg-mk-ring{stroke-dasharray:6 4}
+.dg-mk.new .dg-mk-ring{stroke-dasharray:6 4;fill:rgba(255,138,31,.16)}
+/* the size control (editor header) */
+.mb-hs-size{display:flex;align-items:center;gap:8px;font-size:11px;font-weight:800;letter-spacing:.5px;text-transform:uppercase;color:var(--dim);flex:0 0 auto}
+.mb-hs-size input[type=range]{width:110px;accent-color:var(--amber)}
+.mb-hs-size b{color:var(--txt);font-family:var(--mono,ui-monospace,monospace);min-width:34px;text-align:right}
 .mb-hs-stage.dg-host{overflow:hidden;touch-action:none;display:flex}
 
 /* ── hotspot editor layout ──

@@ -17,7 +17,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useStatus } from "@powersync/react";
 import * as api from "../data/api";
 import { assetUrl, photoWebUrl } from "../assets";
-import { DiagramCanvas, Marker, type CanvasApi, type Frame, type Pt } from "./DiagramCanvas";
+import { DiagramCanvas, Marker, loadMarkerScale, saveMarkerScale, markerRadius, MARKER_SCALE_MIN, MARKER_SCALE_MAX, type CanvasApi, type Frame, type Pt } from "./DiagramCanvas";
 import { makeUuid } from "../data/uuid";
 import { buildDocHTML, openPrintWindow, type DocCompany, type DocOrder } from "../invoiceDoc";
 import type { WebHotspot } from "../data/api";
@@ -1796,6 +1796,7 @@ function Lightbox({ items, start, onClose, canEdit, onOpenPart, onEditMarkers }:
   const [zoomed, setZoomed] = useState(false);
   const [marks, setMarks] = useState<{ frame: Frame; hots: WebHotspot[] } | null>(null);
   const [frame, setFrame] = useState<Frame | null>(null);
+  const markerScale = loadMarkerScale();   // the editor's setting, so the two agree
   const item = items[idx];
 
   useEffect(() => {
@@ -1821,7 +1822,7 @@ function Lightbox({ items, start, onClose, canEdit, onOpenPart, onEditMarkers }:
   // Only a marker on a LIVE part opens one; a retired/missing link is drawn
   // as a fault (state "bad") and a tap says so instead of failing later.
   const markerEls = useMemo(() => marks?.hots.map((h) => (
-    <Marker key={h.id} x={h.x} y={h.y} r={Math.max(h.radius, (frame?.w ?? 0) * 0.022)}
+    <Marker key={h.id} x={h.x} y={h.y} r={markerRadius(frame?.w ?? 0, markerScale)}
       label={h.item_no ?? "•"} state={markerState(h)}
       title={markerTitle(h)}
       onClick={(e) => { e.stopPropagation(); if (h.link === "ok" && h.part_id != null && onOpenPart) onOpenPart(h.part_id); }} />
@@ -2047,6 +2048,9 @@ function HotspotEditor({ path, label, canEdit, onClose, onOpenPart }: {
   const [diagramId, setDiagramId] = useState<number | null>(null);
   const [frame, setFrame] = useState<Frame | null>(null);
   const [frameFrom, setFrameFrom] = useState<"db" | "image" | null>(null);
+  // Ian's "I can't resize": the ring size, one slider, remembered on the device.
+  const [markerScale, setMarkerScale] = useState(loadMarkerScale);
+  const setScale = (v: number) => { setMarkerScale(v); saveMarkerScale(v); };
   const [hots, setHots] = useState<EditorHotspot[]>([]);
   const [sel, setSel] = useState<number | null>(null);
   const [placing, setPlacing] = useState<Pt | null>(null);
@@ -2169,7 +2173,7 @@ function HotspotEditor({ path, label, canEdit, onClose, onOpenPart }: {
   };
 
   const selected = hots.find((h) => h.id === sel) ?? null;
-  const r = Math.max(58, (frame?.w ?? 0) * 0.022);
+  const r = markerRadius(frame?.w ?? 0, markerScale);
   const linked = hots.filter((h) => h.link === "ok").length;
   const faulty = hots.filter((h) => h.link === "retired" || h.link === "missing").length;
 
@@ -2303,6 +2307,14 @@ function HotspotEditor({ path, label, canEdit, onClose, onOpenPart }: {
         <button className="mb-back" onClick={onClose}>✕</button>
         <span className="mb-lb-cap">{label} · {canEdit ? "editing markers" : "markers"}</span>
         {canEdit && <span className="mb-dim" style={{ fontSize: 12 }}>tap the drawing to place · tap a ring to pick · drag to move · wheel or pinch to zoom{frame && frameFrom === "image" ? " · frame recorded from the image" : ""}</span>}
+        {canEdit && (
+          <label className="mb-hs-size" title="Ring size on every drawing, remembered on this device">
+            <span>ring size</span>
+            <input type="range" min={MARKER_SCALE_MIN} max={MARKER_SCALE_MAX} step={0.1} value={markerScale}
+              onChange={(e) => setScale(Number(e.target.value))} />
+            <b>{Math.round(markerScale * 100)}%</b>
+          </label>
+        )}
       </div>
 
       <div className="mb-hs-body">

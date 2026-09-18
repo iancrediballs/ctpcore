@@ -271,10 +271,28 @@ export function DiagramCanvas({ href, frame, onFrame, children, onTap, onSwipe, 
   );
 }
 
+// ── marker size ──────────────────────────────────────────────────────────
+// A ring is sized to SIT ON a printed callout, not swallow it: the default is
+// 1% of the drawing's width (≈20 units on a 1983-wide SEC drawing, a 40-unit
+// ring around a ~28-unit numeral). The stored hotspot.radius (58, the old
+// desktop's filled disc) is ignored for display. Ian's "I can't resize" is
+// this multiplier: one setting, persisted on the device, honoured by the
+// viewer and the editor alike so what he sizes is what everyone sees.
+const SCALE_KEY = "ctp.marker_scale";
+export const MARKER_SCALE_MIN = 0.5, MARKER_SCALE_MAX = 3;
+export function loadMarkerScale(): number {
+  try { const v = Number(localStorage.getItem(SCALE_KEY)); return v >= MARKER_SCALE_MIN && v <= MARKER_SCALE_MAX ? v : 1; } catch { return 1; }
+}
+export function saveMarkerScale(v: number) { try { localStorage.setItem(SCALE_KEY, String(v)); } catch { /* private mode */ } }
+/** Display radius in drawing units for a frame of width w. */
+export function markerRadius(frameW: number, scale: number): number {
+  return Math.max(6, frameW * 0.010 * scale);
+}
+
 /** A callout marker in drawing units: an open ring, no number — the drawing's
- *  printed callouts stay readable underneath. Radius is the hotspot's own (58
- *  by default), so it scales with the drawing like everything else. `label`
- *  is accepted for the tooltip fallback only; it is never drawn. */
+ *  printed callouts stay readable underneath. `label` is accepted for the
+ *  tooltip fallback only; it is never drawn. The hit target is a larger
+ *  invisible disc, so a small ring is still an easy tap. */
 export function Marker({ x, y, r, label, state, title, onPointerDown, onClick }: {
   x: number; y: number; r: number; label?: string;
   /** unl = placed, no part yet. bad = points at a retired or missing part:
@@ -288,7 +306,8 @@ export function Marker({ x, y, r, label, state, title, onPointerDown, onClick }:
     <g className={"dg-mk" + (state ? " " + state : "")} transform={`translate(${x} ${y})`}
       data-marker="1" onPointerDown={onPointerDown} onClick={onClick}>
       {(title ?? label) && <title>{title ?? label}</title>}
-      <circle r={r} />
+      <circle className="dg-mk-hit" r={r * 1.9} />
+      <circle className="dg-mk-ring" r={r} />
     </g>
   );
 }
