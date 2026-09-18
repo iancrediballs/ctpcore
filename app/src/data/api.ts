@@ -267,6 +267,13 @@ export type DiagramHotspots = {
   img_w: number | null; img_h: number | null; hotspots: WebHotspot[];
 };
 export const listHotspots = (path: string) => call<DiagramHotspots>("list_hotspots", { path });
+/** Per-part commerce data for the drawing's parts list. on_hand / list_minor
+ *  are NULL on a device that does not sync stock or prices (customers). */
+export type DiagramPart = {
+  id: number; sku: string; name: string; catalogue_pn: string | null; image: string | null;
+  on_hand: number | null; list_minor: number | null;
+};
+export const diagramParts = (partIds: number[]) => call<DiagramPart[]>("diagram_parts", { partIds });
 /** Keyed on clientUuid when the marker has one; a marker that predates the
  *  key (every one placed before 0036) is addressed by its id instead. */
 export const saveHotspot = (a: {

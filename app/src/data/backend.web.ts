@@ -1107,6 +1107,35 @@ async function listHotspots(a: Record<string, unknown>): Promise<unknown> {
   };
 }
 
+/** What the parts list beside a drawing shows per part: the OEM number, the
+ *  photo, and — when this device has the data — stock on hand and the list
+ *  price. A customer device never syncs stock_movement or price (0015), so
+ *  those come back NULL, not 0: "no figure" and "none in stock" must never
+ *  look the same. Commerce data joined to the drawing, never stored in it. */
+async function diagramParts(a: Record<string, unknown>): Promise<unknown> {
+  const ids = (Array.isArray(a["partIds"]) ? a["partIds"] : []).map((x) => String(x));
+  if (ids.length === 0) return [];
+  // whether stock/price data exists on this device at all — the customer
+  // bucket carries neither table
+  const has = await one<Row>(
+    `SELECT (SELECT COUNT(*) FROM stock_movement) AS mv, (SELECT COUNT(*) FROM price) AS pr`);
+  const hasStock = Number(has?.["mv"] ?? 0) > 0, hasPrice = Number(has?.["pr"] ?? 0) > 0;
+  const rows = await all(
+    `SELECT p.id, p.sku, p.name, p.catalogue_pn,
+            COALESCE((SELECT SUM(m.delta) FROM stock_movement m WHERE m.part_id = p.id), 0) AS on_hand,
+            (SELECT pr.amount_minor FROM price pr WHERE pr.part_id = p.id AND pr.tier = 'list'
+              AND pr.deleted_at IS NULL ORDER BY pr.valid_from DESC LIMIT 1) AS list_minor,
+            (SELECT pi.path FROM part_image pi WHERE pi.part_id = p.id AND pi.deleted_at IS NULL
+              ORDER BY pi.is_primary DESC, pi.sort_order LIMIT 1) AS image
+       FROM part p WHERE p.id IN (${ids.map(() => "?").join(",")}) AND p.deleted_at IS NULL`, ids);
+  return rows.map((r) => ({
+    id: numId(r["id"], "part.id"), sku: str(r["sku"]), name: str(r["name"]),
+    catalogue_pn: nstr(r["catalogue_pn"]), image: nstr(r["image"]),
+    on_hand: hasStock ? Number(r["on_hand"] ?? 0) : null,
+    list_minor: hasPrice ? nnum(r["list_minor"]) : null,
+  }));
+}
+
 /** Insert or move a marker. Keyed on client_uuid (UNIQUE since 0036), so a
  *  save that is retried after a dropped connection lands once. */
 async function saveHotspot(a: Record<string, unknown>): Promise<unknown> {
@@ -1184,6 +1213,7 @@ const PORTED: Record<string, Handler> = {
   price_quote: (a) => priceQuote(a),
   quote_price_check: (a) => quotePriceCheck(a),
   list_hotspots: (a) => listHotspots(a),
+  diagram_parts: (a) => diagramParts(a),
   save_hotspot: (a) => saveHotspot(a),
   delete_hotspot: (a) => deleteHotspot(a),
   set_diagram_dims: (a) => setDiagramDims(a),

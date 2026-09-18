@@ -18,6 +18,9 @@ import { useStatus } from "@powersync/react";
 import * as api from "../data/api";
 import { assetUrl, photoWebUrl } from "../assets";
 import { DiagramCanvas, Marker, loadMarkerScale, saveMarkerScale, markerRadius, MARKER_SCALE_MIN, MARKER_SCALE_MAX, type CanvasApi, type Frame, type Pt } from "./DiagramCanvas";
+import { DiagramView, readDiagramHash, type Drawing } from "./DiagramView";
+import { markerState, markerTitle } from "./hotspotState";
+import type { DiagramPart } from "../data/api";
 import { makeUuid } from "../data/uuid";
 import { buildDocHTML, openPrintWindow, type DocCompany, type DocOrder } from "../invoiceDoc";
 import type { WebHotspot } from "../data/api";
@@ -293,6 +296,25 @@ export default function MobileShell() {
   // anywhere in the batch silently took down the whole order desk.
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [hotspotEditor, setHotspotEditor] = useState<{ path: string; label: string } | null>(null);
+  // The diagram viewer (split pane, parts list). Photos keep the lightbox.
+  const [diagram, setDiagram] = useState<{ idx: number; part: number | null } | null>(null);
+  // Every section that has a drawing, in code order — prev/next walks this.
+  const drawings = useMemo<Drawing[]>(() => sections.filter((s) => s.diagram).map((s) => ({ path: s.diagram!, label: s.name, key: "SEC" + s.id })), [sections]);
+  const openDiagram = useCallback((path: string, part: number | null = null) => {
+    const i = drawings.findIndex((x) => x.path === path);
+    if (i >= 0) setDiagram({ idx: i, part });
+    else setViewer({ items: [{ path, label: "Diagram", diagram: true }], idx: 0 });   // a drawing with no section row
+  }, [drawings]);
+  // Deep link on load: #dg=SEC101&part=1019 lands on the part once the
+  // sections have synced.
+  const deepDone = useRef(false);
+  useEffect(() => {
+    if (deepDone.current || drawings.length === 0) return;
+    const h = readDiagramHash(); if (!h) { deepDone.current = true; return; }
+    const i = drawings.findIndex((x) => x.key === h.key);
+    if (i >= 0) { setDiagram({ idx: i, part: h.part }); setTab("find"); }
+    deepDone.current = true;
+  }, [drawings]);
   const [ordersErr, setOrdersErr] = useState<string | null>(null);
   const [mineErr, setMineErr] = useState<string | null>(null);
   const [openOrder, setOpenOrder] = useState<number | null>(null);
@@ -898,7 +920,7 @@ const parseRand = (s: string): number => {
           if (!s?.diagram) return null;
           return (
             <div className="mb-dgm" role="button" style={{ marginTop: 4 }}
-              onClick={() => setViewer({ items: [{ path: s.diagram!, label: s.name, diagram: true }], idx: 0 })}>
+              onClick={() => openDiagram(s.diagram!)}>
               <img src={assetUrl(s.diagram)} alt={s.name} loading="lazy" />
               <span className="mb-zoomtag">⤢</span>
               <div className="mb-dgm-cap">
@@ -1512,10 +1534,7 @@ const parseRand = (s: string): number => {
 
             {d.diagram_image && (
               <div className="mb-dgm" role="button"
-                onClick={() => setViewer({
-                  items: [{ path: d.diagram_image!, label: `${d.drawing_no ?? d.category_name ?? "Diagram"}${d.diagram_item ? ` · item ${d.diagram_item}` : ""}`, diagram: true }],
-                  idx: 0,
-                })}>
+                onClick={() => openDiagram(d.diagram_image!, d.id)}>
                 <img src={assetUrl(d.diagram_image)} alt="Section diagram" loading="lazy" />
                 <span className="mb-zoomtag">⤢</span>
                 <div className="mb-dgm-cap">
@@ -1652,6 +1671,14 @@ const parseRand = (s: string): number => {
         : tab === "cart" ? (isClient ? cartView : ordersView)
         : listView}
       {sheet}
+      {diagram && !hotspotEditor && (
+        <DiagramView drawings={drawings} start={diagram.idx} deepPart={diagram.part} canEdit={!isClient}
+          onClose={() => { setDiagram(null); if (/^#dg=/.test(location.hash)) history.replaceState(null, "", location.pathname + location.search); }}
+          onOpenPart={(pid) => { void openPart(pid); }}
+          onEditMarkers={(path, label) => setHotspotEditor({ path, label })}
+          onAddToRequest={isClient ? (p: DiagramPart, n: number) => { addToCart({ id: p.id, sku: p.sku, name: p.name } as Detail, n); showToast({ text: `${p.sku} × ${n} added to your request` }); } : undefined}
+          inRequest={isClient ? inCart : undefined} />
+      )}
       {viewer && !hotspotEditor && (
         <Lightbox items={viewer.items} start={viewer.idx} onClose={() => setViewer(null)}
           canEdit={!isClient}
@@ -2021,21 +2048,7 @@ function Counter({ d, onPost, onMove, onClose }: {
 
 type EditorHotspot = WebHotspot & { dirty?: boolean };
 
-/** How a marker is drawn and what its tooltip says, from the backend's verdict.
- *  One place for the viewer and the editor, so a bad row looks the same on
- *  both — flagged, never blank. */
-function markerState(h: WebHotspot): "" | "unl" | "bad" {
-  return h.link === "ok" ? "" : h.link === "none" ? "unl" : "bad";
-}
-function markerTitle(h: WebHotspot): string {
-  const no = h.item_no ? "#" + h.item_no + " · " : "";
-  switch (h.link) {
-    case "ok": return `${no}${h.name ?? ""}`;
-    case "none": return `${no}no part linked`;
-    case "retired": return `${no}linked to a RETIRED part${h.was_sku ? ` (${h.was_sku})` : ""} — relink it in the editor`;
-    default: return `${no}linked to part #${h.part_id} which no longer exists — relink it in the editor`;
-  }
-}
+
 
 // The editor sits on the same canvas as the viewer, so what Ian places is what
 // a customer sees: same viewBox, same units, same transform. A drag converts
