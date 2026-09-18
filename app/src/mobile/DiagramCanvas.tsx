@@ -167,7 +167,15 @@ export function DiagramCanvas({ href, frame, onFrame, children, onTap, onSwipe, 
   // ── pointers: pan, pinch, double-tap, swipe ─────────────────────────────
   const onDown = (e: React.PointerEvent) => {
     const onMarker = !!(e.target as Element).closest("[data-marker]");
-    capturePointer(svgRef.current, e.pointerId);
+    // NO capture when the press is on a marker. An element holding pointer
+    // capture receives the derived `click` (Chrome dispatches it to the
+    // capturing element, not the element under the pointer), so capturing on
+    // the <svg> here silently stole every marker's onClick — 18 Sep, "tapping
+    // a marker does nothing". Pan and pinch capture as before; a marker press
+    // leaves the pointer alone so its click reaches the <g>. An editor that
+    // needs to drag a marker captures explicitly (CanvasApi.capture) and then
+    // owns the press→release decision itself.
+    if (!onMarker) capturePointer(svgRef.current, e.pointerId);
     ptrs.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
     if (ptrs.current.size === 2) {
       const [a, b] = [...ptrs.current.values()];

@@ -2132,11 +2132,19 @@ function HotspotEditor({ path, label, canEdit, onClose, onOpenPart }: {
   };
 
   // ── drag to move: pointer → drawing units through the SVG matrix ────────
+  // Because the SVG takes pointer capture for the drag, the browser's `click`
+  // for this press goes to the SVG, not the marker — so the marker's onClick
+  // cannot be the select. The press→release is decided HERE from the pointer
+  // we already track: no movement = select (toggle), movement = move. A
+  // zero-distance press must never be swallowed as an empty drag.
   const startDrag = (h: EditorHotspot, e: React.PointerEvent<SVGGElement>) => {
     if (!canEdit) return;
     e.stopPropagation();
     canvas.current?.capture(e.pointerId);
     dragging.current = { id: h.id, moved: false, pointerId: e.pointerId };
+  };
+  const selectMarker = (id: number) => {
+    setSel((cur) => (cur === id ? null : id)); setPlacing(null); setTerm(""); setHits([]);
   };
   const onDragMove = (e: React.PointerEvent) => {
     const d = dragging.current;
@@ -2150,7 +2158,7 @@ function HotspotEditor({ path, label, canEdit, onClose, onOpenPart }: {
     const d = dragging.current;
     if (!d) return;
     dragging.current = null;
-    if (!d.moved) return;
+    if (!d.moved) { selectMarker(d.id); return; }
     const h = hots.find((x) => x.id === d.id);
     if (h && diagramId != null) {
       try {
@@ -2187,10 +2195,12 @@ function HotspotEditor({ path, label, canEdit, onClose, onOpenPart }: {
               state={h.id === sel ? "sel" : h.dirty ? "dirty" : markerState(h)}
               title={markerTitle(h)}
               onPointerDown={(e) => startDrag(h, e)}
+              // canEdit: the select happens in endDrag (the SVG held capture,
+              // so no click reaches here). Read-only: no capture was taken,
+              // the click arrives, and a live part opens.
               onClick={(e) => {
                 e.stopPropagation();
-                if (canEdit) { setSel(h.id === sel ? null : h.id); setPlacing(null); setTerm(""); setHits([]); }
-                else if (h.link === "ok" && h.part_id != null) onOpenPart(h.part_id);
+                if (!canEdit && h.link === "ok" && h.part_id != null) onOpenPart(h.part_id);
               }} />
           ))}
           {placing && <Marker x={placing.x} y={placing.y} r={r} label="+" state="new" />}
