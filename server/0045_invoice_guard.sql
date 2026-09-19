@@ -12,10 +12,12 @@
 --
 -- So the hole is structural, not functional: nothing stopped a row from
 -- BECOMING invoiced without a number. This closes it at the database:
---   1. CHECK: status = 'invoiced' implies invoice_no is set. NOT VALID, so the
---      five legacy rows (whose real numbers live in Zoho — one has its Zoho
---      number as its ORDER number, INV-26072403) stay as they are and only new
---      writes are checked. They remain a reporting item for Ian.
+--   1. CHECK: status = 'invoiced' implies invoice_no is set — for any order
+--      created since 0042 went live (2026-09-14). The five legacy rows (whose
+--      real numbers live in Zoho — one has its Zoho number as its ORDER
+--      number, INV-26072403) are exempt by date rather than by NOT VALID, so
+--      they stay editable (notes, etc.) until Ian gives them their numbers.
+--      They remain a reporting item.
 --   2. TRIGGER: the transition INTO 'invoiced' is allowed only inside
 --      invoice_order() — a raw UPDATE from the Data API, a desktop sync or a
 --      script cannot mark an order invoiced, with or without a number it made
@@ -36,9 +38,9 @@ begin;
 alter table public.sales_order drop constraint if exists sales_order_invoiced_has_no_chk;
 alter table public.sales_order
   add constraint sales_order_invoiced_has_no_chk
-  check (status <> 'invoiced' or invoice_no is not null) not valid;
+  check (status <> 'invoiced' or invoice_no is not null or created_at < '2026-09-14');
 comment on constraint sales_order_invoiced_has_no_chk on public.sales_order is
-  'A tax invoice carries a number. NOT VALID: five pre-0042 rows are exempt (their numbers are in Zoho).';
+  'A tax invoice carries a number. Orders created before 0042 (2026-09-14) are exempt: their numbers are in Zoho.';
 
 create or replace function public.sales_order_invoice_guard()
 returns trigger language plpgsql as $$
@@ -206,8 +208,7 @@ end $$;
 commit;
 
 -- VERIFY (SQL editor):
---   select convalidated from pg_constraint where conname='sales_order_invoiced_has_no_chk';   -- f (NOT VALID)
---   select count(*) from sales_order where status='invoiced' and invoice_no is null;          -- 5 legacy, unchanged
+--   select count(*) from sales_order where status='invoiced' and invoice_no is null;          -- 5 legacy, unchanged, all created before 2026-09-14
 --   as a staff login:  update sales_order set status='invoiced' where id=<a fulfilled order>;  -- refused 42501
 -- REVERSE:
 --   drop trigger if exists sales_order_invoice_guard on public.sales_order;

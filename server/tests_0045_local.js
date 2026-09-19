@@ -24,7 +24,7 @@ const res = []; const check = (n, ok, d) => { res.push(ok); console.log((ok ? "P
     insert into customer (id,code,name,auth_user_id) values (1,'C','Cust','${CUST}');
     insert into stock_movement (part_id,location_id,delta,reason,client_uuid) values (1,10,5,'receipt','r1'),(2,10,5,'receipt','r2');
     -- a LEGACY row: invoiced with no number, as the five live ones are
-    insert into sales_order (id,number,customer_id,location_id,status,currency,tax_rate_bps) values (900,'SO-LEGACY',1,10,'invoiced','ZAR',1500);
+    insert into sales_order (id,number,customer_id,location_id,status,currency,tax_rate_bps,created_at) values (900,'SO-LEGACY',1,10,'invoiced','ZAR',1500,'2026-06-29');
     select setval(pg_get_serial_sequence('sales_order','id'), 1000);`);
   const as = (u) => exec(`select set_config('ctp.uid','${u}',false)`);
   // BEFORE 0045: the overflow is real
@@ -35,7 +35,7 @@ const res = []; const check = (n, ok, d) => { res.push(ok); console.log((ok ? "P
   // apply 0045 (server session)
   await as(""); await exec(fs.readFileSync(path.join(SRV, "0045_invoice_guard.sql"), "utf8"));
   const legacy = (await q("select status, invoice_no from sales_order where id=900"))[0];
-  check("legacy invoiced row with no number is untouched (NOT VALID)", legacy.status === "invoiced" && legacy.invoice_no === null);
+  check("legacy invoiced row with no number is untouched (pre-0042, exempt by date)", legacy.status === "invoiced" && legacy.invoice_no === null);
   await as(STAFF);
   e = await fails("select quote_price_check($1, $2::jsonb)", [oid, JSON.stringify([{ line_id: lid, unit_price_minor: 375929 }])]);
   check("AFTER: the same check returns findings, no overflow", e === null, e);
@@ -56,8 +56,9 @@ const res = []; const check = (n, ok, d) => { res.push(ok); console.log((ok ? "P
   await as("");
   e = await fails("update sales_order set invoice_no='ZOHO-0042' where id=$1", [900]);
   check("server session (no auth.uid) may repair a legacy row by giving it its number", e === null, e);
+  await exec("update sales_order set invoice_no=null where id=900");
   e = await fails("update sales_order set notes='touched' where id=$1", [900]);
-  check("a legacy row still without a number cannot be touched until it has one (CHECK re-runs on UPDATE)", /invoiced_has_no_chk/.test(e || "") || e === null, e);
+  check("a legacy row (pre-0042) stays editable with no number — Ian can still work on it", e === null, e);
   e = await fails("update sales_order set status='invoiced', invoice_no=null where id=$1", [oid]);
   check("CHECK: a NEW row cannot be invoiced without a number, even by the server", /invoiced_has_no_chk/.test(e || ""), e);
   const n = res.filter(Boolean).length; console.log(`\n${n}/${res.length} passed`); process.exit(n === res.length ? 0 : 1);
