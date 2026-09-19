@@ -42,7 +42,7 @@
 //   non-http(s) scheme. So the guard WAS the whole bug on that count. It is
 //   still wrapped in a catch below, because quota exhaustion is real and an
 //   image that fails to cache must still be shown.
-const CACHE = "ctp-core-v13";
+const CACHE = "ctp-core-v14";   // v14: diagram viewer + desktop skin ship (2026-09-19)
 const ASSET_HOST = "hkzmydowyiajkbakxfkj.supabase.co";
 
 // ── TIMEOUTS, and the mistake the first version of this file made with them.

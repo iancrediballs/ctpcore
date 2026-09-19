@@ -222,7 +222,12 @@
 .mb-secname{font-size:15px;font-weight:850;color:var(--txt);line-height:1.2}
 .mb-seccount{font-size:11px;font-weight:850;color:var(--amber);text-transform:uppercase;letter-spacing:.5px}
 /* one wide column on anything tablet-sized and up */
-@media (min-width:620px){.mb-secgrid{grid-template-columns:repeat(3,minmax(0,1fr))}}
+/* Section tiles: 2 across on a phone, 3 on a tablet, 4 on a desktop — and
+   never more than 4 (Ian, 19 Sep): a wider screen gets bigger tiles, not more
+   of them. The old auto-fill gave six across at 1920 with the truck art
+   swamping the page. */
+@media (min-width:768px){.mb-secgrid{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media (min-width:1024px){.mb-secgrid{grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}}
 /* staff order desk */
 .mb-price-in{width:96px;flex:0 0 auto;height:40px;padding:0 10px;border-radius:10px;text-align:right;
   background:var(--surf2);border:1.5px solid var(--line);color:var(--txt);font:inherit;font-size:16px;
@@ -420,7 +425,7 @@ textarea.st-in{resize:vertical;line-height:1.45;font-size:15px}
   /* home: section tiles, as many across as fit */
   .mb-secall{padding:14px 18px}
   .mb-secall-t{font-size:19px}
-  .mb-secgrid{grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:12px}
+  .mb-secgrid{grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}   /* 4, never more — see the rule above */
   .mb-secname{font-size:14px}
 
   /* the part sheet slides over the content column only; the sidebar stays */
