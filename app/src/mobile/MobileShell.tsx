@@ -23,6 +23,7 @@ import { markerState, markerTitle } from "./hotspotState";
 import type { DiagramPart } from "../data/api";
 import { makeUuid } from "../data/uuid";
 import { buildDocHTML, openPrintWindow, type DocCompany, type DocOrder } from "../invoiceDoc";
+import { ShelfRefusedError } from "../data/errors";
 import type { WebHotspot } from "../data/api";
 import { useAuth, type Role } from "../auth/AuthProvider";
 import SettingsView from "../admin/SettingsView";
@@ -441,6 +442,18 @@ export default function MobileShell() {
     toastTimer.current = window.setTimeout(() => setToast(null), 6000);
   }, []);
 
+  // 0049: a movement this device booked while its ledger was stale, refused by
+  // the server's shelf guard on upload. It was dropped, not retried; say so.
+  useEffect(() => {
+    const h = (ev: Event) => {
+      const msg = (ev as CustomEvent<{ message: string }>).detail?.message;
+      showToast({ text: (msg ?? "A stock movement was refused by the shelf guard.") + " That entry was not booked.", err: true });
+      refresh();
+    };
+    window.addEventListener("ctp-sync-refused", h);
+    return () => window.removeEventListener("ctp-sync-refused", h);
+  }, [showToast, refresh]);
+
   // ── desktop keyboard (P12a) ──
   // A mouse-and-keyboard user expects the cursor to be in the search box, and
   // Escape to close whatever is on top. Both are desktop-only: a phone has no
@@ -576,7 +589,7 @@ export default function MobileShell() {
       reloadDetail(d.id);
     } catch (e) {
       console.error(e);
-      showToast({ text: "Post failed — nothing was booked.", err: true });
+      showToast({ text: e instanceof ShelfRefusedError ? e.message : "Post failed — nothing was booked.", err: true });
     }
   }, [showToast, reloadDetail]);
 

@@ -60,7 +60,21 @@ export class SupabaseConnector implements PowerSyncBackendConnector {
         } else if (op.op === UpdateType.DELETE) {
           res = await table.delete().eq("id", op.id);
         }
-        if (res?.error) throw res.error;
+        if (res?.error) {
+          // 0049: the shelf guard refused this movement ON PURPOSE (SQLSTATE
+          // CT001). Retrying can never succeed and would block every later
+          // write on this device behind it, so the whole local transaction is
+          // dropped (both legs of a transfer go together) and the person is
+          // told why. The local row disappears at the next checkpoint because
+          // the server never had it.
+          if (res.error.code === "CT001") {
+            console.warn("PowerSync upload refused by the shelf guard; dropping:", res.error.message);
+            window.dispatchEvent(new CustomEvent("ctp-sync-refused", { detail: { message: res.error.message } }));
+            await tx.complete();
+            return;
+          }
+          throw res.error;
+        }
       }
       await tx.complete();
     } catch (e) {

@@ -52,6 +52,29 @@ import type { Backend } from "./backend";
 import { makeUuid } from "./uuid";
 import { powerSync } from "../sync/system";
 import { supabase } from "../sync/supabase";
+import { ShelfRefusedError } from "./errors";
+
+/** 0049's rule, run locally before a negative movement is written: on_hand at
+ *  that location (every movement except reserve/release) must not go below
+ *  zero. Positive movements always pass, so an already-negative row can be
+ *  corrected upward. The local ledger can be stale offline, so the server
+ *  trigger remains the authority; this check exists so the refusal is
+ *  immediate and worded, not a dropped upload later. */
+async function shelfCheck(partId: number, locationId: number, delta: number): Promise<void> {
+  if (delta >= 0) return;
+  const r = await one<Row>(
+    `SELECT COALESCE((SELECT SUM(m.delta) FROM stock_movement m
+                       WHERE m.part_id = ? AND m.location_id = ? AND m.reason NOT IN ('reserve','release')), 0) AS on_hand,
+            (SELECT COALESCE(NULLIF(p.name, ''), p.sku) FROM part p WHERE p.id = ?) AS part,
+            (SELECT COALESCE(NULLIF(l.name, ''), l.code) FROM location l WHERE l.id = ?) AS loc`,
+    [String(partId), String(locationId), String(partId), String(locationId)]);
+  const onHand = Number(r?.["on_hand"] ?? 0);
+  if (onHand + delta < 0) {
+    throw new ShelfRefusedError(
+      `Cannot take ${-delta} × ${str(r?.["part"]) || "part " + partId} out of ${str(r?.["loc"]) || "location " + locationId}: ` +
+      `only ${Math.max(onHand, 0)} on the shelf. Count the shelf and book what you find first (a receipt or an adjustment), then try again.`);
+  }
+}
 
 type Row = Record<string, unknown>;
 type Handler = (args: Record<string, unknown>) => Promise<unknown>;
@@ -639,16 +662,21 @@ async function transferStock(a: Record<string, unknown>): Promise<unknown> {
   }
 
   await ready();
+  await shelfCheck(partId, fromId, -qty);
   const now = new Date().toISOString();
-  const leg = async (locationId: number, delta: number, clientUuid: string) =>
-    powerSync.execute(
-      `INSERT INTO stock_movement (id, part_id, location_id, delta, reason, client_uuid, actor_id, created_at)
-       VALUES (?, ?, ?, ?, 'transfer', ?, ?, ?)`,
-      [makeUuid(), String(partId), String(locationId), delta, clientUuid, actorId, now]
-    );
-
-  await leg(fromId, -qty, outUuid);
-  await leg(toId, qty, inUuid);
+  // One local transaction -> one upload unit (0049): if the server refuses
+  // the OUT leg, the IN leg is dropped with it rather than creating stock at
+  // the destination out of nothing. The out leg goes first for that reason.
+  await powerSync.writeTransaction(async (tx) => {
+    const leg = (locationId: number, delta: number, clientUuid: string) =>
+      tx.execute(
+        `INSERT INTO stock_movement (id, part_id, location_id, delta, reason, client_uuid, actor_id, created_at)
+         VALUES (?, ?, ?, ?, 'transfer', ?, ?, ?)`,
+        [makeUuid(), String(partId), String(locationId), delta, clientUuid, actorId, now]
+      );
+    await leg(fromId, -qty, outUuid);
+    await leg(toId, qty, inUuid);
+  });
   return qty;
 }
 
@@ -676,6 +704,7 @@ async function postMovement(a: Record<string, unknown>): Promise<unknown> {
     : raw;
 
   await ready();
+  await shelfCheck(partId, locationId, delta);
   await powerSync.execute(
     `INSERT INTO stock_movement (id, part_id, location_id, delta, reason, client_uuid, actor_id, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
