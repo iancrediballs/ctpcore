@@ -113,7 +113,7 @@ bucket_definitions:
       - SELECT id, name, rev, updated_at, deleted_at FROM brand
       # no locator / inventory_pn / notes / list_price_minor / match_status.
       # catalogue_pn stays: the OEM number is how a customer finds the part.
-      # in_stock (0050) is the ONE stock fact a customer gets: a boolean
+      # in_stock (0049) is the ONE stock fact a customer gets: a boolean
       # derived on the server from the ledger they never see.
       - SELECT id, sku, mpn, brand_id, category_id, name, description, uom,
                weight_g, status, superseded_by, make, model, drawing_no,

@@ -1,4 +1,4 @@
--- 0049_stock_guard.sql — the shelf cannot go below zero.
+-- 0048_stock_guard.sql — the shelf cannot go below zero.
 --
 -- A BEFORE INSERT trigger on the ledger refuses any movement that would take
 -- a part's ON-HAND at that location below zero. Approved by Ian 2026-09-20.
@@ -10,10 +10,11 @@
 -- and the desk sees a backorder; it is fulfil_order that refuses to hand
 -- over what is not there, and this trigger is the backstop under it.
 --
--- Only NEGATIVE deltas are tested, so a row that is already below zero (the
--- Radiator Grille at −1 in WH on the day this ships) can always be corrected
--- UPWARD: +1 brings it to 0 and passes; a further −1 would be refused. The
--- history stays as it is — nothing is rewritten.
+-- Only NEGATIVE deltas are tested, so a row that is already below zero can
+-- always be corrected UPWARD: +1 brings it to 0 and passes; a further −1 would
+-- be refused. (The Radiator Grille was at −1 while this was designed; Ian's
+-- test-order reversal of 2026-09-20 cleared it, so the case is no longer
+-- live — the rule stays because it is the right one.) Nothing is rewritten.
 --
 -- Concurrency: two counter people issuing the same part at once are
 -- serialised on an advisory lock per (part, location) for the length of the
@@ -58,7 +59,7 @@ create trigger stock_movement_guard
   for each row execute function public.stock_movement_guard();
 
 comment on trigger stock_movement_guard on public.stock_movement is
-  'Refuses a negative movement that would take on_hand (shelf, excluding reserve/release) below zero at that location. Positive movements always pass, so an already-negative row can be corrected upward. SQLSTATE CT001 (0049).';
+  'Refuses a negative movement that would take on_hand (shelf, excluding reserve/release) below zero at that location. Positive movements always pass, so an already-negative row can be corrected upward. SQLSTATE CT001 (0048).';
 
 commit;
 

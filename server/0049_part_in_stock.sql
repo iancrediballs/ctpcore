@@ -1,4 +1,4 @@
--- 0050_part_in_stock.sql — customers see in stock / out of stock, never a number.
+-- 0049_part_in_stock.sql — customers see in stock / out of stock, never a number.
 --
 -- Approved by Ian 2026-09-20. A customer's device never syncs stock_movement
 -- (the ledger reveals sales volumes), so the answer is derived HERE, once,
@@ -7,7 +7,7 @@
 -- number itself still never leaves the server.
 --
 -- Definition: in_stock = AVAILABLE across every location > 0, where
--- available is stock_position's (0047): on_hand minus what is held for
+-- available is stock_position's (0046): on_hand minus what is held for
 -- accepted orders. A part that is on the shelf but entirely spoken for reads
 -- "out of stock" to the next customer — which is what the counter would say.
 -- (Assumption made here; flip the reason filter below if Ian wants shelf.)
@@ -25,7 +25,7 @@ begin;
 
 alter table public.part add column if not exists in_stock boolean not null default false;
 comment on column public.part.in_stock is
-  'Derived: available stock (on hand minus holds) across all locations > 0. Maintained by trigger on stock_movement (0050). The only stock fact a customer device receives.';
+  'Derived: available stock (on hand minus holds) across all locations > 0. Maintained by trigger on stock_movement (0049). The only stock fact a customer device receives.';
 
 create or replace function public.part_in_stock_refresh()
 returns trigger language plpgsql security definer set search_path = public, pg_temp as $$
