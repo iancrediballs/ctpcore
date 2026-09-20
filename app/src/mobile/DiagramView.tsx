@@ -173,7 +173,21 @@ export function DiagramView({ drawings, start, onClose, canEdit, onOpenPart, onE
 
   const list = (
     <div className="dv-list" ref={listRef}>
-      <div className="dv-list-head">{rows.length} part{rows.length === 1 ? "" : "s"} on this drawing{rows.length === 0 ? " — none marked up yet" : ""}</div>
+      {/* The edit entry point lives here as well as in the header: Ian went
+          looking for it in the list and did not find it (20 Sep). Staff only;
+          a customer login sees neither, by design. */}
+      <div className="dv-list-head">
+        <span>{rows.length} part{rows.length === 1 ? "" : "s"} on this drawing{rows.length === 0 ? " — none marked up yet" : ""}</span>
+        {canEdit && onEditMarkers && (
+          <button className="dv-edit" onClick={() => onEditMarkers(d.path, d.label)}>{rows.length ? "✎ Edit markers" : "✎ Add markers"}</button>
+        )}
+      </div>
+      {rows.length === 0 && canEdit && onEditMarkers && (
+        <div className="dv-empty">
+          <p>No callouts on this drawing yet. Place a ring on each printed callout and link it to its part — the list fills in as you go.</p>
+          <button className="mb-chip on" onClick={() => onEditMarkers(d.path, d.label)}>Start marking up</button>
+        </div>
+      )}
       {rows.map((row) => {
         const p = row.partId != null ? parts[row.partId] : undefined;
         const on = row.key === sel;
