@@ -43,12 +43,14 @@ type Section = {
 type PartRow = {
   id: number; sku: string; name: string; category_code: string | null;
   qty_on_hand: number; bin: string | null; price_cents: number | null;
+  // 0050: the one stock fact a customer gets. null = not synced yet (unknown).
+  in_stock?: boolean | null;
   image?: string | null;
 };
 
 type Hit = {
   id: number; sku: string; name: string; brand: string | null;
-  on_hand: number; price_cents: number | null; matched_on: string;
+  on_hand: number; in_stock?: boolean | null; price_cents: number | null; matched_on: string;
   bin?: string | null; thumb?: string | null;
 };
 
@@ -67,7 +69,7 @@ type Detail = {
   id: number; sku: string; name: string; locator: string | null;
   catalogue_pn: string | null; inventory_pn: string | null; brand: string | null;
   category_name: string | null; drawing_no: string | null; notes: string | null;
-  price_cents: number | null; total_on_hand: number;
+  price_cents: number | null; total_on_hand: number; in_stock?: boolean | null;
   stock: StockLine[]; ledger: LedgerLine[];
   images: { id: number; path: string; is_primary: boolean }[];
   diagram_image: string | null; diagram_item: string | null;
@@ -900,7 +902,7 @@ const parseRand = (s: string): number => {
     if (hits) {
       return hits.map((h) => ({
         id: h.id, sku: h.sku, name: h.name, category_code: null,
-        qty_on_hand: h.on_hand, bin: h.bin ?? null, price_cents: h.price_cents,
+        qty_on_hand: h.on_hand, in_stock: h.in_stock ?? null, bin: h.bin ?? null, price_cents: h.price_cents,
         image: h.thumb ?? null,
       }));
     }
@@ -1049,8 +1051,17 @@ const parseRand = (s: string): number => {
               <span className="mb-csku mb-mono">{p.sku}</span>
               {/* A client's device holds no bins and no stock movements, so
                   these would not merely be private — they would be WRONG
-                  (every count would read zero). Omitted, not blanked. */}
-              {!isClient && (
+                  (every count would read zero). Omitted, not blanked. What a
+                  customer DOES get is in_stock (0050): yes/no, never a
+                  number, derived on the server. Unknown (not synced yet)
+                  shows nothing rather than "out". */}
+              {isClient ? (
+                p.in_stock != null && (
+                  <span className="mb-cmeta">
+                    <span className={"mb-qty" + (p.in_stock ? "" : " zero")}>{p.in_stock ? "In stock" : "Out of stock"}</span>
+                  </span>
+                )
+              ) : (
                 <span className="mb-cmeta">
                   {p.bin && <span className="mb-bin"><IcPin />{p.bin}</span>}
                   <span className={"mb-qty" + qtyClass(p.qty_on_hand)}>
@@ -1636,11 +1647,22 @@ const parseRand = (s: string): number => {
             </div>
 
             {isClient ? (
-              <div className="mb-box">
-                <div className="mb-k">Part number</div>
-                <div className="mb-v mono-pn">{d.catalogue_pn ?? d.sku}</div>
-                <div className="mb-sub">Add it to your request and we'll quote you</div>
-              </div>
+              <>
+                <div className="mb-box">
+                  <div className="mb-k">Part number</div>
+                  <div className="mb-v mono-pn">{d.catalogue_pn ?? d.sku}</div>
+                  <div className="mb-sub">Add it to your request and we'll quote you</div>
+                </div>
+                {/* 0050: availability without the number. Stacked, not beside
+                    the part number — a long OEM number needs the width. */}
+                {d.in_stock != null && (
+                  <div className="mb-box" style={{ marginTop: 8 }}>
+                    <div className="mb-k">Availability</div>
+                    <div className={"mb-v" + (d.in_stock ? " g" : " z")} style={{ fontSize: 18 }}>{d.in_stock ? "In stock" : "Out of stock"}</div>
+                    <div className="mb-sub">{d.in_stock ? "Ready to quote" : "We'll quote a lead time"}</div>
+                  </div>
+                )}
+              </>
             ) : (
               <div className="mb-2col">
                 <div className="mb-box hi">

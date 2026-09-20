@@ -119,6 +119,9 @@ const bool = (v: unknown): boolean => Number(v) !== 0;
 const str = (v: unknown): string => (v == null ? "" : String(v));
 const nstr = (v: unknown): string | null => (v == null || v === "" ? null : String(v));
 const nnum = (v: unknown): number | null => (v == null ? null : Number(v));
+/** part.in_stock (0050): NULL until the column has synced (schema older than
+ *  0050) — "unknown" must never read as "out". */
+const nbool = (v: unknown): boolean | null => (v == null || v === "" ? null : Number(v) !== 0);
 
 // ─── the part_detail view, re-expressed ──────────────────────────────────────
 // Mirrors migrations/0013_pricing_reset.sql's CREATE VIEW part_detail — the
@@ -149,6 +152,7 @@ const PART_DETAIL_SQL = `
     p.match_status      AS match_status,
     p.notes             AS notes,
     p.list_price_minor  AS list_price_minor,
+    p.in_stock          AS in_stock,
     COALESCE((SELECT SUM(m.delta) FROM stock_movement m WHERE m.part_id = p.id AND m.reason NOT IN ('reserve','release')), 0) AS qty_on_hand,
     (SELECT sp.bin FROM stock_policy sp WHERE sp.part_id = p.id LIMIT 1) AS bin,
     -- Migration 0013 moved landed cost out of the price table (where it sat
@@ -226,6 +230,7 @@ const SEARCH_SQL = `
   SELECT
     p.id, p.sku, p.name, p.mpn, p.locator, p.catalogue_pn, p.inventory_pn,
     b.name AS brand,
+    p.in_stock AS in_stock,
     COALESCE((SELECT SUM(m.delta) FROM stock_movement m WHERE m.part_id = p.id AND m.reason NOT IN ('reserve','release')), 0) AS on_hand,
     -- Was ORDER BY (currency <> 'USD') first, preferring a USD row. Migration
     -- 0013 deleted every USD price and stopped tracking USD, so that tiebreak
@@ -321,6 +326,7 @@ async function searchParts(query: string): Promise<unknown[]> {
       name: str(r["name"]),
       brand: nstr(r["brand"]),
       on_hand: Number(r["on_hand"]),
+      in_stock: nbool(r["in_stock"]),
       price_cents: nnum(r["price_cents"]),
       matched_on: matched_on ?? `part ${sku}`,
       bin: nstr(r["bin"]),
@@ -423,6 +429,7 @@ async function partDetail(partId: number): Promise<unknown> {
     price_cents: priceCents,
     list_price_minor: nnum(d["list_price_minor"]),
     total_on_hand: stockLines.reduce((t, s) => t + s.on_hand, 0),
+    in_stock: nbool(d["in_stock"]),
     stock: stockLines,
     // numId() would THROW on the UUID a locally-posted movement carries before
     // its round-trip — taking the whole part sheet down for the seconds (or
@@ -479,6 +486,7 @@ async function listParts(): Promise<unknown[]> {
     status: nstr(r["status"]),
     match_status: nstr(r["match_status"]),
     qty_on_hand: Number(r["qty_on_hand"]),
+    in_stock: nbool(r["in_stock"]),
     bin: nstr(r["bin"]),
     price_cents: nnum(r["list_row_minor"]) ?? nnum(r["list_price_minor"]),
     // The mobile cards want the actual thumbnail path, not just the boolean.
@@ -1193,7 +1201,7 @@ async function diagramParts(a: Record<string, unknown>): Promise<unknown> {
     `SELECT (SELECT COUNT(*) FROM stock_movement) AS mv, (SELECT COUNT(*) FROM price) AS pr`);
   const hasStock = Number(has?.["mv"] ?? 0) > 0, hasPrice = Number(has?.["pr"] ?? 0) > 0;
   const rows = await all(
-    `SELECT p.id, p.sku, p.name, p.catalogue_pn,
+    `SELECT p.id, p.sku, p.name, p.catalogue_pn, p.in_stock,
             COALESCE((SELECT SUM(m.delta) FROM stock_movement m WHERE m.part_id = p.id AND m.reason NOT IN ('reserve','release')), 0) AS on_hand,
             (SELECT pr.amount_minor FROM price pr WHERE pr.part_id = p.id AND pr.tier = 'list'
               AND pr.deleted_at IS NULL ORDER BY pr.valid_from DESC LIMIT 1) AS list_minor,
@@ -1204,6 +1212,7 @@ async function diagramParts(a: Record<string, unknown>): Promise<unknown> {
     id: numId(r["id"], "part.id"), sku: str(r["sku"]), name: str(r["name"]),
     catalogue_pn: nstr(r["catalogue_pn"]), image: nstr(r["image"]),
     on_hand: hasStock ? Number(r["on_hand"] ?? 0) : null,
+    in_stock: nbool(r["in_stock"]),
     list_minor: hasPrice ? nnum(r["list_minor"]) : null,
   }));
 }

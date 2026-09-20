@@ -282,6 +282,8 @@ export const listHotspots = (path: string) => call<DiagramHotspots>("list_hotspo
 export type DiagramPart = {
   id: number; sku: string; name: string; catalogue_pn: string | null; image: string | null;
   on_hand: number | null; list_minor: number | null;
+  // 0050: in stock yes/no for a customer device (its on_hand is null). null = not synced yet.
+  in_stock?: boolean | null;
 };
 export const diagramParts = (partIds: number[]) => call<DiagramPart[]>("diagram_parts", { partIds });
 /** Keyed on clientUuid when the marker has one; a marker that predates the

@@ -208,6 +208,10 @@ export function DiagramView({ drawings, start, onClose, canEdit, onOpenPart, onE
                 {p && p.on_hand != null && (
                   <span className={"dv-stock" + (p.on_hand > 0 ? " in" : " out")}>{p.on_hand > 0 ? `${p.on_hand} in stock` : "out of stock"}</span>
                 )}
+                {/* 0050: a customer device has no ledger (on_hand null) but does get the boolean. */}
+                {p && p.on_hand == null && p.in_stock != null && (
+                  <span className={"dv-stock" + (p.in_stock ? " in" : " out")}>{p.in_stock ? "in stock" : "out of stock"}</span>
+                )}
               </div>
             </div>
             <div className="dv-side" onClick={(e) => e.stopPropagation()}>

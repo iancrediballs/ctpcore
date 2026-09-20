@@ -26,6 +26,9 @@ const part = new Table({
   // view. Text, not integer — refs like 'A1' exist. Added by SQLite 0010 and
   // Postgres 0014/0016; 122 of the 161 live parts carry one.
   diagram_ref: column.text,
+  // in_stock (0050): the one stock fact a customer device receives — a boolean
+  // derived on the server from the ledger the device never syncs. 0/1 here.
+  in_stock: column.integer,
   rev: column.integer, updated_at: column.text, deleted_at: column.text, origin: column.text,
 }, { indexes: { cat: ["category_id"], locator: ["locator"] } });
 
