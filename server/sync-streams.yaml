@@ -147,6 +147,7 @@ bucket_definitions:
     data:
       - SELECT id, number, customer_id, status, currency, notes, tax_rate_bps,
                client_response, client_responded_at,
+               zoho_salesorder_number,
                rev, created_at, updated_at, deleted_at
           FROM sales_order
          WHERE customer_id = bucket.customer_id

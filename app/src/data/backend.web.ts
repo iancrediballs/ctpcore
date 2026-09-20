@@ -126,7 +126,7 @@ const PART_DETAIL_SQL = `
     p.match_status      AS match_status,
     p.notes             AS notes,
     p.list_price_minor  AS list_price_minor,
-    COALESCE((SELECT SUM(m.delta) FROM stock_movement m WHERE m.part_id = p.id), 0) AS qty_on_hand,
+    COALESCE((SELECT SUM(m.delta) FROM stock_movement m WHERE m.part_id = p.id AND m.reason NOT IN ('reserve','release')), 0) AS qty_on_hand,
     (SELECT sp.bin FROM stock_policy sp WHERE sp.part_id = p.id LIMIT 1) AS bin,
     -- Migration 0013 moved landed cost out of the price table (where it sat
     -- mislabelled as tier='list') into part_cost, and made tier='list' the
@@ -203,7 +203,7 @@ const SEARCH_SQL = `
   SELECT
     p.id, p.sku, p.name, p.mpn, p.locator, p.catalogue_pn, p.inventory_pn,
     b.name AS brand,
-    COALESCE((SELECT SUM(m.delta) FROM stock_movement m WHERE m.part_id = p.id), 0) AS on_hand,
+    COALESCE((SELECT SUM(m.delta) FROM stock_movement m WHERE m.part_id = p.id AND m.reason NOT IN ('reserve','release')), 0) AS on_hand,
     -- Was ORDER BY (currency <> 'USD') first, preferring a USD row. Migration
     -- 0013 deleted every USD price and stopped tracking USD, so that tiebreak
     -- is dead code that would silently prefer a stale currency if one ever came
@@ -330,13 +330,16 @@ async function partDetail(partId: number): Promise<unknown> {
   const stock = await all(
     `SELECT l.id, l.code, l.name,
             COALESCE((SELECT SUM(m.delta) FROM stock_movement m
-                       WHERE m.location_id = l.id AND m.part_id = ?), 0) AS on_hand,
+                       WHERE m.location_id = l.id AND m.part_id = ? AND m.reason NOT IN ('reserve','release')), 0) AS on_hand,
+            -- 0047: holds on this part here (reserve − release); available = on_hand − reserved
+            COALESCE((SELECT -SUM(m.delta) FROM stock_movement m
+                       WHERE m.location_id = l.id AND m.part_id = ? AND m.reason IN ('reserve','release')), 0) AS reserved,
             sp.bin, sp.reorder_point, sp.reorder_qty
        FROM location l
        LEFT JOIN stock_policy sp ON sp.location_id = l.id AND sp.part_id = ?
       WHERE l.deleted_at IS NULL
       ORDER BY CAST(l.id AS INTEGER)`,
-    [pid, pid]
+    [pid, pid, pid]
   );
 
   // Order by timestamp, not id. Locally-posted movements carry a UUID id until
@@ -367,6 +370,8 @@ async function partDetail(partId: number): Promise<unknown> {
     location_code: str(s["code"]),
     location_name: str(s["name"]),
     on_hand: Number(s["on_hand"]),
+    reserved: Number(s["reserved"] ?? 0),
+    available: Number(s["on_hand"]) - Number(s["reserved"] ?? 0),
     bin: nstr(s["bin"]),
     reorder_point: nnum(s["reorder_point"]),
     reorder_qty: nnum(s["reorder_qty"]),
@@ -587,6 +592,8 @@ async function getCompany(): Promise<unknown> {
 //     mistakes are corrected by posting the inverse, never by editing.
 //
 // Reads pick the local row up instantly (on_hand is SUM(delta) over the local
+// rows whose reason is not a hold — 0047's reserve/release rows lower
+// AVAILABLE, not on hand — see stock_position)
 // table), so the UI updates offline and the sync happens when it happens.
 const MOVEMENT_REASONS = ["receipt", "sale", "return", "adjustment"] as const;
 
@@ -696,7 +703,7 @@ async function postMovement(a: Record<string, unknown>): Promise<unknown> {
 async function myRequests(): Promise<unknown[]> {
   const orders = await all(
     `SELECT id, number, status, currency, notes, created_at,
-            client_response, client_responded_at
+            client_response, client_responded_at, zoho_salesorder_number
        FROM sales_order
       WHERE deleted_at IS NULL
       ORDER BY created_at DESC, CAST(id AS INTEGER) DESC
@@ -731,6 +738,7 @@ async function myRequests(): Promise<unknown[]> {
       created_at: str(o["created_at"]),
       client_response: nstr(o["client_response"]),
       client_responded_at: nstr(o["client_responded_at"]),
+      zoho_salesorder_number: nstr(o["zoho_salesorder_number"]),
       priced,
       total_minor: mapped.reduce((t, l) => t + (l.unit_price_minor ?? 0) * l.qty, 0),
       lines: mapped,
@@ -749,7 +757,7 @@ async function staffOrders(): Promise<unknown[]> {
   const orders = await all(
     `SELECT so.id, so.number, so.status, so.currency, so.notes, so.created_at,
             so.fulfilled_at, so.tax_rate_bps, so.client_response, so.client_responded_at,
-            so.invoice_no, so.invoiced_at,
+            so.invoice_no, so.invoiced_at, so.zoho_salesorder_number,
             c.name AS customer_name, c.contact AS customer_contact,
             c.phone AS customer_phone, c.email AS customer_email,
             (SELECT l.code FROM location l WHERE l.id = so.location_id) AS location_code
@@ -792,6 +800,7 @@ async function staffOrders(): Promise<unknown[]> {
       created_at: str(o["created_at"]),
       fulfilled_at: nstr(o["fulfilled_at"]),
       invoice_no: nstr(o["invoice_no"]),
+      zoho_salesorder_number: nstr(o["zoho_salesorder_number"]),
       invoiced_at: nstr(o["invoiced_at"]),
       tax_rate_bps: Number(o["tax_rate_bps"] ?? 0),
       client_response: nstr(o["client_response"]),
@@ -856,6 +865,12 @@ async function fulfilOrder(a: Record<string, unknown>): Promise<unknown> {
   return data;
 }
 
+async function cancelOrder(a: Record<string, unknown>): Promise<unknown> {
+  const { data, error } = await supabase.rpc("cancel_order", { order_id: numId(a["orderId"], "orderId"), p_reason: str(a["reason"]) });
+  if (error) throw new Error(`[CTP web] could not cancel: ${error.message}`);
+  return data;
+}
+
 /** Allocate the invoice number and close the order (0042). */
 async function invoiceOrder(a: Record<string, unknown>): Promise<unknown> {
   const orderId = numId(a["orderId"], "orderId");
@@ -864,7 +879,35 @@ async function invoiceOrder(a: Record<string, unknown>): Promise<unknown> {
   return data;
 }
 
-/** Accept or decline a quote. All the rules live in the database (0021). */
+/** 0047: the blockers, by name, before the Accept button is offered. */
+async function quoteAcceptCheck(a: Record<string, unknown>): Promise<unknown> {
+  const { data, error } = await supabase.rpc("quote_accept_check", { order_id: numId(a["orderId"], "orderId") });
+  if (error) throw new Error(`[CTP web] could not check the quote: ${error.message}`);
+  return data;
+}
+
+/** 0047: accept = the accept-quote edge function. It creates the Zoho sales
+ *  order and calls accept_quote() — one transaction — and reverses the Zoho
+ *  side if the database side fails. The message it returns is written for
+ *  the customer and is shown as-is. */
+async function acceptQuote(a: Record<string, unknown>): Promise<unknown> {
+  const orderId = numId(a["orderId"], "orderId");
+  const { data, error } = await supabase.functions.invoke("accept-quote", { body: { order_id: orderId } });
+  if (error) {
+    // the function's own JSON body carries the reason; the SDK wraps non-2xx as an error
+    let detail = "";
+    try {
+      const ctx = (error as { context?: Response }).context;
+      if (ctx && typeof ctx.json === "function") { const j = await ctx.json(); detail = j?.message || j?.error || ""; }
+    } catch { /* no body */ }
+    throw new Error(`[CTP web] could not accept: ${detail || error.message}`);
+  }
+  if (data && data.error) throw new Error(`[CTP web] could not accept: ${data.message || data.error}`);
+  return data;
+}
+
+/** Decline a quote. All the rules live in the database (0021/0047). Accept goes
+ *  through acceptQuote above — the server refuses a direct accept. */
 async function respondToQuote(a: Record<string, unknown>): Promise<unknown> {
   const orderId = numId(a["orderId"], "orderId");
   const accept = a["accept"] === true;
@@ -1122,7 +1165,7 @@ async function diagramParts(a: Record<string, unknown>): Promise<unknown> {
   const hasStock = Number(has?.["mv"] ?? 0) > 0, hasPrice = Number(has?.["pr"] ?? 0) > 0;
   const rows = await all(
     `SELECT p.id, p.sku, p.name, p.catalogue_pn,
-            COALESCE((SELECT SUM(m.delta) FROM stock_movement m WHERE m.part_id = p.id), 0) AS on_hand,
+            COALESCE((SELECT SUM(m.delta) FROM stock_movement m WHERE m.part_id = p.id AND m.reason NOT IN ('reserve','release')), 0) AS on_hand,
             (SELECT pr.amount_minor FROM price pr WHERE pr.part_id = p.id AND pr.tier = 'list'
               AND pr.deleted_at IS NULL ORDER BY pr.valid_from DESC LIMIT 1) AS list_minor,
             (SELECT pi.path FROM part_image pi WHERE pi.part_id = p.id AND pi.deleted_at IS NULL
@@ -1207,8 +1250,11 @@ const PORTED: Record<string, Handler> = {
   request_parts: (a) => requestParts(a),
   my_requests: () => myRequests(),
   respond_to_quote: (a) => respondToQuote(a),
+  quote_accept_check: (a) => quoteAcceptCheck(a),
+  accept_quote: (a) => acceptQuote(a),
   fulfil_order: (a) => fulfilOrder(a),
   invoice_order: (a) => invoiceOrder(a),
+  cancel_order: (a) => cancelOrder(a),
   staff_orders: () => staffOrders(),
   price_quote: (a) => priceQuote(a),
   quote_price_check: (a) => quotePriceCheck(a),

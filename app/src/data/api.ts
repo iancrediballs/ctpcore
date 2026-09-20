@@ -132,10 +132,20 @@ export const fulfilOrder = <T>(orderId: number) => call<T>("fulfil_order", { ord
 /** Issue the tax invoice for a fulfilled order: allocates the next invoice
  *  number at that moment and never again for this order (0042). */
 export const invoiceOrder = <T>(orderId: number) => call<T>("invoice_order", { orderId });
+/** Staff: cancel a quote or an accepted order; releases its stock hold (0046). */
+export const cancelOrder = <T>(orderId: number, reason: string) => call<T>("cancel_order", { orderId, reason });
 
 /** Accept or decline one of your own quotes. */
 export const respondToQuote = <T>(orderId: number, accept: boolean) =>
   call<T>("respond_to_quote", { orderId, accept });
+/** Why a quote cannot be accepted yet (0047): blockers by name, or ok. */
+export type AcceptBlocker = { kind: string; message: string; sku?: string; name?: string };
+export const quoteAcceptCheck = (orderId: number) =>
+  call<{ ok: boolean; blockers: AcceptBlocker[] }>("quote_accept_check", { orderId });
+/** Accept a quote: raises the sales order in Zoho Books AND reserves the stock,
+ *  both or neither (the accept-quote edge function, 0047). */
+export type AcceptResult = { ok: true; already: boolean; number: string; zoho_salesorder_number: string; reserved_lines: number; emailed: boolean; emailed_to: string[] };
+export const acceptQuote = (orderId: number) => call<AcceptResult>("accept_quote", { orderId });
 
 // ─── sales ───────────────────────────────────────────────────────────────
 export const listCustomers = <T>() => call<T>("list_customers");

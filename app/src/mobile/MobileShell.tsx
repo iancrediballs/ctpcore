@@ -54,6 +54,8 @@ type Hit = {
 type StockLine = {
   location_id: number; location_code: string; location_name: string;
   on_hand: number; bin: string | null;
+  // 0047: holds for accepted orders. available = on_hand − reserved.
+  reserved?: number; available?: number;
 };
 
 type LedgerLine = {
@@ -86,6 +88,8 @@ type StaffOrder = {
   customer_phone: string | null; customer_email: string | null; location_code: string | null;
   notes: string | null; created_at: string; fulfilled_at: string | null; tax_rate_bps: number;
   invoice_no: string | null; invoiced_at: string | null;
+  // 0047: the Zoho Books sales order raised when the customer accepted
+  zoho_salesorder_number?: string | null;
   client_response: string | null; client_responded_at: string | null;
   unpriced: number; total_minor: number;
   stage: "to_price" | "with_customer" | "to_pick" | "fulfilled" | string;
@@ -96,6 +100,8 @@ type MyRequest = {
   id: number; number: string; status: string; currency: string;
   notes: string | null; created_at: string;
   client_response: string | null; client_responded_at: string | null;
+  // 0047: the sales order raised in Zoho Books when they accepted — their proforma
+  zoho_salesorder_number?: string | null;
   priced: boolean; total_minor: number; lines: MyLine[];
 };
 
@@ -745,6 +751,18 @@ const parseRand = (s: string): number => {
 
   /** Stock out. One server transaction (0042): refuses if any line is short,
    *  names the shortfall, writes nothing in that case. Idempotent on retry. */
+  const cancelOrder = useCallback(async (o: StaffOrder) => {
+    const reason = window.prompt(`Cancel ${o.number}? Any stock held for it is released. Reason:`);
+    if (reason == null) return;
+    setSavingOrder(true);
+    try {
+      const r = await api.cancelOrder<{ released: number }>(o.id, reason);
+      showToast({ text: `${o.number} cancelled${r.released ? ` — ${r.released} stock hold${r.released === 1 ? "" : "s"} released` : ""}.` });
+      loadOrders();
+    } catch (e) { showToast({ text: e instanceof Error ? e.message.replace(/^\[CTP web\] could not cancel: /, "") : "Could not cancel.", err: true }); }
+    finally { setSavingOrder(false); }
+  }, [showToast, loadOrders]);
+
   const fulfilOrder = useCallback(async (o: StaffOrder) => {
     setSavingOrder(true);
     try {
@@ -792,18 +810,40 @@ const parseRand = (s: string): number => {
     }
   }, [showToast, loadOrders]);
 
+  // 0047: why a quote cannot be accepted yet, by order id — read when the
+  // quote is ready so the button says so before anyone taps it.
+  const [blockers, setBlockers] = useState<Record<number, api.AcceptBlocker[]>>({});
+  useEffect(() => {
+    if (!isClient) return;
+    const ready = (mine ?? []).filter((r) => r.status === "quote" && r.priced);
+    let stale = false;
+    (async () => {
+      const next: Record<number, api.AcceptBlocker[]> = {};
+      for (const r of ready) {
+        try { const c = await api.quoteAcceptCheck(r.id); next[r.id] = c.ok ? [] : c.blockers; }
+        catch (e) { console.error(e); }
+      }
+      if (!stale) setBlockers(next);
+    })();
+    return () => { stale = true; };
+  }, [isClient, mine]);
+
   const answerQuote = useCallback(async (r: MyRequest, accept: boolean) => {
     setAnswering(r.id);
     try {
-      await api.respondToQuote(r.id, accept);
-      showToast({ text: accept
-        ? `${r.number} accepted — we'll get it ready.`
-        : `${r.number} declined.` });
+      if (accept) {
+        // Zoho sales order + stock hold, both or neither (accept-quote function).
+        const res = await api.acceptQuote(r.id);
+        showToast({ text: `${r.number} accepted — sales order ${res.zoho_salesorder_number} raised${res.emailed ? ` and emailed to ${res.emailed_to.join(", ")}` : ""}. We'll get it ready.` });
+      } else {
+        await api.respondToQuote(r.id, false);
+        showToast({ text: `${r.number} declined.` });
+      }
       loadMine();
     } catch (e) {
       console.error(e);
       const msg = e instanceof Error
-        ? e.message.replace(/^\[CTP web\] could not send your answer: /, "")
+        ? e.message.replace(/^\[CTP web\] could not (send your answer|accept): /, "")
         : "Could not send your answer.";
       showToast({ text: msg, err: true });
     } finally {
@@ -1168,8 +1208,8 @@ const parseRand = (s: string): number => {
   const STAGES: { key: string; label: string; hint: string }[] = [
     { key: "to_price",      label: "Needs pricing",   hint: "came in from a customer" },
     { key: "with_customer", label: "With the customer", hint: "quoted, waiting on their answer" },
-    { key: "to_pick",       label: "Ready to pick",   hint: "accepted — pull the stock" },
-    { key: "fulfilled",     label: "Goods out",       hint: "stock taken — invoice once paid" },
+    { key: "to_pick",       label: "Accepted",        hint: "sales order in Zoho — check it is paid there before the goods go" },
+    { key: "fulfilled",     label: "Goods out",       hint: "stock taken — Zoho issues the invoice from the sales order" },
   ];
 
   const ordersView = (
@@ -1273,11 +1313,20 @@ const parseRand = (s: string): number => {
                           </div>
                         )}
                         {o.stage === "to_pick" && (
+                          <div className="mb-row">
+                            <span className="mb-rk">Stock</span>
+                            <span className="mb-rv">held for this order since acceptance · <button className="mb-chip" disabled={savingOrder} onClick={() => { void cancelOrder(o); }}>Cancel order &amp; release</button></span>
+                          </div>
+                        )}
+                        {o.stage === "to_pick" && (
                           <>
                             <div className="mb-row">
                               <span className="mb-rk">Accepted</span>
                               <span className="mb-rv" style={{ color: "var(--green)" }}>
                                 {o.client_responded_at ? timeAgo(o.client_responded_at) : "by the customer"}
+                                {o.zoho_salesorder_number
+                                  ? <> · sales order <b className="mb-mono">{o.zoho_salesorder_number}</b> in Zoho Books — payment and the tax invoice live there</>
+                                  : <> · <span style={{ color: "var(--amber)" }}>no Zoho sales order on this one (accepted before the Zoho link) — raise it by hand</span></>}
                               </span>
                             </div>
                             <div className="mb-row">
@@ -1478,7 +1527,7 @@ const parseRand = (s: string): number => {
                     <span className="mb-rv">
                       {awaiting ? <b style={{ color: "var(--amber)" }}>Quote ready</b>
                         : r.status === "quote" ? "With us for pricing"
-                        : r.status === "confirmed" ? <b style={{ color: "var(--green)" }}>Accepted</b>
+                        : r.status === "confirmed" ? <b style={{ color: "var(--green)" }}>Accepted{r.zoho_salesorder_number ? ` · sales order ${r.zoho_salesorder_number}` : ""}</b>
                         : r.status === "cancelled" ? "Declined"
                         : r.status === "fulfilled" ? "Ready for collection"
                         : r.status === "invoiced" ? "Invoiced"
@@ -1503,15 +1552,25 @@ const parseRand = (s: string): number => {
                       <span className="mb-rv"><b>{fmtR(r.total_minor)}</b> excl VAT</span>
                     </div>
                   )}
+                  {r.status === "confirmed" && r.zoho_salesorder_number && (
+                    <div className="mb-note" style={{ margin: "6px 0 0" }}>
+                      Your sales order <b className="mb-mono">{r.zoho_salesorder_number}</b> has been raised in our accounts system and emailed to you — it is your proforma. The tax invoice follows from it once payment is received.
+                    </div>
+                  )}
+                  {awaiting && (blockers[r.id]?.length ?? 0) > 0 && (
+                    <div className="mb-note" style={{ margin: "6px 0 0" }}>
+                      <b>Not quite ready to accept:</b> {blockers[r.id].map((b) => b.message).join(" ")}
+                    </div>
+                  )}
                   {awaiting && (
                     <div className="mb-row" style={{ gap: 10 }}>
                       <button className="mb-btn s" style={{ height: 46 }}
                         disabled={answering === r.id}
                         onClick={() => { void answerQuote(r, false); }}>Decline</button>
                       <button className="mb-btn p" style={{ height: 46 }}
-                        disabled={answering === r.id}
+                        disabled={answering === r.id || (blockers[r.id]?.length ?? 0) > 0}
                         onClick={() => { void answerQuote(r, true); }}>
-                        {answering === r.id ? "Sending…" : "Accept quote"}
+                        {answering === r.id ? "Raising the sales order…" : "Accept quote"}
                       </button>
                     </div>
                   )}
@@ -1607,7 +1666,9 @@ const parseRand = (s: string): number => {
               {!isClient && d.stock.filter((s) => s.on_hand !== 0 || s.bin).map((s) => (
                 <div className="mb-row" key={s.location_id}>
                   <span className="mb-rk">{s.location_code}</span>
-                  <span className="mb-rv">{s.on_hand} on hand{s.bin ? ` · bin ${s.bin}` : ""}</span>
+                  <span className="mb-rv">
+                    {s.on_hand} on hand{(s.reserved ?? 0) > 0 && <span style={{ color: "var(--amber)" }}> · {s.reserved} held for orders · <b>{s.available}</b> free</span>}{s.bin ? ` · bin ${s.bin}` : ""}
+                  </span>
                 </div>
               ))}
               {!isClient && d.notes && <div className="mb-row"><span className="mb-rk">Notes</span><span className="mb-rv">{d.notes}</span></div>}
