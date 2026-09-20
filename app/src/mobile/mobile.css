@@ -617,7 +617,14 @@ textarea.st-in{resize:vertical;line-height:1.45;font-size:15px}
 .dv-nav button{width:32px;height:32px;border:0;border-radius:8px;background:transparent;color:var(--txt);font-size:22px;line-height:1;cursor:pointer}
 .dv-nav button:disabled{opacity:.3;cursor:default}
 .dv-list{min-width:0;min-height:0;overflow:auto;background:var(--bg);padding:8px 10px 24px}
-.dv-list-head{font-size:11px;font-weight:800;letter-spacing:.6px;text-transform:uppercase;color:var(--dim);padding:6px 6px 8px}
+.dv-list-head{font-size:11px;font-weight:800;letter-spacing:.6px;text-transform:uppercase;color:var(--dim);padding:6px 6px 8px;display:flex;align-items:center;gap:10px}
+.dv-list-head>span{flex:1;min-width:0}
+.dv-edit{flex:0 0 auto;height:30px;padding:0 12px;border-radius:15px;border:1.5px solid var(--amber);background:transparent;color:var(--amber);
+  font-size:12px;font-weight:800;letter-spacing:0;text-transform:none;cursor:pointer}
+.dv-edit:hover{background:var(--amber);color:#12161A}
+.dv-empty{margin:8px 6px;padding:14px;border:1.5px dashed var(--line);border-radius:12px;color:var(--dim);font-size:13px;line-height:1.4}
+.dv-empty p{margin:0 0 10px}
+.dv-head .mb-chip{flex:0 0 auto}   /* never squeezed out by a long breadcrumb */
 .dv-row{display:flex;align-items:center;gap:10px;padding:8px;border-radius:10px;border:1px solid transparent;cursor:pointer;color:var(--txt)}
 .dv-row:hover{background:var(--surf)}
 .dv-row.on{background:rgba(255,138,31,.10);border-color:var(--amber)}      /* the selected row, matching the pulsing marker */
