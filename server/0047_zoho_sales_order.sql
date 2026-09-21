@@ -14,7 +14,9 @@
 -- fails the function deletes the Zoho order again; if THAT fails it writes an
 -- integration_issue row so the desk sees it. Nothing is ever half-done from
 -- the customer's point of view: either the order exists in Zoho AND the stock
--- is held, or neither and they see why.
+-- is held, or neither and they see why. Everything after the sales order —
+-- sending it, the payment, the invoice — is done in Zoho's screens (Ian,
+-- 2026-09-21); nothing here automates it.
 --
 -- MAPPING. Zoho items carry the CTP SKU as their SKU; part.zoho_item_id is
 -- seeded from that (116 items, matched on sku). Customers are matched on
@@ -42,10 +44,6 @@ alter table public.part     add column if not exists zoho_item_id    text;
 alter table public.customer add column if not exists zoho_contact_id text;
 comment on column public.part.zoho_item_id is 'Zoho Books item_id, matched on SKU (0047). NULL = cannot be put on a sales order.';
 comment on column public.customer.zoho_contact_id is 'Zoho Books contact_id (0047). NULL = cannot receive a sales order.';
-
--- Delivery: Zoho emails its own sales-order PDF to the customer on acceptance
--- (Ian favours email over the portal login). A setting, default on.
-alter table public.company add column if not exists zoho_email_on_accept boolean not null default true;
 
 update public.part p set zoho_item_id = v.item_id
   from (values

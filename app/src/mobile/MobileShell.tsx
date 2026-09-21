@@ -849,7 +849,7 @@ const parseRand = (s: string): number => {
       if (accept) {
         // Zoho sales order + stock hold, both or neither (accept-quote function).
         const res = await api.acceptQuote(r.id);
-        showToast({ text: `${r.number} accepted — sales order ${res.zoho_salesorder_number} raised${res.emailed ? ` and emailed to ${res.emailed_to.join(", ")}` : ""}. We'll get it ready.` });
+        showToast({ text: `${r.number} accepted — sales order ${res.zoho_salesorder_number} raised. We'll be in touch with the proforma.` });
       } else {
         await api.respondToQuote(r.id, false);
         showToast({ text: `${r.number} declined.` });
@@ -1578,7 +1578,7 @@ const parseRand = (s: string): number => {
                   )}
                   {r.status === "confirmed" && r.zoho_salesorder_number && (
                     <div className="mb-note" style={{ margin: "6px 0 0" }}>
-                      Your sales order <b className="mb-mono">{r.zoho_salesorder_number}</b> has been raised in our accounts system and emailed to you — it is your proforma. The tax invoice follows from it once payment is received.
+                      Your sales order <b className="mb-mono">{r.zoho_salesorder_number}</b> has been raised in our accounts system — we will send you the proforma from there. The tax invoice follows once payment is received.
                     </div>
                   )}
                   {awaiting && (blockers[r.id]?.length ?? 0) > 0 && (

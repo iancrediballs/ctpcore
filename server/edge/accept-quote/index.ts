@@ -15,9 +15,8 @@
 //      log_integration_issue so the desk sees an orphan to tidy, and still
 //      tell the customer it did not go through. They are never left with a
 //      hold and no document, or a document and no hold.
-//   6. Mark the sales order open and email Zoho's PDF to the customer —
-//      best effort, recorded on the order's notes either way; the
-//      acceptance itself is already safe by then.
+//   Nothing after that. Sending the proforma, recording the payment and
+//   converting to the invoice happen in Zoho's own screens.
 //
 // Zoho-first, then the database, because the database side is the one that
 // can be made atomic and reversed cleanly; a created-then-deleted sales
@@ -25,7 +24,7 @@
 // a hold without a document would be a real one.
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
-import { ZohoError, zohoConfigured, findSalesOrderByReference, createSalesOrder, markOpen, emailSalesOrder, deleteSalesOrder, type ZohoLine } from "./zoho.ts";
+import { ZohoError, zohoConfigured, findSalesOrderByReference, createSalesOrder, deleteSalesOrder, type ZohoLine } from "./zoho.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -60,11 +59,11 @@ Deno.serve(async (req: Request) => {
   // ── 1. the order, and that it is theirs ──────────────────────────────────
   const { data: o, error: oErr } = await db
     .from("sales_order")
-    .select("id, number, status, customer_id, zoho_salesorder_id, zoho_salesorder_number, notes, created_at, customer:customer_id(id, name, auth_user_id, zoho_contact_id, email)")
+    .select("id, number, status, customer_id, zoho_salesorder_id, zoho_salesorder_number, customer:customer_id(id, name, auth_user_id, zoho_contact_id)")
     .eq("id", orderId).is("deleted_at", null).maybeSingle();
   if (oErr) return json({ error: oErr.message }, 500);
   if (!o) return json({ error: "No such order" }, 404);
-  const cust = (Array.isArray(o.customer) ? o.customer[0] : o.customer) as { id: number; name: string; auth_user_id: string | null; zoho_contact_id: string | null; email: string | null } | null;
+  const cust = (Array.isArray(o.customer) ? o.customer[0] : o.customer) as { id: number; name: string; auth_user_id: string | null; zoho_contact_id: string | null } | null;
   if (!cust || cust.auth_user_id !== uid) return json({ error: "That order belongs to a different customer" }, 403);
 
   // already done (a retry after the response was lost)
@@ -147,25 +146,9 @@ Deno.serve(async (req: Request) => {
     return json({ error: `Nothing was accepted or reserved: ${accErr.message.replace(/^[A-Z0-9]+: /, "")}` }, 409);
   }
 
-  // ── 6. best effort: open it and send Zoho's PDF ──────────────────────────
-  const notes: string[] = [];
-  try { await markOpen(so.salesorder_id); } catch (e) { notes.push(`could not mark open: ${String(e)}`); }
-  const { data: co } = await db.from("company").select("zoho_email_on_accept").eq("id", 1).maybeSingle();
-  const to = [cust.email, caller.user.email].filter((x): x is string => !!x && x.includes("@"));
-  let emailed = false;
-  if (co?.zoho_email_on_accept !== false && to.length) {
-    try {
-      await emailSalesOrder(so.salesorder_id, [...new Set(to)], `Sales order ${so.salesorder_number} — China Truck Parts (your ref ${o.number})`);
-      emailed = true;
-    } catch (e) { notes.push(`email not sent: ${String(e)}`); }
-  } else if (!to.length) notes.push("no email address on the customer — sales order not emailed");
-  if (notes.length || emailed) {
-    await db.from("sales_order").update({
-      notes: [o.notes, `[${new Date().toISOString().slice(0, 16).replace("T", " ")}] Zoho sales order ${so.salesorder_number}${emailed ? ` emailed to ${[...new Set(to)].join(", ")}` : ""}${notes.length ? " · " + notes.join(" · ") : ""}`].filter(Boolean).join("\n"),
-    }).eq("id", orderId);
-  }
-
+  // Everything after this — sending the proforma, recording the payment,
+  // converting to the invoice — Ian does in Zoho's own screens (2026-09-21).
   return json({ ok: true, already: acc?.already ?? false, order_id: orderId, number: o.number,
                 zoho_salesorder_id: so.salesorder_id, zoho_salesorder_number: so.salesorder_number,
-                reserved_lines: acc?.reserved_lines ?? 0, emailed, emailed_to: emailed ? [...new Set(to)] : [] });
+                reserved_lines: acc?.reserved_lines ?? 0 });
 });

@@ -144,7 +144,7 @@ export const quoteAcceptCheck = (orderId: number) =>
   call<{ ok: boolean; blockers: AcceptBlocker[] }>("quote_accept_check", { orderId });
 /** Accept a quote: raises the sales order in Zoho Books AND reserves the stock,
  *  both or neither (the accept-quote edge function, 0047). */
-export type AcceptResult = { ok: true; already: boolean; number: string; zoho_salesorder_number: string; reserved_lines: number; emailed: boolean; emailed_to: string[] };
+export type AcceptResult = { ok: true; already: boolean; number: string; zoho_salesorder_number: string; reserved_lines: number };
 export const acceptQuote = (orderId: number) => call<AcceptResult>("accept_quote", { orderId });
 
 // ─── sales ───────────────────────────────────────────────────────────────

@@ -1,10 +1,10 @@
 // Zoho Books, the little of it CTP Core needs: an access token from the refresh
-// token, and four calls on sales orders. Secrets come from the function's
+// token, and three calls on sales orders. Secrets come from the function's
 // environment, set by Ian in the Supabase dashboard — never from a request,
 // never from the database, never through a chat.
 //
 //   ZOHO_CLIENT_ID, ZOHO_CLIENT_SECRET, ZOHO_REFRESH_TOKEN   (a "Self Client" in
-//     api-console.zoho.com with scope ZohoBooks.salesorders.ALL, ZohoBooks.contacts.READ)
+//     api-console.zoho.com with scope ZohoBooks.salesorders.ALL)
 //   ZOHO_ORG_ID          default 939422621 (China Truck Parts)
 //   ZOHO_ACCOUNTS_URL    default https://accounts.zoho.com   (the org's data centre)
 //   ZOHO_API_BASE        default https://www.zohoapis.com/books/v3
@@ -68,16 +68,6 @@ export async function createSalesOrder(p: {
 }): Promise<ZohoSalesOrder> {
   const j = await call<{ salesorder: ZohoSalesOrder }>("POST", "/salesorders", { ...p, is_inclusive_tax: false });
   return j.salesorder;
-}
-
-/** Draft → open, so the number is committed and it can be emailed / invoiced. Best effort. */
-export async function markOpen(salesorderId: string): Promise<void> {
-  await call("POST", `/salesorders/${salesorderId}/status/open`);
-}
-
-/** Zoho emails its own PDF from the org's sales-order template. */
-export async function emailSalesOrder(salesorderId: string, to: string[], subject?: string, body?: string): Promise<void> {
-  await call("POST", `/salesorders/${salesorderId}/email`, { to_mail_ids: to, subject, body, send_from_org_email_id: true });
 }
 
 /** The compensation: a sales order that CTP could not record is removed again. */
