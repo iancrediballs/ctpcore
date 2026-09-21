@@ -283,7 +283,11 @@ function OrderPanel({ order, onClose, onChange, afterMutation }: {
           {editable && (
             <button className="post" disabled={order.lines.length === 0} onClick={fulfill}>Fulfill → issue stock</button>
           )}
-          {order.status === "fulfilled" && <button className="post" onClick={() => setStatus("invoiced")}>Mark invoiced</button>}
+          {/* "Mark invoiced" removed 2026-09-21 (Ian): it set the status with no
+              number behind it — the path 0045 now refuses at the database. The
+              tax invoice is Zoho Books' (sales order → invoice); an order reads
+              "invoiced" here only through invoice_order, never by hand. */}
+          {order.status === "fulfilled" && <span className="hint">Goods out — the tax invoice is issued from the sales order in Zoho Books.</span>}
         </div>
         {msg && <div className={"msg" + (msg.startsWith("✕") ? " err" : "")}>{msg}</div>}
       </div>
