@@ -172,6 +172,22 @@
 .mb-dgm{cursor:zoom-in}
 .mb-zoomtag{position:absolute;top:8px;right:8px;width:32px;height:32px;display:grid;place-items:center;
   border-radius:9px;background:rgba(11,13,16,.55);color:#fff;font-size:16px;pointer-events:none}
+
+/* part photo carousel — only rendered when a part has more than one photo.
+   The arrows sit ON the hero, so they stop the click that opens the lightbox;
+   the strip below is the "how many, and which" the arrows alone do not say. */
+.mb-carr{position:absolute;top:50%;transform:translateY(-50%);width:38px;height:56px;border:0;
+  background:rgba(11,13,16,.55);color:#fff;font-size:26px;line-height:1;cursor:pointer;display:grid;place-items:center}
+.mb-carr.prev{left:0;border-radius:0 10px 10px 0}
+.mb-carr.next{right:0;border-radius:10px 0 0 10px}
+.mb-carr:hover{background:rgba(11,13,16,.8)}
+.mb-carcount{position:absolute;left:8px;top:8px;padding:3px 9px;border-radius:9px;
+  background:rgba(11,13,16,.55);color:#fff;font-size:11.5px;font-weight:800;letter-spacing:.4px;pointer-events:none}
+.mb-carstrip{display:flex;gap:8px;overflow-x:auto;margin:-6px 0 16px;padding-bottom:4px;scrollbar-width:thin}
+.mb-carthumb{flex:0 0 auto;width:58px;height:58px;padding:2px;border-radius:9px;background:#fff;
+  border:2px solid transparent;cursor:pointer;overflow:hidden}
+.mb-carthumb img{width:100%;height:100%;object-fit:contain}
+.mb-carthumb.on{border-color:var(--amber)}
 /* The lightbox and the hotspot editor are ALWAYS dark — a drawing or a photo
    belongs on a dark stage. So the dark token set is re-declared here, not
    just the background: in light mode the theme flips --txt to near-black and

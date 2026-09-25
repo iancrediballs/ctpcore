@@ -305,6 +305,10 @@ export default function MobileShell() {
   const [hits, setHits] = useState<Hit[] | null>(null); // null = not searching
   const [chip, setChip] = useState<string | null>(null);
   const [detail, setDetail] = useState<Detail | null>(null);
+  // Which photo the part sheet is showing. Only visible as a carousel when the
+  // part has more than one (Ian, 2026-09-25); reset whenever the sheet changes
+  // part, or photo 3 of the last part becomes photo 3 of a part with two.
+  const [shot, setShot] = useState(0);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [counterOpen, setCounterOpen] = useState(false);
   const [toast, setToast] = useState<Toast | null>(null);
@@ -561,6 +565,7 @@ export default function MobileShell() {
   const openPart = useCallback(async (partId: number) => {
     try {
       setDetail(await api.partDetail<Detail>(partId));
+      setShot(0);                       // a new part starts on its primary photo
       setSheetOpen(true);
       setCounterOpen(false);
     } catch (e) {
@@ -922,11 +927,28 @@ const parseRand = (s: string): number => {
 
   // The front page: every section of the truck as a big card — the SEC
   // exploded-view drawing IS the picture of "this part of the truck" — plus
-  // one search box and an All-parts card. Tap a section → the list, filtered.
+  // one search box and an All-parts card.
+  //
+  // Ian, 2026-09-25: "when selecting a parts section it must go straight to the
+  // parts list screen where the diagram is fitted to the screen and the parts
+  // on the right with visible hotspots." So a section with a drawing opens the
+  // VIEWER, not a preview of it. The filtered list is still set up underneath,
+  // so closing the viewer lands on that section's parts rather than nowhere.
+  // A section with no drawing yet (or All parts) behaves as before: the list.
   const openSection = (code: string | null) => {
     setChip(code);
     setQ("");
     setTab("find");
+    const s = code ? sections.find((x) => x.code === code) : null;
+    if (s?.diagram) openDiagram(s.diagram);
+  };
+  /** The Find tab's category chips are the same act of choosing a section, so
+   *  they do the same thing. Tapping the chip that is already on clears it —
+   *  that is how you get back to the whole catalogue — and clearing opens
+   *  nothing. */
+  const selectChip = (code: string) => {
+    if (chip === code) { setChip(null); return; }
+    openSection(code);
   };
 
   const homeView = (
@@ -1007,7 +1029,7 @@ const parseRand = (s: string): number => {
           <button className={"mb-chip" + (chip == null ? " on" : "")} onClick={() => setChip(null)}>All</button>
           {cats.map((c) => (
             <button key={c.id} className={"mb-chip" + (chip === c.code ? " on" : "")}
-              title={c.name} onClick={() => setChip(chip === c.code ? null : c.code)}>
+              title={c.name} onClick={() => selectChip(c.code)}>
               {c.name}
             </button>
           ))}
@@ -1015,26 +1037,13 @@ const parseRand = (s: string): number => {
       )}
 
       <div className="mb-body">
-        {/* Came in from a section card: lead with that section's exploded view,
-            tappable into the zoom viewer. This is the "and then it breaks
-            down" half of the home page. */}
-        {!hits && chip && (() => {
-          const s = sections.find((x) => x.code === chip);
-          if (!s?.diagram) return null;
-          return (
-            <div className="mb-dgm" role="button" style={{ marginTop: 4 }}
-              onClick={() => openDiagram(s.diagram!)}>
-              <img src={assetUrl(s.diagram)} alt={s.name} loading="lazy" />
-              <span className="mb-zoomtag">⤢</span>
-              <div className="mb-dgm-cap">
-                <span>
-                  <div className="mb-dgm-k">Section</div>
-                  <div className="mb-dgm-v">{s.name}</div>
-                </span>
-              </div>
-            </div>
-          );
-        })()}
+        {/* There was a PREVIEW TILE here: a zoomed-in crop of the section
+            drawing, no markers, no parts list, which you then had to tap to
+            reach the real viewer. Ian, 2026-09-25: choosing a section must land
+            on the viewer itself. It does now — openSection() and the chips open
+            it directly (see selectChip) — so the tile is gone rather than
+            demoted. Closing the viewer drops you here, on this section's parts,
+            which is what the tile was standing in front of. */}
         <div className="mb-count">
           {hits ? `${cards.length} match${cards.length === 1 ? "" : "es"}` : `${cards.length} parts`}
         </div>
@@ -1619,7 +1628,17 @@ const parseRand = (s: string): number => {
   // ─── part sheet ────────────────────────────────────────────────────────────
 
   const d = detail;
-  const hero = d?.images.find((i) => i.is_primary)?.path ?? d?.images[0]?.path ?? null;
+  // The part's photos, primary first — the order the carousel walks and the
+  // order the lightbox inherits, so "photo 2 of 4" means the same thing in both.
+  const photos = useMemo(() => {
+    if (!d) return [];
+    return [...d.images].sort((a, b) => Number(b.is_primary) - Number(a.is_primary));
+  }, [d]);
+  // Clamped rather than corrected by an effect: staff can retire a photo from
+  // the admin gallery while the sheet is open, and shot would then point past
+  // the end for one render. `at` can never be out of range.
+  const at = Math.min(shot, Math.max(0, photos.length - 1));
+  const hero = photos[at]?.path ?? null;
   const mainBin = d?.stock.find((s) => s.bin)?.bin ?? null;
 
   const sheet = (
@@ -1631,15 +1650,44 @@ const parseRand = (s: string): number => {
             <span className="mb-shead-t">{d.category_name ?? "Part"}</span>
           </div>
           <div className="mb-sbody">
+            {/* One photo: exactly what it always was. More than one: a carousel
+                (Ian, 2026-09-25). The big image still opens the lightbox, at
+                the photo you are looking at — `photos` is the order both use,
+                so "photo 2 of 4" means the same in each. Today only one part in
+                the catalogue has a second live photo (CTP-CBY-006-C); the other
+                158 have one each and are untouched by this. */}
             {hero && (
-              <div className="mb-hero" role="button"
-                onClick={() => setViewer({
-                  items: d.images.map((i, n) => ({ path: i.path, label: `${d.sku} · photo ${n + 1} of ${d.images.length}` })),
-                  idx: Math.max(0, d.images.findIndex((i) => i.path === hero)),
-                })}>
-                <PhotoImg path={hero} alt={d.name} />
-                <span className="mb-zoomtag">⤢</span>
-              </div>
+              <>
+                <div className="mb-hero" role="button"
+                  onClick={() => setViewer({
+                    items: photos.map((i, n) => ({ path: i.path, label: `${d.sku} · photo ${n + 1} of ${photos.length}` })),
+                    idx: at,
+                  })}>
+                  <PhotoImg path={hero} alt={d.name} />
+                  <span className="mb-zoomtag">⤢</span>
+                  {photos.length > 1 && (
+                    <>
+                      <button className="mb-carr prev" aria-label="Previous photo"
+                        onClick={(e) => { e.stopPropagation(); setShot((at - 1 + photos.length) % photos.length); }}>‹</button>
+                      <button className="mb-carr next" aria-label="Next photo"
+                        onClick={(e) => { e.stopPropagation(); setShot((at + 1) % photos.length); }}>›</button>
+                      <span className="mb-carcount">{at + 1} / {photos.length}</span>
+                    </>
+                  )}
+                </div>
+                {photos.length > 1 && (
+                  <div className="mb-carstrip" role="tablist" aria-label="Photos of this part">
+                    {photos.map((i, n) => (
+                      <button key={i.id} role="tab" aria-selected={n === at}
+                        aria-label={`Photo ${n + 1} of ${photos.length}`}
+                        className={"mb-carthumb" + (n === at ? " on" : "")}
+                        onClick={() => setShot(n)}>
+                        <PhotoImg path={i.path} alt="" />
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </>
             )}
             <h1 className="mb-pname">{d.name}</h1>
             <div className="mb-psku mb-mono">
