@@ -138,6 +138,17 @@ export const cancelOrder = <T>(orderId: number, reason: string) => call<T>("canc
 /** Accept or decline one of your own quotes. */
 export const respondToQuote = <T>(orderId: number, accept: boolean) =>
   call<T>("respond_to_quote", { orderId, accept });
+/** A customer takes one item off their own quote before accepting it (0051).
+ *  Soft-deletes the line, so the quote as sent stays on record and the Zoho
+ *  sales order — built from the live lines at the moment of acceptance — is
+ *  what was ACCEPTED. The server refuses the last remaining line. */
+export type DropLineResult = {
+  order_id: number; number: string; line_id: number;
+  removed_sku: string; removed_name: string;
+  remaining_lines: number; total_minor: number;
+};
+export const quoteDropLine = (lineId: number) =>
+  call<DropLineResult>("quote_drop_line", { lineId });
 /** Why a quote cannot be accepted yet (0047): blockers by name, or ok. */
 export type AcceptBlocker = { kind: string; message: string; sku?: string; name?: string };
 export const quoteAcceptCheck = (orderId: number) =>

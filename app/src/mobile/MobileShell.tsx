@@ -848,6 +848,46 @@ const parseRand = (s: string): number => {
     return () => { stale = true; };
   }, [isClient, mine]);
 
+  // ── the customer trims their own quote (0051) ──
+  // myRequests() reads the LOCAL PowerSync database, and quote_drop_line is a
+  // SERVER call, so the removal is not in the local copy until a sync pass
+  // brings it back down — a second or two in which the row would sit there
+  // looking ignored. `dropped` holds the line ids we have asked the server to
+  // remove so the list and the total can answer immediately. It is an OPTIMISM,
+  // not a truth: it is cleared per line the moment the synced data agrees, and
+  // a refused removal puts the line straight back.
+  const [dropped, setDropped] = useState<Set<number>>(new Set());
+  const [droppingLine, setDroppingLine] = useState<number | null>(null);
+  useEffect(() => {
+    if (!mine) return;
+    const stillThere = new Set(mine.flatMap((r) => r.lines.map((l) => l.id)));
+    setDropped((s) => {
+      const next = new Set([...s].filter((id) => stillThere.has(id)));
+      return next.size === s.size ? s : next;     // no churn when nothing changed
+    });
+  }, [mine]);
+
+  const dropLine = useCallback(async (r: MyRequest, lineId: number, label: string) => {
+    setDroppingLine(lineId);
+    setDropped((s) => new Set(s).add(lineId));
+    try {
+      const res = await api.quoteDropLine(lineId);
+      showToast({ text: `${label} removed — ${r.number} is now ${fmtR(res.total_minor)} excl VAT.` });
+      loadMine();
+      // The quote changed, so why-it-cannot-be-accepted may have changed with
+      // it: the removed line might have been the only blocker.
+      try { const c = await api.quoteAcceptCheck(r.id); setBlockers((b) => ({ ...b, [r.id]: c.ok ? [] : c.blockers })); }
+      catch (e) { console.error(e); }
+    } catch (e) {
+      console.error(e);
+      setDropped((s) => { const n = new Set(s); n.delete(lineId); return n; });   // put it back
+      const msg = e instanceof Error ? e.message.replace(/^\[CTP web\] could not remove that item: /, "") : "Could not remove that item.";
+      showToast({ text: msg, err: true });
+    } finally {
+      setDroppingLine(null);
+    }
+  }, [showToast, loadMine]);
+
   const answerQuote = useCallback(async (r: MyRequest, accept: boolean) => {
     setAnswering(r.id);
     try {
@@ -1552,7 +1592,18 @@ const parseRand = (s: string): number => {
           <>
             <div className="mb-count" style={{ marginTop: 22 }}>Sent to us</div>
             {mine.map((r) => {
-              const awaiting = r.status === "quote" && r.priced;
+              // What the customer is actually looking at, once anything they
+              // have just removed is taken out. Every number below is derived
+              // from THIS list, so the total can never disagree with the lines
+              // above it while a removal is in flight.
+              const lines = r.lines.filter((l) => !dropped.has(l.id));
+              const total = lines.reduce((t, l) => t + (l.unit_price_minor ?? 0) * l.qty, 0);
+              const priced = lines.length > 0 && lines.every((l) => (l.unit_price_minor ?? 0) > 0);
+              const awaiting = r.status === "quote" && priced;
+              // Removable while it is still a quote. Not the last one: a quote
+              // must keep an item, and turning the whole thing down is Decline
+              // (0051 refuses it server-side too — this only saves the trip).
+              const canDrop = r.status === "quote" && lines.length > 1;
               return (
                 <div className="mb-rows" key={r.id} style={{ marginBottom: 12 }}>
                   <div className="mb-row">
@@ -1567,7 +1618,7 @@ const parseRand = (s: string): number => {
                         : r.status}
                     </span>
                   </div>
-                  {r.lines.map((l) => (
+                  {lines.map((l) => (
                     <div className="mb-row" key={l.id}>
                       <span style={{ flex: 1, minWidth: 0 }}>
                         <div className="mb-cname">{l.qty} × {l.name}</div>
@@ -1577,14 +1628,28 @@ const parseRand = (s: string): number => {
                       {(l.unit_price_minor ?? 0) > 0 && (
                         <span className="mb-rv">{fmtR((l.unit_price_minor ?? 0) * l.qty)}</span>
                       )}
+                      {/* Ian, 2026-09-25: let them drop what they do not want
+                          before accepting. Disabled on the last remaining line
+                          — that is what Decline is for. */}
+                      {r.status === "quote" && (
+                        <button className="mb-lx" aria-label={`Remove ${l.name} from this quote`}
+                          title={canDrop ? `Remove ${l.name}` : "The last item cannot be removed — use Decline to turn the whole quote down"}
+                          disabled={!canDrop || droppingLine === l.id || answering === r.id}
+                          onClick={() => { void dropLine(r, l.id, l.name); }}>✕</button>
+                      )}
                     </div>
                   ))}
-                  {r.priced && (
+                  {priced && (
                     <div className="mb-row">
                       <span className="mb-rk">Total</span>
-                      <span className="mb-rv"><b>{fmtR(r.total_minor)}</b> excl VAT</span>
+                      <span className="mb-rv"><b>{fmtR(total)}</b> excl VAT</span>
                     </div>
                   )}
+                  {/* No "n items removed" banner: r.lines stops carrying a
+                      removed line as soon as the sync pass lands, so such a
+                      banner would appear for a second and then vanish, which
+                      reads as a glitch. The line going, the total changing and
+                      the toast are the confirmation. */}
                   {r.status === "confirmed" && r.zoho_salesorder_number && (
                     <div className="mb-note" style={{ margin: "6px 0 0" }}>
                       Your sales order <b className="mb-mono">{r.zoho_salesorder_number}</b> has been raised in our accounts system — we will send you the proforma from there. The tax invoice follows once payment is received.

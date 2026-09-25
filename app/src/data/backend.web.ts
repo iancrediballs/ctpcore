@@ -916,6 +916,16 @@ async function invoiceOrder(a: Record<string, unknown>): Promise<unknown> {
   return data;
 }
 
+/** 0051: the customer drops one item from their own quote. Every rule lives in
+ *  the database — whose quote it is, that it is still a quote, that it is not
+ *  the last line — so the X being on screen is cosmetic and the function is the
+ *  control, same doctrine as the rest of the order RPCs. */
+async function quoteDropLine(a: Record<string, unknown>): Promise<unknown> {
+  const { data, error } = await supabase.rpc("quote_drop_line", { line_id: numId(a["lineId"], "lineId") });
+  if (error) throw new Error(`[CTP web] could not remove that item: ${error.message}`);
+  return data;
+}
+
 /** 0047: the blockers, by name, before the Accept button is offered. */
 async function quoteAcceptCheck(a: Record<string, unknown>): Promise<unknown> {
   const { data, error } = await supabase.rpc("quote_accept_check", { order_id: numId(a["orderId"], "orderId") });
@@ -1288,6 +1298,7 @@ const PORTED: Record<string, Handler> = {
   request_parts: (a) => requestParts(a),
   my_requests: () => myRequests(),
   respond_to_quote: (a) => respondToQuote(a),
+  quote_drop_line: (a) => quoteDropLine(a),
   quote_accept_check: (a) => quoteAcceptCheck(a),
   accept_quote: (a) => acceptQuote(a),
   fulfil_order: (a) => fulfilOrder(a),

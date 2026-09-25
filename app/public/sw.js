@@ -42,7 +42,7 @@
 //   non-http(s) scheme. So the guard WAS the whole bug on that count. It is
 //   still wrapped in a catch below, because quota exhaustion is real and an
 //   image that fails to cache must still be shown.
-const CACHE = "ctp-core-v15";   // v15: accepting a quote raises the Zoho sales order + reserves stock (2026-09-21)
+const CACHE = "ctp-core-v16";   // v16: section → viewer, gentle zoom-to-hotspot, photo carousel, removable quote lines (2026-09-25)
 const ASSET_HOST = "hkzmydowyiajkbakxfkj.supabase.co";
 
 // ── TIMEOUTS, and the mistake the first version of this file made with them.

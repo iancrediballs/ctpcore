@@ -173,6 +173,15 @@
 .mb-zoomtag{position:absolute;top:8px;right:8px;width:32px;height:32px;display:grid;place-items:center;
   border-radius:9px;background:rgba(11,13,16,.55);color:#fff;font-size:16px;pointer-events:none}
 
+/* the X that takes an item off a quote (0051). Sized for a thumb, muted until
+   touched so it never competes with the price beside it, and visibly inert on
+   the last remaining line rather than hidden — a control that disappears makes
+   people think they broke something. */
+.mb-lx{flex:0 0 auto;width:34px;height:34px;margin-left:8px;border:1px solid var(--line);border-radius:9px;
+  background:transparent;color:var(--dim);font-size:15px;line-height:1;cursor:pointer;display:grid;place-items:center}
+.mb-lx:hover:not(:disabled){border-color:var(--red);color:var(--red)}
+.mb-lx:disabled{opacity:.3;cursor:not-allowed}
+
 /* part photo carousel — only rendered when a part has more than one photo.
    The arrows sit ON the hero, so they stop the click that opens the lightbox;
    the strip below is the "how many, and which" the arrows alone do not say. */
