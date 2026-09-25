@@ -371,6 +371,20 @@ export function markerRadius(frameW: number, scale: number): number {
   return Math.max(6, frameW * 0.010 * scale);
 }
 
+/** The rectangle enclosing every callout of one part, padded by a ring, in
+ *  drawing units. A part with one callout gives a small square around it; a
+ *  part shown twice (L/H and R/H on the same drawing, or item 16 on SEC101)
+ *  gives the box containing both, so focus() centres BETWEEN them and neither
+ *  is picked arbitrarily. Exported so the thing that is tested is the thing
+ *  that runs. */
+export function calloutRect(pts: { x: number; y: number }[], r: number): Rect {
+  const pad = r * 2;
+  const xs = pts.map((p) => p.x), ys = pts.map((p) => p.y);
+  const x0 = Math.min(...xs) - pad, x1 = Math.max(...xs) + pad;
+  const y0 = Math.min(...ys) - pad, y1 = Math.max(...ys) + pad;
+  return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+}
+
 /** A callout marker in drawing units: an open ring, no number — the drawing's
  *  printed callouts stay readable underneath. `label` is accepted for the
  *  tooltip fallback only; it is never drawn. The hit target is a larger

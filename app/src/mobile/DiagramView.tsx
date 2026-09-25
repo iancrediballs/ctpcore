@@ -23,7 +23,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as api from "../data/api";
 import type { DiagramPart, WebHotspot } from "../data/api";
 import { assetUrl } from "../assets";
-import { DiagramCanvas, Marker, loadMarkerScale, markerRadius, FOCUS_SCALE, type CanvasApi, type Frame, type Rect } from "./DiagramCanvas";
+import { DiagramCanvas, Marker, loadMarkerScale, markerRadius, calloutRect, FOCUS_SCALE, type CanvasApi, type Frame, type Rect } from "./DiagramCanvas";
 import { markerState, markerTitle } from "./hotspotState";
 
 export type Drawing = { path: string; label: string; key?: string };
@@ -112,12 +112,9 @@ export function DiagramView({ drawings, start, onClose, canEdit, onOpenPart, onE
   const selRow = rows.find((r) => r.key === sel) ?? null;
 
   // ── the enclosing rectangle of a row's markers, in drawing units ─────────
-  const rectOf = useCallback((r: Row): Rect => {
-    const rad = markerRadius(frame?.w ?? 0, markerScale) * 2;
-    const xs = r.hots.map((h) => h.x), ys = r.hots.map((h) => h.y);
-    const x0 = Math.min(...xs) - rad, x1 = Math.max(...xs) + rad, y0 = Math.min(...ys) - rad, y1 = Math.max(...ys) + rad;
-    return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
-  }, [frame, markerScale]);
+  const rectOf = useCallback((r: Row): Rect =>
+    calloutRect(r.hots, markerRadius(frame?.w ?? 0, markerScale)),
+  [frame, markerScale]);
 
   /** Select from the LIST: mark the row and move the drawing's attention to it.
    *
