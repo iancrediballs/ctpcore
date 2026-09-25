@@ -5,7 +5,12 @@
 // row per PART on the drawing, joined to stock and price at render time —
 // never stored in the hotspot. The two sides select the same thing:
 //   marker tap → the row scrolls into view and lights up, the marker pulses
-//   row tap    → the drawing is TAKEN to the part (animated), the marker pulses
+//   row tap    → the drawing's attention moves to the part, the marker pulses
+// Every part of a row that a finger lands on — the number badge, the thumbnail,
+// the name — does the same thing: it points at the callout on the drawing. Only
+// the explicit "Open" button leaves the drawing, for the part's detail sheet.
+// (Ian, 2026-09-25. The name used to be a link to the part sheet, so looking
+// for a callout by name took you off the drawing instead of to it.)
 // A part with several callouts (16 appears twice on SEC101; L/H and R/H pairs
 // elsewhere) zooms to the rectangle enclosing all of them.
 //
@@ -18,7 +23,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as api from "../data/api";
 import type { DiagramPart, WebHotspot } from "../data/api";
 import { assetUrl } from "../assets";
-import { DiagramCanvas, Marker, loadMarkerScale, markerRadius, type CanvasApi, type Frame, type Rect } from "./DiagramCanvas";
+import { DiagramCanvas, Marker, loadMarkerScale, markerRadius, FOCUS_SCALE, type CanvasApi, type Frame, type Rect } from "./DiagramCanvas";
 import { markerState, markerTitle } from "./hotspotState";
 
 export type Drawing = { path: string; label: string; key?: string };
@@ -114,10 +119,19 @@ export function DiagramView({ drawings, start, onClose, canEdit, onOpenPart, onE
     return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
   }, [frame, markerScale]);
 
-  /** Select from the LIST: mark the row and take the drawing there. */
+  /** Select from the LIST: mark the row and move the drawing's attention to it.
+   *
+   *  Ian, 2026-09-25: the number, the name and the thumbnail all do THIS. Only
+   *  "Open" leaves the drawing. Before, the name was a link to the part sheet,
+   *  so two of the three things a finger lands on went somewhere else.
+   *
+   *  focus(), not zoomTo(): zoomTo fills the view with the callout, which for a
+   *  single marker clamped to MAX_S (8×) and threw the truck away. A part with
+   *  several callouts is centred on the rectangle enclosing all of them — at
+   *  the same gentle scale, so both are visible rather than framed. */
   const goTo = useCallback((r: Row, instant = false) => {
     setSel(r.key);
-    canvas.current?.zoomTo(rectOf(r), r.hots.length > 1 ? 0.25 : 0.9, instant);
+    canvas.current?.focus(rectOf(r), FOCUS_SCALE, instant);
     writeHash(key, r.partId);
   }, [rectOf, key]);
   /** Select from the DRAWING: mark the marker and bring the row into view. */
@@ -200,9 +214,9 @@ export function DiagramView({ drawings, start, onClose, canEdit, onOpenPart, onE
             <div className="dv-badges">{row.badges.map((b) => <span key={b} className="dv-badge">{b}</span>)}</div>
             {p?.image ? <img className="dv-thumb" src={assetUrl(p.image)} alt="" loading="lazy" /> : <span className="dv-thumb ph" />}
             <div className="dv-main">
-              {row.partId != null && onOpenPart
-                ? <a className="dv-name" href="#" onClick={(e) => { e.preventDefault(); e.stopPropagation(); onOpenPart(row.partId!); }}>{row.name}</a>
-                : <span className={"dv-name" + (row.link !== "ok" ? " dim" : "")}>{row.name}</span>}
+              {/* Plain text, not a link: the name points at the callout with the
+                  rest of the row. "Open" in dv-side is the way to the sheet. */}
+              <span className={"dv-name" + (row.link !== "ok" ? " dim" : "")}>{row.name}</span>
               <div className="dv-meta">
                 {row.sku && <span>Part no. <b className="mono">{p?.catalogue_pn ?? row.sku}</b></span>}
                 {p && p.on_hand != null && (
@@ -216,6 +230,10 @@ export function DiagramView({ drawings, start, onClose, canEdit, onOpenPart, onE
             </div>
             <div className="dv-side" onClick={(e) => e.stopPropagation()}>
               {p && p.list_minor != null && <div className="dv-price">{fmtR(p.list_minor)}</div>}
+              {/* Open is offered to EVERYONE now, customers included — it is the
+                  only way to the part's details, and the detail sheet is where
+                  the photo carousel lives. It used to appear for staff only. */}
+              {p && onOpenPart && <button className="mb-chip" onClick={() => onOpenPart(p.id)}>Open</button>}
               {p && onAddToRequest && (
                 <div className="dv-add">
                   <input className="dv-qty" inputMode="numeric" value={q}
@@ -223,7 +241,6 @@ export function DiagramView({ drawings, start, onClose, canEdit, onOpenPart, onE
                   <button className="mb-chip on" onClick={() => onAddToRequest(p, q)}>{already ? `+ (${already} in list)` : "Add to request"}</button>
                 </div>
               )}
-              {p && !onAddToRequest && onOpenPart && <button className="mb-chip" onClick={() => onOpenPart(p.id)}>Open</button>}
             </div>
           </div>
         );

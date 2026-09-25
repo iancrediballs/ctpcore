@@ -638,7 +638,10 @@ textarea.st-in{resize:vertical;line-height:1.45;font-size:15px}
 .dv-thumb.ph{background:var(--surf2)}
 .dv-main{flex:1;min-width:0}
 .dv-name{font-weight:800;font-size:14px;color:var(--txt);text-decoration:none;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-a.dv-name:hover{color:var(--amber);text-decoration:underline}
+/* The name is text, not a link (2026-09-25): it points at the callout with the
+   rest of the row, so it takes the ROW's hover rather than a link's underline.
+   "Open" is the only thing in the row that navigates. */
+.dv-row:hover .dv-name{color:var(--amber)}
 .dv-name.dim{color:var(--dim);font-weight:600}
 .dv-meta{display:flex;flex-wrap:wrap;gap:10px;font-size:12px;color:var(--dim);margin-top:2px}
 .dv-meta .mono{font-family:var(--mono,ui-monospace,monospace);color:var(--txt)}
