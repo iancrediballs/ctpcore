@@ -1079,6 +1079,19 @@ async function deviceAudit(): Promise<unknown[]> {
 // wrong one for the stock counter, which is why they are built differently:
 // nobody submits a parts enquiry from a dead spot in the warehouse, but people
 // count stock there all day.
+/** 0053: who the counter can raise an order for. Read from the local mirror
+ *  rather than the network — the counter picks a customer on every sale and
+ *  this list changes about once a month, so a round trip buys nothing and
+ *  costs responsiveness on a bad line. */
+async function staffCustomers(): Promise<unknown[]> {
+  return all(
+    `SELECT id, name, contact, phone, email
+       FROM customer
+      WHERE deleted_at IS NULL
+      ORDER BY name COLLATE NOCASE`
+  );
+}
+
 async function requestParts(a: Record<string, unknown>): Promise<unknown> {
   const raw = Array.isArray(a["items"]) ? (a["items"] as unknown[]) : [];
   const items = raw
@@ -1091,6 +1104,22 @@ async function requestParts(a: Record<string, unknown>): Promise<unknown> {
   if (items.length === 0) throw new Error("[CTP web] request_parts: nothing to request.");
 
   const note = a["note"] == null ? null : String(a["note"]).slice(0, 2000);
+
+  // 0053: the counter raises the same request against a named customer. The
+  // database refuses request_parts_for() unless the caller is staff, so this
+  // branch is a convenience, not the security boundary.
+  const forCustomer = a["customerId"] == null ? null : Number(a["customerId"]);
+  if (forCustomer != null) {
+    if (!Number.isInteger(forCustomer)) {
+      throw new Error("[CTP web] request failed: pick a customer first.");
+    }
+    const { data, error } = await supabase.rpc("request_parts_for", {
+      p_customer_id: forCustomer, items, note,
+    });
+    if (error) throw new Error(`[CTP web] request failed: ${error.message}`);
+    return data;
+  }
+
   const { data, error } = await supabase.rpc("request_parts", { items, note });
   if (error) {
     // The function raises readable messages for the cases that matter (no
@@ -1296,6 +1325,7 @@ const PORTED: Record<string, Handler> = {
   post_movement: (a) => postMovement(a),
   transfer_stock: (a) => transferStock(a),
   request_parts: (a) => requestParts(a),
+  staff_customers: () => staffCustomers(),
   my_requests: () => myRequests(),
   respond_to_quote: (a) => respondToQuote(a),
   quote_drop_line: (a) => quoteDropLine(a),

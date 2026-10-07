@@ -316,6 +316,10 @@ export default function MobileShell() {
   const [cart, setCart] = useState<{ id: number; sku: string; name: string; qty: number }[]>([]);
   const [note, setNote] = useState("");
   const [sending, setSending] = useState(false);
+  // 0053 — counter sales. The cart is shared with the customer flow; these two
+  // say who a STAFF cart is being raised for.
+  const [customers, setCustomers] = useState<{ id: number; name: string }[]>([]);
+  const [counterCustomer, setCounterCustomer] = useState<number | null>(null);
   const [audit, setAudit] = useState<{ table: string; rows: number }[] | null>(null);
   const [mine, setMine] = useState<MyRequest[] | null>(null);
   const [answering, setAnswering] = useState<number | null>(null);
@@ -672,6 +676,15 @@ export default function MobileShell() {
   }, [isClient]);
   useEffect(() => { if (!isClient) loadOrders(); }, [isClient, lastSynced, loadOrders]);
 
+  // 0053 — the customer list for counter sales. Staff only, and read from the
+  // local mirror, so it costs nothing to refresh whenever sync moves.
+  useEffect(() => {
+    if (isClient) { setCustomers([]); return; }
+    api.staffCustomers<{ id: number; name: string }[]>()
+      .then(setCustomers)
+      .catch((e) => { console.error(e); setCustomers([]); });
+  }, [isClient, lastSynced]);
+
   /**
    * "1850", "1850.50", "1 850,50", "R1,850.50" — all of them are money here.
    * South African keyboards produce the decimal COMMA, and Number("1850,00")
@@ -934,6 +947,36 @@ const parseRand = (s: string): number => {
       setSending(false);
     }
   }, [cart, note, sending, showToast]);
+
+  /** 0053 — the counter raises the same request, for a customer it names.
+   *  Deliberately a separate function from submitRequest rather than a flag on
+   *  it: the two have different failure messages and different follow-ups (a
+   *  customer watches for their quote, the counter goes straight to pricing). */
+  const sendCounterSale = useCallback(async () => {
+    if (cart.length === 0 || sending || counterCustomer == null) return;
+    setSending(true);
+    try {
+      const res = await api.requestPartsFor<{ number?: string; lines?: number }>(
+        counterCustomer,
+        cart.map((c) => ({ part_id: c.id, qty: c.qty })),
+        note.trim() || null
+      );
+      const who = customers.find((c) => c.id === counterCustomer)?.name ?? "the customer";
+      setCart([]);
+      setNote("");
+      setCounterCustomer(null);
+      showToast({ text: `${res?.number ?? "Request"} raised for ${who} — price it below and send.` });
+      loadOrders();
+    } catch (e) {
+      console.error(e);
+      const msg = e instanceof Error
+        ? e.message.replace(/^\[CTP web\] request failed: /, "")
+        : "Could not raise the request.";
+      showToast({ text: msg, err: true });
+    } finally {
+      setSending(false);
+    }
+  }, [cart, note, sending, counterCustomer, customers, showToast]);
 
   /** "Issue 1": one unit out of the first location that has stock. */
   const issueOne = useCallback((d: Detail) => {
@@ -1297,6 +1340,57 @@ const parseRand = (s: string): number => {
         </div>
       </div>
       <div className="mb-body">
+        {/* 0053 — COUNTER SALE.
+            Appears only once something is on the counter, so the desk is not
+            cluttered the rest of the time. It raises exactly the same kind of
+            request a customer would, against a customer you name, and then
+            lands in "To price" below where the normal flow takes over. */}
+        {cart.length > 0 && (
+          <div className="mb-card" style={{ borderColor: "var(--amber)", marginBottom: 14 }}>
+            <div className="mb-cbody">
+              <div className="mb-count" style={{ color: "var(--amber)", paddingTop: 0 }}>
+                Counter sale · {cart.length} part{cart.length === 1 ? "" : "s"}
+              </div>
+
+              <select className="mb-hs-in" style={{ width: "100%", marginBottom: 10 }}
+                value={counterCustomer ?? ""}
+                onChange={(e) => setCounterCustomer(e.target.value ? Number(e.target.value) : null)}>
+                <option value="">— which customer is this for? —</option>
+                {customers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+
+              <div className="mb-rows">
+                {cart.map((c) => (
+                  <div className="mb-row" key={c.id}>
+                    <span style={{ flex: 1, minWidth: 0 }}>
+                      <div className="mb-cname">{c.name}</div>
+                      <div className="mb-csku mb-mono">{c.sku}</div>
+                    </span>
+                    <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <button className="mb-chip" onClick={() => setCartQty(c.id, c.qty - 1)}>−</button>
+                      <b style={{ minWidth: 24, textAlign: "center" }}>{c.qty}</b>
+                      <button className="mb-chip" onClick={() => setCartQty(c.id, c.qty + 1)}>+</button>
+                    </span>
+                  </div>
+                ))}
+              </div>
+
+              <textarea className="mb-note-in" rows={2} value={note} maxLength={2000}
+                placeholder="Vehicle, urgency, who asked — anything the desk should see…"
+                onChange={(e) => setNote(e.target.value)} />
+
+              <div className="mb-actions" style={{ marginTop: 10 }}>
+                <button className="mb-btn s" disabled={sending}
+                  onClick={() => { setCart([]); setNote(""); setCounterCustomer(null); }}>Clear</button>
+                <button className="mb-btn p" disabled={sending || counterCustomer == null}
+                  onClick={() => void sendCounterSale()}>
+                  {sending ? "Raising…" : counterCustomer == null ? "Pick a customer" : "Raise request"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {orders === null && !ordersErr && <div className="mb-count">Loading…</div>}
         {ordersErr && (
           <div className="mb-empty">
@@ -1706,8 +1800,38 @@ const parseRand = (s: string): number => {
   const hero = photos[at]?.path ?? null;
   const mainBin = d?.stock.find((s) => s.bin)?.bin ?? null;
 
+  // The diagram on a part's own page is a thumbnail, and it has never carried
+  // markers — Ian read that as "the hotspots are gone" on 7 Oct. Full marker
+  // sets belong in the viewer (they need the zoom to be legible at all), but
+  // the ONE marker that matters here — this part's own position on the drawing
+  // — is worth showing, so the thumbnail answers "where is it" on its own.
+  // Percentages, because hotspots are stored in the drawing's natural frame
+  // and the thumbnail is rendered at whatever width the sheet happens to be.
+  const [spot, setSpot] = useState<{ x: number; y: number; label: string } | null>(null);
+  useEffect(() => {
+    setSpot(null);
+    const path = d?.diagram_image;
+    if (!path || !d) return;
+    let live = true;
+    api.listHotspots(path).then((r) => {
+      if (!live || !r.img_w || !r.img_h) return;      // no frame, no honest placement
+      const h = r.hotspots.find((x) => x.part_id === d.id);
+      if (!h) return;
+      setSpot({ x: (h.x / r.img_w) * 100, y: (h.y / r.img_h) * 100, label: h.item_no ?? "•" });
+    }).catch((e) => console.error("hotspots:", e));
+    return () => { live = false; };
+  }, [d?.diagram_image, d?.id]);
+
+  // 2026-09-26: "Open" in the diagram parts list appeared to do nothing. It was
+  // doing its job — openPart() fetched the part and opened this sheet — but the
+  // sheet is z-index 40 and the diagram lightbox (.mb-lb) is 70, so it opened
+  // UNDERNEATH the diagram, invisibly. The Lightbox caller dodged this by
+  // closing itself first; the DiagramView caller deliberately does not, because
+  // closing the drawing to read a part and having to navigate back to it is the
+  // behaviour Ian asked us to get rid of. So the sheet rises above the drawing
+  // instead, and closing it puts you back on the same drawing, same zoom.
   const sheet = (
-    <div className={"mb-sheet" + (sheetOpen ? " open" : "")}>
+    <div className={"mb-sheet" + (sheetOpen ? " open" : "") + (diagram || viewer || hotspotEditor ? " over-lightbox" : "")}>
       {d && (
         <>
           <div className="mb-shead">
@@ -1795,6 +1919,11 @@ const parseRand = (s: string): number => {
               <div className="mb-dgm" role="button"
                 onClick={() => openDiagram(d.diagram_image!, d.id)}>
                 <img src={assetUrl(d.diagram_image)} alt="Section diagram" loading="lazy" />
+                {spot && (
+                  <span className="mb-dgm-spot" style={{ left: `${spot.x}%`, top: `${spot.y}%` }}>
+                    {spot.label}
+                  </span>
+                )}
                 <span className="mb-zoomtag">⤢</span>
                 <div className="mb-dgm-cap">
                   {d.diagram_item && <span className="mb-itembdg">{d.diagram_item}</span>}
@@ -1899,10 +2028,24 @@ const parseRand = (s: string): number => {
               )
             ) : (
               <>
+                {/* 0053: the counter can build a request for a customer the same
+                    way the customer would, so the part sheet offers it here too.
+                    Issue 1 still takes stock out directly for a walk-in who is
+                    paying there and then; this is for "quote it to Denver". */}
+                {inCart(d.id) > 0 ? (
+                  <>
+                    <button className="mb-btn s" onClick={() => addToCart(d, -1)}>−</button>
+                    <button className="mb-btn s" style={{ flex: "0 0 110px" }}
+                      onClick={() => setTab("cart")}>{inCart(d.id)} on counter</button>
+                    <button className="mb-btn s" onClick={() => addToCart(d, 1)}>+</button>
+                  </>
+                ) : (
+                  <button className="mb-btn s" onClick={() => addToCart(d, 1)}>Add to order</button>
+                )}
                 <button className="mb-btn p" onClick={() => issueOne(d)}
                   disabled={d.stock.length === 0}>Issue 1</button>
                 <button className="mb-btn s" onClick={() => setCounterOpen(true)}
-                  disabled={d.stock.length === 0}>Count / receive</button>
+                  disabled={d.stock.length === 0}>Count</button>
               </>
             )}
           </div>
@@ -1937,8 +2080,16 @@ const parseRand = (s: string): number => {
           onClose={() => { setDiagram(null); if (/^#dg=/.test(location.hash)) history.replaceState(null, "", location.pathname + location.search); }}
           onOpenPart={(pid) => { void openPart(pid); }}
           onEditMarkers={(path, label) => setHotspotEditor({ path, label })}
-          onAddToRequest={isClient ? (p: DiagramPart, n: number) => { addToCart({ id: p.id, sku: p.sku, name: p.name } as Detail, n); showToast({ text: `${p.sku} × ${n} added to your request` }); } : undefined}
-          inRequest={isClient ? inCart : undefined} />
+          /* 0053: staff get this too now — building an order off the drawing is
+             exactly how a counter conversation goes ("the hinge, and the lock").
+             Wording differs because for staff it is somebody else's order. */
+          onAddToRequest={(p: DiagramPart, n: number) => {
+            addToCart({ id: p.id, sku: p.sku, name: p.name } as Detail, n);
+            showToast({ text: isClient
+              ? `${p.sku} × ${n} added to your request`
+              : `${p.sku} × ${n} on the counter` });
+          }}
+          inRequest={inCart} />
       )}
       {viewer && !hotspotEditor && (
         <Lightbox items={viewer.items} start={viewer.idx} onClose={() => setViewer(null)}
@@ -2117,7 +2268,9 @@ function Lightbox({ items, start, onClose, canEdit, onOpenPart, onEditMarkers }:
   )), [marks, frame, onOpenPart]);
 
   return (
-    <div className="mb-lb">
+    // mb-lb-top: this viewer is opened from the part sheet, so it has to sit
+    // above it (sheet 80, this 90). Without it the photo lands behind the sheet.
+    <div className="mb-lb mb-lb-top">
       <div className="mb-lb-head">
         <button className="mb-back" onClick={onClose}>✕</button>
         <span className="mb-lb-cap">{item.label}</span>

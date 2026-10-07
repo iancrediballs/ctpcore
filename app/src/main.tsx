@@ -1,3 +1,9 @@
+// FIRST, before anything can construct the Supabase client: note whether this
+// page was opened by an invite or a password-reset link. supabase-js strips the
+// token out of the URL as it starts up, and with it the only evidence of why
+// the person is here. See auth/authIntent.ts.
+import "./auth/authIntent";
+
 import React, { Suspense } from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";

@@ -101,6 +101,15 @@ export const adminAddPhoto = <T>(partId: number, blob: Blob, filename: string) =
 /** A signed-in customer asks for parts. Creates a quote-status order server-side. */
 export const requestParts = <T>(items: { part_id: number; qty: number }[], note: string | null) =>
   call<T>("request_parts", { items, note });
+/** The counter raises the same request FOR a customer. Staff only — the
+ *  database refuses it otherwise, and the order records who keyed it. */
+export const requestPartsFor = <T>(
+  customerId: number,
+  items: { part_id: number; qty: number }[],
+  note: string | null,
+) => call<T>("request_parts", { items, note, customerId });
+/** Customers the counter can raise an order against. Staff only. */
+export const staffCustomers = <T>() => call<T>("staff_customers");
 /** A client's own requests/quotes, newest first, with their lines. */
 export const myRequests = <T>() => call<T>("my_requests");
 // ─── staff order desk (web-only) ─────────────────────────────────────────
