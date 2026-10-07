@@ -1,4 +1,3 @@
 {
-  "$comment": "Git deployments OFF for this repo. The GitHub integration points at Vercel project ianiboyai/ctp-core, which is NOT the live site and has failed to build on every push since 9 Sep 2026 (it builds at the repo root; the app is in app/). The live ctpcore.vercel.app is project ctp-core under account ian-33be3d61 and is deployed only by `cd app && npx vercel --prod`, which does not read this file. Remove this file if that project is ever fixed (Root Directory = app) or re-pointed.",
   "git": { "deploymentEnabled": false }
 }

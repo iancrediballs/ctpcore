@@ -1,0 +1,16 @@
+# Vercel builds the app itself, so it only needs the sources.
+#
+# 2026-09-26: without this the CLI tried to upload 231 MB — every node_modules
+# tree, the built dist/, the desktop app's Rust target/ and the diagram assets —
+# and stalled at 0 bytes. The build installs its own dependencies on Vercel's
+# machine, so none of that needs to travel.
+node_modules
+**/node_modules
+dist
+**/dist
+target
+**/target
+.git
+.vercel
+*.log
+supabase/.temp

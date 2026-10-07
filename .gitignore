@@ -45,3 +45,10 @@ CTP_Parts_Catalogue.html
 
 # cloud migration artifacts
 _cloud_migration/
+
+.vercel
+.env*
+
+# agent scratch and Supabase CLI temp state - not source
+.claude/
+supabase/.temp/
