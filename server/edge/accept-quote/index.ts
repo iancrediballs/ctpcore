@@ -80,7 +80,7 @@ Deno.serve(async (req: Request) => {
   if (!chk?.ok) {
     return json({ error: "This quote cannot be accepted yet.", blockers, message: blockers.map((b) => b.message).join(" ") }, 409);
   }
-  if (!zohoConfigured()) {
+  if (!await zohoConfigured()) {
     return json({ error: "Ordering is not connected to the accounts system on this server yet — please tell us and we will accept it by hand." }, 503);
   }
 
