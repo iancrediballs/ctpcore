@@ -1,0 +1,11 @@
+﻿# The live Vercel project (ian-33be3d61/ctp-core) has Root Directory = app, so
+# `npx vercel --prod` runs from the repo ROOT and would upload everything here,
+# including Quotes/ and the cost workbooks. Upload only the web app's source.
+/*
+!/app
+/app/public/assets
+/app/src-tauri
+/app/dist
+/app/node_modules
+/app/.env*
+/app/.vercel

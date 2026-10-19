@@ -4,3 +4,6 @@
 public/assets
 src-tauri
 dist
+
+# Local env files (vercel link writes an OIDC token here) never ship.
+.env*
