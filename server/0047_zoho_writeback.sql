@@ -19,9 +19,14 @@
 --      also writes a reference (CTP-INV-<no> / CTP-GRN-<no>) on the Zoho
 --      document and searches for it before creating, so a create that succeeded
 --      while saving its id failed is FOUND on retry, not made twice.
---    * DRAFT BY DEFAULT. invoice_as_draft / bill_as_draft: Michelle reviews in
---      Zoho before anything is sent or posted. CTP Core has no accounting
---      approval step of its own, so the flags default to true.
+--    * ALWAYS DRAFT — the standing rule (Michelle, 19 Oct 2026). Every invoice
+--      and bill CTP Core creates in Zoho is a DRAFT; Michelle reviews and
+--      approves it in Zoho. invoice_as_draft / bill_as_draft stay as flags,
+--      default true, and are deliberately NOT in the app: only an admin can
+--      change them, through set_zoho_draft_policy(), from the SQL editor.
+--    * STATUS COMES BACK. zoho-push {action:"status"} reads each pushed
+--      document's Zoho status (draft / sent / paid / void …) onto the CTP
+--      record, so staff can see when Michelle has approved it.
 --    * NEVER SILENT. Every attempt is a zoho_push_log row; the last error sits
 --      on the document (zoho_error) and is shown in the app.
 --
@@ -42,18 +47,20 @@ create table if not exists public.zoho_config (
   bill_as_draft    boolean not null default true,
   use_ctp_invoice_number boolean not null default true,  -- Zoho invoice number = CTP invoice_no
   tax_id           text,                     -- Zoho tax id for VAT lines; null = look up by rate
+  status_synced_at timestamptz,              -- last status read-back (throttles automatic refreshes)
   updated_at       timestamptz not null default now(),
   updated_by       uuid
 );
 insert into public.zoho_config (id) values (1) on conflict (id) do nothing;
+alter table public.zoho_config add column if not exists status_synced_at timestamptz;
 alter table public.zoho_config enable row level security;
 drop policy if exists zoho_config_staff_read on public.zoho_config;
 create policy zoho_config_staff_read on public.zoho_config for select to authenticated using (is_staff());
 grant select on public.zoho_config to authenticated;
 
+-- Managers: on/off, go-live date, tax id. NOT the draft rule (below).
 create or replace function public.set_zoho_config(
-  p_push_enabled boolean, p_push_from timestamptz,
-  p_invoice_as_draft boolean, p_bill_as_draft boolean, p_tax_id text default null)
+  p_push_enabled boolean, p_push_from timestamptz, p_tax_id text default null)
 returns public.zoho_config
 language plpgsql security definer set search_path = public, pg_temp
 as $$
@@ -67,18 +74,43 @@ begin
       using errcode = '22023';
   end if;
   update zoho_config set push_enabled = p_push_enabled, push_from = p_push_from,
-         invoice_as_draft = p_invoice_as_draft, bill_as_draft = p_bill_as_draft,
          tax_id = nullif(trim(coalesce(p_tax_id, '')), ''),
          updated_at = now(), updated_by = auth.uid()
    where id = 1 returning * into r;
   insert into zoho_push_log (doc_type, action, ok, message, actor)
   values ('config', 'update', true,
-          format('push_enabled=%s push_from=%s invoice_as_draft=%s bill_as_draft=%s',
-                 p_push_enabled, p_push_from, p_invoice_as_draft, p_bill_as_draft), auth.uid());
+          format('push_enabled=%s push_from=%s', p_push_enabled, p_push_from), auth.uid());
   return r;
 end $$;
-revoke all on function public.set_zoho_config(boolean, timestamptz, boolean, boolean, text) from public, anon;
-grant execute on function public.set_zoho_config(boolean, timestamptz, boolean, boolean, text) to authenticated;
+revoke all on function public.set_zoho_config(boolean, timestamptz, text) from public, anon;
+grant execute on function public.set_zoho_config(boolean, timestamptz, text) to authenticated;
+
+-- The draft rule. Admin only, and only from the SQL editor — there is no
+-- button for it. Default (and Michelle's standing rule): both true.
+--   select set_zoho_draft_policy(true, true);
+-- From the SQL editor auth.uid() is null (a server session), which is allowed;
+-- from the app, only a signed-in admin passes.
+create or replace function public.set_zoho_draft_policy(p_invoice_as_draft boolean, p_bill_as_draft boolean)
+returns public.zoho_config
+language plpgsql security definer set search_path = public, pg_temp
+as $$
+declare r public.zoho_config;
+begin
+  if auth.uid() is not null then
+    if coalesce((select role from app_user where id = auth.uid()), '') <> 'admin' then
+      raise exception 'Only an administrator can change the Zoho draft rule.' using errcode = '42501';
+    end if;
+  end if;
+  update zoho_config set invoice_as_draft = p_invoice_as_draft, bill_as_draft = p_bill_as_draft,
+         updated_at = now(), updated_by = auth.uid()
+   where id = 1 returning * into r;
+  insert into zoho_push_log (doc_type, action, ok, message, actor)
+  values ('config', 'draft_policy', true,
+          format('invoice_as_draft=%s bill_as_draft=%s', p_invoice_as_draft, p_bill_as_draft), auth.uid());
+  return r;
+end $$;
+revoke all on function public.set_zoho_draft_policy(boolean, boolean) from public, anon;
+grant execute on function public.set_zoho_draft_policy(boolean, boolean) to authenticated;
 
 -- ── 2. Zoho identity on CTP records ──────────────────────────────────────────
 alter table public.customer add column if not exists zoho_contact_id text;
@@ -101,6 +133,12 @@ alter table public.goods_receipt add column if not exists zoho_pushed_at   times
 alter table public.goods_receipt add column if not exists zoho_error       text;
 create unique index if not exists goods_receipt_zoho_bill_uniq
   on public.goods_receipt (zoho_bill_id) where zoho_bill_id is not null;
+
+-- When the Zoho status was last read back (zoho_status holds Zoho's own word:
+-- draft, sent, viewed, overdue, partially_paid, paid, void, open … or
+-- 'deleted' when the document no longer exists in Zoho).
+alter table public.sales_order   add column if not exists zoho_status_at timestamptz;
+alter table public.goods_receipt add column if not exists zoho_status_at timestamptz;
 
 -- ── 3. the log: every attempt, success or not ────────────────────────────────
 create table if not exists public.zoho_push_log (
@@ -137,6 +175,22 @@ with (security_invoker = true) as
      and gr.supplier_id is not null and gr.zoho_bill_id is null
      and c.push_from is not null and gr.posted_at >= c.push_from;
 grant select on public.zoho_push_queue to authenticated;
+
+-- Everything already in Zoho, with its current Zoho status — invoices AND
+-- bills in one list (bills are not on the phone otherwise).
+create or replace view public.zoho_documents
+with (security_invoker = true) as
+  select 'invoice'::text as doc_type, so.id as ctp_id, so.invoice_no as ctp_ref,
+         c.name as party, so.zoho_invoice_id as zoho_id, so.zoho_invoice_number as zoho_number,
+         so.zoho_status, so.zoho_status_at, so.zoho_pushed_at, so.zoho_error
+    from sales_order so join customer c on c.id = so.customer_id
+   where so.zoho_invoice_id is not null
+  union all
+  select 'bill', gr.id, gr.number, s.name, gr.zoho_bill_id, gr.zoho_bill_number,
+         gr.zoho_status, gr.zoho_status_at, gr.zoho_pushed_at, gr.zoho_error
+    from goods_receipt gr join supplier s on s.id = gr.supplier_id
+   where gr.zoho_bill_id is not null;
+grant select on public.zoho_documents to authenticated;
 
 -- ── 5. a posted desktop receipt arrives in the cloud ─────────────────────────
 -- p: { client_uuid, number, supplier:{code,name,email,vat_no}, received_at,
@@ -229,7 +283,8 @@ grant execute on function public.set_party_vat(text, bigint, text) to authentica
 commit;
 
 -- VERIFY:
-select (select push_enabled from zoho_config) as push_enabled,
-       (select push_from from zoho_config)    as push_from,
-       (select count(*) from zoho_push_queue) as queued;
--- expect: false, null, 0 — nothing can push until a manager sets the go-live date.
+select (select push_enabled from zoho_config)     as push_enabled,
+       (select push_from from zoho_config)        as push_from,
+       (select invoice_as_draft and bill_as_draft from zoho_config) as always_draft,
+       (select count(*) from zoho_push_queue)     as queued;
+-- expect: false, null, true, 0 — nothing can push until a manager sets the go-live date.

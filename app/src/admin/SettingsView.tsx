@@ -17,6 +17,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { supabase } from "../sync/supabase";
+import { zohoStatusLabel } from "../data/zoho";
 import type { Role } from "../auth/AuthProvider";
 
 type Section = "company" | "email" | "staff" | "places" | "tiers" | "zoho";
@@ -661,6 +662,8 @@ type ZohoConfig = { push_enabled: boolean; push_from: string | null; invoice_as_
 type QueueRow = { doc_type: string; ctp_id: number; ctp_ref: string; doc_at: string; last_error: string | null };
 type PushLog = { id: number; at: string; doc_type: string; ctp_ref: string | null; action: string;
   ok: boolean; message: string | null };
+type ZohoDoc = { doc_type: string; ctp_id: number; ctp_ref: string; party: string; zoho_number: string | null;
+  zoho_status: string | null; zoho_status_at: string | null; zoho_error: string | null };
 
 function ZohoPushCard({ flash, fail }: PanelProps) {
   const [cfg, setCfg] = useState<ZohoConfig | null>(null);
@@ -668,6 +671,7 @@ function ZohoPushCard({ flash, fail }: PanelProps) {
   const [taxId, setTaxId] = useState("");
   const [queue, setQueue] = useState<QueueRow[]>([]);
   const [log, setLog] = useState<PushLog[]>([]);
+  const [docs, setDocs] = useState<ZohoDoc[]>([]);
   const [busy, setBusy] = useState(false);
   const [out, setOut] = useState<string | null>(null);
 
@@ -680,6 +684,10 @@ function ZohoPushCard({ flash, fail }: PanelProps) {
       });
     supabase.from("zoho_push_queue").select("doc_type,ctp_id,ctp_ref,doc_at,last_error").order("doc_at")
       .then(({ data }) => setQueue((data ?? []) as QueueRow[]));
+    supabase.from("zoho_documents")
+      .select("doc_type,ctp_id,ctp_ref,party,zoho_number,zoho_status,zoho_status_at,zoho_error")
+      .order("zoho_pushed_at", { ascending: false }).limit(100)
+      .then(({ data }) => setDocs((data ?? []) as ZohoDoc[]));
     supabase.from("zoho_push_log").select("id,at,doc_type,ctp_ref,action,ok,message")
       .order("at", { ascending: false }).limit(30)
       .then(({ data }) => setLog((data ?? []) as PushLog[]));
@@ -694,7 +702,7 @@ function ZohoPushCard({ flash, fail }: PanelProps) {
         !confirm(`Start sending to Zoho?\n\nOnly invoices and receipts from ${pushFrom ? new Date(pushFrom).toLocaleString("en-ZA") : "(no date)"} onward will be sent — never anything earlier.`)) return;
     const { error } = await supabase.rpc("set_zoho_config", {
       p_push_enabled: next.push_enabled, p_push_from: pushFrom,
-      p_invoice_as_draft: next.invoice_as_draft, p_bill_as_draft: next.bill_as_draft, p_tax_id: taxId || null,
+      p_tax_id: taxId || null,
     });
     if (error) return fail(error);
     flash("Zoho settings saved.");
@@ -726,10 +734,14 @@ function ZohoPushCard({ flash, fail }: PanelProps) {
         <div className="st-sub">Sending to Zoho {cfg.push_enabled ? "· ON" : "· OFF"}</div>
         <Field label="Go-live: send documents from" value={from} onChange={setFrom}
           hint="YYYY-MM-DDTHH:MM, Johannesburg time. Nothing invoiced or received before this is ever sent — the accountant imports the history." />
-        <Toggle label="Send invoices to Zoho as DRAFT" checked={cfg.invoice_as_draft}
-          onChange={(v) => save({ invoice_as_draft: v })} hint="Draft = the accountant reviews and sends it from Zoho." />
-        <Toggle label="Send supplier bills to Zoho as DRAFT" checked={cfg.bill_as_draft}
-          onChange={(v) => save({ bill_as_draft: v })} />
+        {/* The draft rule is the accountant's standing instruction, not a
+            setting: no toggle here. It lives in zoho_config and only an admin
+            can change it, from the SQL editor (set_zoho_draft_policy). */}
+        <p className="st-note">
+          {cfg.invoice_as_draft && cfg.bill_as_draft
+            ? "Invoices and supplier bills always arrive in Zoho as DRAFTS. The accountant reviews and approves them in Zoho; the status comes back here."
+            : "⚠ The draft rule has been changed by an administrator — some documents go to Zoho already approved."}
+        </p>
         <Field label="Zoho tax id for VAT (optional)" value={taxId} onChange={setTaxId}
           hint="Blank = use the Zoho tax whose rate matches the order's VAT rate." />
         <div className="st-row2">
@@ -757,6 +769,25 @@ function ZohoPushCard({ flash, fail }: PanelProps) {
           }}>Run Zoho test</button>
         </div>
         {out && <pre className="st-note" style={{ whiteSpace: "pre-wrap", overflowX: "auto" }}>{out}</pre>}
+      </div>
+
+      <div className="st-card">
+        <div className="st-sub">In Zoho ({docs.length})</div>
+        {docs.length === 0 && <p className="st-note">Nothing sent yet.</p>}
+        {docs.map((d) => {
+          const z = zohoStatusLabel(d.zoho_status, d.doc_type === "bill" ? "bill" : "invoice");
+          return (
+            <p className="st-note" key={d.doc_type + d.ctp_id}>
+              {d.doc_type === "invoice" ? "Invoice" : "Bill"} <span className="st-code">{d.ctp_ref}</span>
+              {" · "}{d.party}{" · "}{d.zoho_number ?? "—"}{" · "}
+              <b>{z.text}</b>
+              {d.zoho_status_at && ` · checked ${new Date(d.zoho_status_at).toLocaleString("en-ZA")}`}
+              {d.zoho_error && <><br />✕ {d.zoho_error}</>}
+            </p>
+          );
+        })}
+        <button className="st-save" disabled={busy} onClick={() => call({ action: "status", force: true }, "Zoho status")}>
+          Refresh status from Zoho</button>
       </div>
 
       <div className="st-card">

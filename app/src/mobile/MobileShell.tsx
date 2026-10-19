@@ -16,6 +16,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useStatus } from "@powersync/react";
 import * as api from "../data/api";
+import { refreshZohoStatus, zohoStatusLabel } from "../data/zoho";
 import { assetUrl, photoWebUrl } from "../assets";
 import { DiagramCanvas, Marker, loadMarkerScale, saveMarkerScale, markerRadius, MARKER_SCALE_MIN, MARKER_SCALE_MAX, type CanvasApi, type Frame, type Pt } from "./DiagramCanvas";
 import { DiagramView, readDiagramHash, type Drawing } from "./DiagramView";
@@ -86,6 +87,8 @@ type StaffOrder = {
   customer_phone: string | null; customer_email: string | null; location_code: string | null;
   notes: string | null; created_at: string; fulfilled_at: string | null; tax_rate_bps: number;
   invoice_no: string | null; invoiced_at: string | null;
+  zoho_invoice_number?: string | null; zoho_status?: string | null;
+  zoho_status_at?: string | null; zoho_error?: string | null;
   client_response: string | null; client_responded_at: string | null;
   unpriced: number; total_minor: number;
   stage: "to_price" | "with_customer" | "to_pick" | "fulfilled" | string;
@@ -645,6 +648,14 @@ export default function MobileShell() {
       });
   }, [isClient]);
   useEffect(() => { if (!isClient) loadOrders(); }, [isClient, lastSynced, loadOrders]);
+  // Read Zoho's status back when the desk opens (throttled server-side to every
+  // 2 minutes), so "Draft — awaiting accountant" turns into "Sent" once the
+  // accountant approves it. The new status arrives through sync like any other
+  // order change; a failure here is logged server-side and never blocks the desk.
+  useEffect(() => {
+    if (isClient) return;
+    refreshZohoStatus().then((r) => { if (r.changed > 0) loadOrders(); });
+  }, [isClient, loadOrders]);
 
   /**
    * "1850", "1850.50", "1 850,50", "R1,850.50" — all of them are money here.
@@ -1347,6 +1358,18 @@ const parseRand = (s: string): number => {
                         <div className="mb-csku mb-mono">
                           {o.invoice_no ? `${o.invoice_no} · ` : ""}{o.number} · {o.lines.length} line{o.lines.length === 1 ? "" : "s"} · {when.slice(0, 10)}
                         </div>
+                        {/* Zoho's own status, read back (0047). Shown only for
+                            invoices CTP Core sent or tried to send — pre-go-live
+                            invoices were imported into Zoho by the accountant. */}
+                        {(o.zoho_status || o.zoho_error) && (() => {
+                          const z = zohoStatusLabel(o.zoho_error && !o.zoho_invoice_number ? "error" : o.zoho_status);
+                          return (
+                            <div className="mb-csku" style={{ fontWeight: 700,
+                                 color: z.tone === "bad" ? "var(--bad, #c0392b)" : z.tone === "wait" ? "var(--warn, #b7791f)" : "var(--ok, #2f855a)" }}>
+                              {z.text}{o.zoho_invoice_number ? ` · ${o.zoho_invoice_number}` : ""}
+                            </div>
+                          );
+                        })()}
                       </span>
                       <span className="mb-rv">
                         <div>{fmtR(grand(o))}</div>
@@ -1357,6 +1380,11 @@ const parseRand = (s: string): number => {
                     </button>
                     {open && (
                       <>
+                        {o.zoho_error && (
+                          <div className="mb-csku" style={{ color: "var(--bad, #c0392b)", padding: "6px 0" }}>
+                            ✕ Zoho: {o.zoho_error}
+                          </div>
+                        )}
                         {o.notes && (
                           <div className="mb-row">
                             <span className="mb-rk">Their note</span>

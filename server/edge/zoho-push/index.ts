@@ -10,7 +10,9 @@
 //     searched for our reference (CTP-INV-<no> / CTP-GRN-<no>) so a create whose
 //     id was lost is found, not repeated. A short claim (zoho_status='pushing')
 //     stops two callers pushing the same document at once.
-//   * Draft by default (invoice_as_draft / bill_as_draft).
+//   * ALWAYS DRAFT — Michelle's standing rule. Only an explicit false in
+//     zoho_config (admin-only, set_zoho_draft_policy) skips it; a missing or
+//     unreadable config means draft.
 //   * Contacts: stored zoho_contact_id, else email, else VAT no., else exact
 //     name; created if none match. Lines by SKU via the cached zoho_item.item_id.
 //     Any unknown SKU blocks the WHOLE document — nothing is half-pushed.
@@ -20,6 +22,7 @@
 // Calls (POST JSON):
 //   { "action": "push" }                         every queued document
 //   { "action": "push", "doc_type": "invoice", "ctp_id": 42 }   one document
+//   { "action": "status", "force"?: true }      read Zoho status back (draft/sent/paid/void)
 //   { "action": "test" }   manager/admin: create a clearly marked TEST draft
 //                          invoice + bill against TEST contacts, read them back,
 //                          then delete all four; returns what was created.
@@ -217,12 +220,12 @@ async function pushInvoice(db: SupabaseClient, cfg: any, id: number, log: Logger
       };
       const b = await zoho("POST", "/invoices", cfg.use_ctp_invoice_number ? { ignore_auto_number_generation: "true" } : {}, body);
       inv = b.invoice;
-      if (!cfg.invoice_as_draft) await zoho("POST", `/invoices/${inv!.invoice_id}/status/sent`);
+      if (cfg.invoice_as_draft === false) await zoho("POST", `/invoices/${inv!.invoice_id}/status/sent`);
     }
-    const status = existing ? String(existing.status ?? "") : (cfg.invoice_as_draft ? "draft" : "sent");
+    const status = existing ? String(existing.status ?? "") : (cfg.invoice_as_draft === false ? "sent" : "draft");
     const { error: e2 } = await db.from("sales_order").update({
       zoho_invoice_id: String(inv!.invoice_id), zoho_invoice_number: String(inv!.invoice_number ?? ""),
-      zoho_status: status, zoho_pushed_at: new Date().toISOString(), zoho_error: null,
+      zoho_status: status, zoho_pushed_at: new Date().toISOString(), zoho_status_at: new Date().toISOString(), zoho_error: null,
     }).eq("id", id);
     if (e2) throw new Error(`Zoho invoice ${inv!.invoice_id} CREATED but saving its id failed: ${e2.message}. The next push will find it by ${ref}.`);
     await log({ doc_type: "invoice", ctp_id: id, ctp_ref: o.invoice_no, action: existing ? "found_existing" : "create",
@@ -285,15 +288,15 @@ async function pushBill(db: SupabaseClient, cfg: any, id: number, log: Logger) {
       });
       bill = b.bill;
       const st = String(bill!.status ?? "");
-      if (!cfg.bill_as_draft && st === "draft") await zoho("POST", `/bills/${bill!.bill_id}/status/open`);
-      if (cfg.bill_as_draft && st && st !== "draft") {
+      if (cfg.bill_as_draft === false && st === "draft") await zoho("POST", `/bills/${bill!.bill_id}/status/open`);
+      if (cfg.bill_as_draft !== false && st && st !== "draft") {
         warn = ` — WARNING: Zoho created this bill as "${st}", not draft. Review it in Zoho.`;
       }
     }
-    const status = String(bill!.status ?? (cfg.bill_as_draft ? "draft" : "open"));
+    const status = String(bill!.status ?? (cfg.bill_as_draft === false ? "open" : "draft"));
     const { error: e2 } = await db.from("goods_receipt").update({
       zoho_bill_id: String(bill!.bill_id), zoho_bill_number: String(bill!.bill_number ?? ""),
-      zoho_status: status, zoho_pushed_at: new Date().toISOString(), zoho_error: warn ? warn.slice(3) : null,
+      zoho_status: status, zoho_pushed_at: new Date().toISOString(), zoho_status_at: new Date().toISOString(), zoho_error: warn ? warn.slice(3) : null,
     }).eq("id", id);
     if (e2) throw new Error(`Zoho bill ${bill!.bill_id} CREATED but saving its id failed: ${e2.message}. The next push will find it by ${ref}.`);
     await log({ doc_type: "bill", ctp_id: id, ctp_ref: g.number, action: existing ? "found_existing" : "create",
@@ -304,6 +307,63 @@ async function pushBill(db: SupabaseClient, cfg: any, id: number, log: Logger) {
     await db.from("goods_receipt").update({ zoho_status: e instanceof Blocked ? "blocked" : "error", zoho_error: msg }).eq("id", id);
     throw e;
   }
+}
+
+// ── status read-back: Draft → Sent → Paid / Void, as Michelle moves it ──────
+// Reads each pushed document that is not yet final straight from Zoho by id
+// (no reliance on list filters) and writes Zoho's own status word onto the CTP
+// record. A document Michelle deleted in Zoho is marked 'deleted' — its Zoho
+// id is KEPT, so it is never silently re-created; re-sending is a deliberate act.
+const FINAL = ["paid", "void", "deleted"];
+async function refreshStatus(db: SupabaseClient, log: Logger, force: boolean) {
+  const { data: cfg } = await db.from("zoho_config").select("status_synced_at").eq("id", 1).maybeSingle();
+  const last = cfg?.status_synced_at ? new Date(cfg.status_synced_at).getTime() : 0;
+  if (!force && Date.now() - last < 2 * 60_000) return { skipped: "refreshed less than 2 minutes ago", changed: 0 };
+  await db.from("zoho_config").update({ status_synced_at: new Date().toISOString() }).eq("id", 1);
+
+  const kinds = [
+    { table: "sales_order", idCol: "zoho_invoice_id", numCol: "zoho_invoice_number", ref: "invoice_no",
+      path: "invoices", key: "invoice", numKey: "invoice_number", doc: "invoice" },
+    { table: "goods_receipt", idCol: "zoho_bill_id", numCol: "zoho_bill_number", ref: "number",
+      path: "bills", key: "bill", numKey: "bill_number", doc: "bill" },
+  ] as const;
+  const changes: { doc: string; ref: string; from: string | null; to: string }[] = [];
+  let checked = 0;
+  for (const k of kinds) {
+    const { data: rows, error } = await db.from(k.table)
+      .select(`id, ${k.ref}, ${k.idCol}, ${k.numCol}, zoho_status`)
+      .not(k.idCol, "is", null).limit(200);
+    if (error) throw new Error(`${k.table}: ${error.message}`);
+    // deno-lint-ignore no-explicit-any
+    for (const r of (rows ?? []) as any[]) {
+      if (FINAL.includes(r.zoho_status)) continue;
+      checked++;
+      let status: string, number: string | null = r[k.numCol];
+      try {
+        const b = await zoho("GET", `/${k.path}/${r[k.idCol]}`);
+        status = String(b[k.key]?.status ?? "unknown");
+        number = b[k.key]?.[k.numKey] ?? number;
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        // Zoho answers a missing record with HTTP 404 or a "does not exist" code.
+        if (/\(404|does not exist|not found/i.test(msg)) status = "deleted";
+        else { await log({ doc_type: k.doc, ctp_id: r.id, ctp_ref: r[k.ref], action: "status_error", ok: false, message: msg }); continue; }
+      }
+      const patch: Record<string, unknown> = { zoho_status_at: new Date().toISOString() };
+      if (status !== r.zoho_status) {
+        patch.zoho_status = status;
+        patch.zoho_error = status === "deleted"
+          ? "This document was DELETED in Zoho. It will not be re-sent automatically — ask the accountant."
+          : null;
+        changes.push({ doc: k.doc, ref: r[k.ref], from: r.zoho_status, to: status });
+        await log({ doc_type: k.doc, ctp_id: r.id, ctp_ref: r[k.ref], action: "status", ok: status !== "deleted",
+                    zoho_id: r[k.idCol], message: `Zoho status ${r.zoho_status ?? "?"} → ${status}` });
+      }
+      if (number && number !== r[k.numCol]) patch[k.numCol] = number;
+      await db.from(k.table).update(patch).eq("id", r.id);
+    }
+  }
+  return { checked, changed: changes.length, changes };
 }
 
 // ── the clearly-marked live test ─────────────────────────────────────────────
@@ -381,13 +441,18 @@ Deno.serve(async (req: Request) => {
 
   // Switched off is an answer, not an error — checked before the secrets so an
   // invoice issued before go-live does not report a failure that isn't one.
-  if (body.action !== "test" && (!cfg?.push_enabled || !cfg?.push_from)) {
+  // (Status read-back is allowed while sending is off: documents already in
+  // Zoho still change status there.)
+  if (body.action !== "test" && body.action !== "status" && (!cfg?.push_enabled || !cfg?.push_from)) {
     return json({ ok: true, skipped: "Sending to Zoho is off (Settings → Zoho). Nothing was sent." });
   }
   const missing = ["ZOHO_CLIENT_ID", "ZOHO_CLIENT_SECRET", "ZOHO_REFRESH_TOKEN", "ZOHO_ORG_ID"].filter((k) => !env(k));
   if (missing.length) return json({ ok: false, error: `Zoho is not connected yet. Missing secrets: ${missing.join(", ")}` }, 412);
 
   try {
+    if (body.action === "status") {
+      return json({ ok: true, ...(await refreshStatus(db, log, body.force === true)) });
+    }
     if (body.action === "test") {
       if (!who.manager && who.actor) return json({ error: "Only a manager or admin can run the Zoho test" }, 403);
       return json({ ok: true, test: await liveTest(db, cfg ?? {}, log) });

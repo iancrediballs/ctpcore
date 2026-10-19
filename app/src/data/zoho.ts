@@ -28,6 +28,39 @@ export async function pushToZoho(docType: "invoice" | "bill", ctpId: number): Pr
   }
 }
 
+/** Read Zoho's status back onto pushed documents (Draft → Sent → Paid / Void).
+ *  Throttled server-side to once every 2 minutes unless `force`. Never throws. */
+export async function refreshZohoStatus(force = false): Promise<{ ok: boolean; changed: number; message?: string }> {
+  try {
+    const { data, error } = await supabase.functions.invoke("zoho-push", { body: { action: "status", force } });
+    if (error) return { ok: false, changed: 0, message: error.message };
+    const d = data as { ok?: boolean; changed?: number; error?: string; skipped?: string };
+    return { ok: d?.ok !== false, changed: d?.changed ?? 0, message: d?.error ?? d?.skipped };
+  } catch (e) {
+    return { ok: false, changed: 0, message: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+/** How a Zoho status reads to staff. Zoho's own word is kept in the data;
+ *  this is only the label. `doc` matters: an "open" bill is an approved one. */
+export function zohoStatusLabel(status: string | null | undefined, doc: "invoice" | "bill" = "invoice"):
+    { text: string; tone: "wait" | "ok" | "done" | "bad" } {
+  switch (status) {
+    case null: case undefined: case "": return { text: "Not in Zoho yet", tone: "wait" };
+    case "pushing": return { text: "Sending to Zoho…", tone: "wait" };
+    case "draft": return { text: "Zoho: Draft — awaiting accountant", tone: "wait" };
+    case "sent": case "viewed": case "unpaid": return { text: "Zoho: Sent (approved)", tone: "ok" };
+    case "open": return { text: doc === "bill" ? "Zoho: Open (approved)" : "Zoho: Sent (approved)", tone: "ok" };
+    case "overdue": return { text: "Zoho: Overdue", tone: "bad" };
+    case "partially_paid": return { text: "Zoho: Part-paid", tone: "ok" };
+    case "paid": return { text: "Zoho: Paid", tone: "done" };
+    case "void": return { text: "Zoho: Void", tone: "bad" };
+    case "deleted": return { text: "Deleted in Zoho", tone: "bad" };
+    case "blocked": case "error": return { text: "NOT in Zoho — error", tone: "bad" };
+    default: return { text: `Zoho: ${status}`, tone: "ok" };
+  }
+}
+
 /** SQLite 'YYYY-MM-DD HH:MM:SS' (UTC, from datetime('now')) → ISO with Z. */
 const utc = (s: unknown) =>
   typeof s === "string" && /^\d{4}-\d\d-\d\d \d\d:\d\d/.test(s) ? s.replace(" ", "T") + "Z" : s;

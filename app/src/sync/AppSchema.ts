@@ -81,6 +81,10 @@ const sales_order = new Table({
   invoice_no: column.text, invoiced_at: column.text,
   // what the CUSTOMER did, kept apart from `status`, which staff own (0021)
   client_response: column.text, client_responded_at: column.text,
+  // Zoho write-back (Postgres 0047). Staff stream only (`SELECT *`); the
+  // client stream lists its columns explicitly, so customers never get these.
+  zoho_invoice_id: column.text, zoho_invoice_number: column.text, zoho_status: column.text,
+  zoho_status_at: column.text, zoho_pushed_at: column.text, zoho_error: column.text,
   rev: column.integer, created_at: column.text, updated_at: column.text,
   deleted_at: column.text, origin: column.text,
 }, { indexes: { customer: ["customer_id"], status: ["status"] } });

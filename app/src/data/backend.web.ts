@@ -751,6 +751,7 @@ async function staffOrders(): Promise<unknown[]> {
     `SELECT so.id, so.number, so.status, so.currency, so.notes, so.created_at,
             so.fulfilled_at, so.tax_rate_bps, so.client_response, so.client_responded_at,
             so.invoice_no, so.invoiced_at,
+            so.zoho_invoice_number, so.zoho_status, so.zoho_status_at, so.zoho_error,
             c.name AS customer_name, c.contact AS customer_contact,
             c.phone AS customer_phone, c.email AS customer_email,
             (SELECT l.code FROM location l WHERE l.id = so.location_id) AS location_code
@@ -794,6 +795,10 @@ async function staffOrders(): Promise<unknown[]> {
       fulfilled_at: nstr(o["fulfilled_at"]),
       invoice_no: nstr(o["invoice_no"]),
       invoiced_at: nstr(o["invoiced_at"]),
+      zoho_invoice_number: nstr(o["zoho_invoice_number"]),
+      zoho_status: nstr(o["zoho_status"]),
+      zoho_status_at: nstr(o["zoho_status_at"]),
+      zoho_error: nstr(o["zoho_error"]),
       tax_rate_bps: Number(o["tax_rate_bps"] ?? 0),
       client_response: nstr(o["client_response"]),
       client_responded_at: nstr(o["client_responded_at"]),
