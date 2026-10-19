@@ -218,6 +218,9 @@ export const previewLandedCost = <T>(receiptId: number) =>
 /** The single moment stock moves. Irreversible except by a reversing receipt. */
 export const postGoodsReceipt = <T>(receiptId: number) =>
   call<T>("post_goods_receipt", { receiptId });
+/** A posted receipt as the cloud expects it (desktop only, read-only). */
+export const receiptExport = (receiptId: number) =>
+  call<Record<string, unknown>>("receipt_export", { receiptId });
 /** Recompute after a late clearing invoice. The normal path, not an exception. */
 export const recostReceipt = (receiptId: number) =>
   call<number>("recost_receipt", { receiptId });

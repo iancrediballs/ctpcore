@@ -763,10 +763,14 @@ const parseRand = (s: string): number => {
   const invoiceOrder = useCallback(async (o: StaffOrder) => {
     setSavingOrder(true);
     try {
-      const r = await api.invoiceOrder<{ invoice_no: string; already: boolean }>(o.id);
-      showToast({ text: r?.already
+      const r = await api.invoiceOrder<{ invoice_no: string; already: boolean;
+                                         zoho?: { ok: boolean; message: string } }>(o.id);
+      const base = r?.already
         ? `${o.number} is already invoiced as ${r.invoice_no}.`
-        : `Invoice ${r?.invoice_no ?? ""} issued for ${o.number}.` });
+        : `Invoice ${r?.invoice_no ?? ""} issued for ${o.number}.`;
+      // The Zoho outcome is always said out loud — a failure shows as an error
+      // toast (the invoice itself still stands; retry from Settings → Zoho).
+      showToast({ text: r?.zoho ? `${base} ${r.zoho.message}` : base, err: r?.zoho ? !r.zoho.ok : false });
       loadOrders();
     } catch (e) {
       const msg = e instanceof Error ? e.message.replace(/^\[CTP web\] could not issue the invoice: /, "") : "Could not issue the invoice.";
@@ -1144,7 +1148,10 @@ const parseRand = (s: string): number => {
     try {
       const company = await api.getCompany<DocCompany>();
       const lines = o.lines.map((l) => ({
-        sku: l.catalogue_pn ?? l.sku, name: l.name, qty: l.qty,
+        // The item code (Multicat code = Zoho SKU) — naming convention v2.0.
+        // Not catalogue_pn: that is the base supplier number, without the
+        // variant suffix, and would not match the Zoho invoice line.
+        sku: l.sku, name: l.name, qty: l.qty,
         unit_price_minor: l.unit_price_minor, line_total_minor: l.unit_price_minor * l.qty,
       }));
       const subtotal_minor = lines.reduce((t, l) => t + l.line_total_minor, 0);
@@ -1229,7 +1236,7 @@ const parseRand = (s: string): number => {
                           <div className="mb-row" key={l.id}>
                             <span style={{ flex: 1, minWidth: 0 }}>
                               <div className="mb-cname">{l.qty} × {l.name}</div>
-                              <div className="mb-csku mb-mono">{l.catalogue_pn ?? l.sku}</div>
+                              <div className="mb-csku mb-mono">{l.sku}</div>
                             </span>
                             {o.stage === "to_price" ? (
                               <input className="mb-price-in" inputMode="decimal" placeholder="0.00"
@@ -1360,7 +1367,7 @@ const parseRand = (s: string): number => {
                           <div className="mb-row" key={l.id}>
                             <span style={{ flex: 1, minWidth: 0 }}>
                               <div className="mb-cname">{l.qty} × {l.name}</div>
-                              <div className="mb-csku mb-mono">{l.catalogue_pn ?? l.sku}</div>
+                              <div className="mb-csku mb-mono">{l.sku}</div>
                             </span>
                             <span className="mb-rv">{fmtR(l.unit_price_minor * l.qty)}</span>
                           </div>
@@ -1489,7 +1496,7 @@ const parseRand = (s: string): number => {
                     <div className="mb-row" key={l.id}>
                       <span style={{ flex: 1, minWidth: 0 }}>
                         <div className="mb-cname">{l.qty} × {l.name}</div>
-                        <div className="mb-csku mb-mono">{l.catalogue_pn ?? l.sku}</div>
+                        <div className="mb-csku mb-mono">{l.sku}</div>
                       </span>
                       {/* Only ever their OWN quoted price — never the price list */}
                       {(l.unit_price_minor ?? 0) > 0 && (
@@ -1566,7 +1573,7 @@ const parseRand = (s: string): number => {
             {isClient ? (
               <div className="mb-box">
                 <div className="mb-k">Part number</div>
-                <div className="mb-v mono-pn">{d.catalogue_pn ?? d.sku}</div>
+                <div className="mb-v mono-pn">{d.sku}</div>
                 <div className="mb-sub">Add it to your request and we'll quote you</div>
               </div>
             ) : (

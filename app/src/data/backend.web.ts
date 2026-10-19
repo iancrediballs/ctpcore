@@ -52,6 +52,7 @@ import type { Backend } from "./backend";
 import { makeUuid } from "./uuid";
 import { powerSync } from "../sync/system";
 import { supabase } from "../sync/supabase";
+import { pushToZoho } from "./zoho";
 
 type Row = Record<string, unknown>;
 type Handler = (args: Record<string, unknown>) => Promise<unknown>;
@@ -861,7 +862,11 @@ async function invoiceOrder(a: Record<string, unknown>): Promise<unknown> {
   const orderId = numId(a["orderId"], "orderId");
   const { data, error } = await supabase.rpc("invoice_order", { order_id: orderId });
   if (error) throw new Error(`[CTP web] could not issue the invoice: ${error.message}`);
-  return data;
+  // Then hand it to Zoho (0047). The invoice is ISSUED either way — a Zoho
+  // failure never undoes it; it is recorded on the order (zoho_error) and in
+  // the push log, retried from Settings → Zoho, and reported back here so the
+  // screen can say so instead of failing silently.
+  return { ...(data as object), zoho: await pushToZoho("invoice", orderId) };
 }
 
 /** Accept or decline a quote. All the rules live in the database (0021). */

@@ -204,7 +204,7 @@ export function DiagramView({ drawings, start, onClose, canEdit, onOpenPart, onE
                 ? <a className="dv-name" href="#" onClick={(e) => { e.preventDefault(); e.stopPropagation(); onOpenPart(row.partId!); }}>{row.name}</a>
                 : <span className={"dv-name" + (row.link !== "ok" ? " dim" : "")}>{row.name}</span>}
               <div className="dv-meta">
-                {row.sku && <span>Part no. <b className="mono">{p?.catalogue_pn ?? row.sku}</b></span>}
+                {row.sku && <span>Part no. <b className="mono">{row.sku}</b></span>}
                 {p && p.on_hand != null && (
                   <span className={"dv-stock" + (p.on_hand > 0 ? " in" : " out")}>{p.on_hand > 0 ? `${p.on_hand} in stock` : "out of stock"}</span>
                 )}

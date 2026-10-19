@@ -593,9 +593,12 @@ function ZohoPanel({ flash, fail }: PanelProps) {
   return (
     <>
       <p className="st-lead">
-        CTP Core reads items and stock from Zoho. The item code is the Zoho SKU
-        (the Multicat code). Nothing is sent to Zoho from here.
+        CTP Core reads items and stock from Zoho, and sends its own invoices
+        (to customers) and supplier bills to Zoho. The item code is the Zoho SKU
+        (the Multicat code).
       </p>
+
+      <ZohoPushCard flash={flash} fail={fail} />
 
       <div className="st-card">
         <div className="st-sub">Last sync</div>
@@ -641,6 +644,128 @@ function ZohoPanel({ flash, fail }: PanelProps) {
             {" · Zoho stock "}{r.stock_on_hand ?? "—"}
             {r.status === "inactive" && " · inactive"}
             {r.part_id == null && " · NOT LINKED"}
+          </p>
+        ))}
+      </div>
+    </>
+  );
+}
+
+// Write-back (0047, server/edge/zoho-push). Invoices issued in CTP Core become
+// Zoho invoices; supplier receipts posted on the desktop become Zoho bills.
+// Only from the go-live date on — the history is imported into Zoho by the
+// accountant and must never be pushed a second time.
+
+type ZohoConfig = { push_enabled: boolean; push_from: string | null; invoice_as_draft: boolean;
+  bill_as_draft: boolean; tax_id: string | null };
+type QueueRow = { doc_type: string; ctp_id: number; ctp_ref: string; doc_at: string; last_error: string | null };
+type PushLog = { id: number; at: string; doc_type: string; ctp_ref: string | null; action: string;
+  ok: boolean; message: string | null };
+
+function ZohoPushCard({ flash, fail }: PanelProps) {
+  const [cfg, setCfg] = useState<ZohoConfig | null>(null);
+  const [from, setFrom] = useState("");
+  const [taxId, setTaxId] = useState("");
+  const [queue, setQueue] = useState<QueueRow[]>([]);
+  const [log, setLog] = useState<PushLog[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [out, setOut] = useState<string | null>(null);
+
+  const load = useCallback(() => {
+    supabase.from("zoho_config").select("push_enabled,push_from,invoice_as_draft,bill_as_draft,tax_id").eq("id", 1).maybeSingle()
+      .then(({ data, error }) => {
+        if (error) return fail(error);
+        const c = data as ZohoConfig | null;
+        setCfg(c); setFrom(c?.push_from ? c.push_from.slice(0, 16) : ""); setTaxId(c?.tax_id ?? "");
+      });
+    supabase.from("zoho_push_queue").select("doc_type,ctp_id,ctp_ref,doc_at,last_error").order("doc_at")
+      .then(({ data }) => setQueue((data ?? []) as QueueRow[]));
+    supabase.from("zoho_push_log").select("id,at,doc_type,ctp_ref,action,ok,message")
+      .order("at", { ascending: false }).limit(30)
+      .then(({ data }) => setLog((data ?? []) as PushLog[]));
+  }, []);
+  useEffect(load, [load]);
+
+  const save = async (patch: Partial<ZohoConfig>) => {
+    if (!cfg) return;
+    const next = { ...cfg, ...patch };
+    const pushFrom = from ? new Date(from).toISOString() : null;
+    if (next.push_enabled && !cfg.push_enabled &&
+        !confirm(`Start sending to Zoho?\n\nOnly invoices and receipts from ${pushFrom ? new Date(pushFrom).toLocaleString("en-ZA") : "(no date)"} onward will be sent — never anything earlier.`)) return;
+    const { error } = await supabase.rpc("set_zoho_config", {
+      p_push_enabled: next.push_enabled, p_push_from: pushFrom,
+      p_invoice_as_draft: next.invoice_as_draft, p_bill_as_draft: next.bill_as_draft, p_tax_id: taxId || null,
+    });
+    if (error) return fail(error);
+    flash("Zoho settings saved.");
+    load();
+  };
+
+  const call = async (body: Record<string, unknown>, label: string) => {
+    setBusy(true); setOut(null);
+    const { data, error } = await supabase.functions.invoke("zoho-push", { body });
+    setBusy(false);
+    let res = data as Record<string, unknown> | null;
+    if (error) {
+      try { res = await (error as { context?: Response }).context?.json(); } catch { /* keep */ }
+      if (!res) return fail(error);
+    }
+    setOut(JSON.stringify(res, null, 2));
+    if (res && res.ok === false) fail(new Error(`${label}: ${String(res.error ?? "some documents failed — see below")}`));
+    else flash(`${label}: done.`);
+    load();
+  };
+
+  if (!cfg) return <div className="st-card"><div className="st-sub">Sending to Zoho</div>
+    <p className="st-note">Not set up on the server yet (migration 0047).</p></div>;
+
+  const failed = queue.filter((q) => q.last_error);
+  return (
+    <>
+      <div className="st-card">
+        <div className="st-sub">Sending to Zoho {cfg.push_enabled ? "· ON" : "· OFF"}</div>
+        <Field label="Go-live: send documents from" value={from} onChange={setFrom}
+          hint="YYYY-MM-DDTHH:MM, Johannesburg time. Nothing invoiced or received before this is ever sent — the accountant imports the history." />
+        <Toggle label="Send invoices to Zoho as DRAFT" checked={cfg.invoice_as_draft}
+          onChange={(v) => save({ invoice_as_draft: v })} hint="Draft = the accountant reviews and sends it from Zoho." />
+        <Toggle label="Send supplier bills to Zoho as DRAFT" checked={cfg.bill_as_draft}
+          onChange={(v) => save({ bill_as_draft: v })} />
+        <Field label="Zoho tax id for VAT (optional)" value={taxId} onChange={setTaxId}
+          hint="Blank = use the Zoho tax whose rate matches the order's VAT rate." />
+        <div className="st-row2">
+          <button className="st-save" onClick={() => save({})}>Save</button>
+          <button className="st-save" onClick={() => save({ push_enabled: !cfg.push_enabled })}>
+            {cfg.push_enabled ? "Stop sending" : "Start sending"}</button>
+        </div>
+      </div>
+
+      <div className="st-card">
+        <div className="st-sub">Waiting to send ({queue.length}){failed.length ? ` · ${failed.length} FAILED` : ""}</div>
+        {queue.length === 0 && <p className="st-note">Nothing waiting.</p>}
+        {queue.map((q) => (
+          <p className="st-note" key={q.doc_type + q.ctp_id}>
+            {q.doc_type === "invoice" ? "Invoice" : "Bill"} <span className="st-code">{q.ctp_ref}</span>
+            {" · "}{new Date(q.doc_at).toLocaleString("en-ZA")}
+            {q.last_error && <><br /><b>✕ {q.last_error}</b></>}
+          </p>
+        ))}
+        <div className="st-row2">
+          <button className="st-save" disabled={busy || queue.length === 0} onClick={() => call({ action: "push" }, "Send to Zoho")}>
+            {busy ? "Working…" : "Send now"}</button>
+          <button className="st-save" disabled={busy} onClick={() => {
+            if (confirm("Create a TEST draft invoice and bill in Zoho against TEST contacts, then delete them?")) call({ action: "test" }, "Zoho test");
+          }}>Run Zoho test</button>
+        </div>
+        {out && <pre className="st-note" style={{ whiteSpace: "pre-wrap", overflowX: "auto" }}>{out}</pre>}
+      </div>
+
+      <div className="st-card">
+        <div className="st-sub">Zoho log</div>
+        {log.length === 0 && <p className="st-note">Nothing yet.</p>}
+        {log.map((l) => (
+          <p className="st-note" key={l.id}>
+            {l.ok ? "✓" : <b>✕</b>} {new Date(l.at).toLocaleString("en-ZA")} · {l.doc_type} {l.ctp_ref ?? ""} · {l.action}
+            {l.message && <><br />{l.message.length > 300 ? l.message.slice(0, 300) + "…" : l.message}</>}
           </p>
         ))}
       </div>

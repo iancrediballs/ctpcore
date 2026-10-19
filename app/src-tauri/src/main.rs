@@ -1791,6 +1791,57 @@ fn post_goods_receipt(receipt_id: i64, db: State<Db>) -> Result<purchasing::Post
     Ok(res)
 }
 
+/// A POSTED receipt as the cloud's submit_goods_receipt() expects it (0047).
+/// Read-only. The desktop UI sends it with the signed-in session, then asks
+/// the cloud to raise the Zoho bill — the Zoho secret never lives on this PC.
+/// Lines carry the item CODE (part.sku), never the local part id: ids differ
+/// between this database and the cloud, codes do not.
+#[tauri::command]
+fn receipt_export(receipt_id: i64, db: State<Db>) -> Result<serde_json::Value, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+    let head = conn.query_row(
+        "SELECT g.number, g.status, g.kind, g.received_at, g.posted_at, g.supplier_invoice_ref,
+                g.supplier_invoice_total_minor, g.invoice_currency, g.fx_rate_ppm, g.notes,
+                g.client_uuid, s.code, s.name, s.email
+           FROM goods_receipt g LEFT JOIN supplier s ON s.id = g.supplier_id
+          WHERE g.id = ?1",
+        [receipt_id],
+        |r| Ok((
+            r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?,
+            r.get::<_, Option<String>>(3)?, r.get::<_, Option<String>>(4)?, r.get::<_, Option<String>>(5)?,
+            r.get::<_, Option<i64>>(6)?, r.get::<_, Option<String>>(7)?, r.get::<_, Option<i64>>(8)?,
+            r.get::<_, Option<String>>(9)?, r.get::<_, Option<String>>(10)?,
+            r.get::<_, Option<String>>(11)?, r.get::<_, Option<String>>(12)?, r.get::<_, Option<String>>(13)?,
+        )),
+    ).map_err(|e| format!("receipt {receipt_id}: {e}"))?;
+    let (number, status, kind, received_at, posted_at, inv_ref, inv_total, currency, fx, notes,
+         client_uuid, sup_code, sup_name, sup_email) = head;
+    if status != "posted" {
+        return Err(format!("{number} is {status}; only a posted receipt goes to the cloud"));
+    }
+    let mut stmt = conn.prepare(
+        "SELECT p.sku, l.qty_received, l.unit_cost_minor
+           FROM goods_receipt_line l JOIN part p ON p.id = l.part_id
+          WHERE l.receipt_id = ?1 AND l.deleted_at IS NULL ORDER BY l.id",
+    ).map_err(|e| e.to_string())?;
+    let lines = stmt.query_map([receipt_id], |r| Ok(serde_json::json!({
+        "sku": r.get::<_, String>(0)?,
+        "qty_received": r.get::<_, i64>(1)?,
+        "unit_cost_minor": r.get::<_, i64>(2)?,
+    }))).map_err(|e| e.to_string())?
+      .collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
+    // A stable key per receipt, so a resend is recognised in the cloud.
+    let uuid = client_uuid.unwrap_or_else(|| format!("desktop-gr-{number}"));
+    Ok(serde_json::json!({
+        "client_uuid": uuid, "number": number, "kind": kind,
+        "received_at": received_at, "posted_at": posted_at,
+        "supplier_invoice_ref": inv_ref, "supplier_invoice_total_minor": inv_total,
+        "invoice_currency": currency, "fx_rate_ppm": fx, "notes": notes,
+        "supplier": { "code": sup_code, "name": sup_name, "email": sup_email },
+        "lines": lines,
+    }))
+}
+
 /// Recompute a receipt's landed cost after late-arriving charges. The clearing
 /// agent invoices in arrears, so this is the normal path, not an exception.
 #[tauri::command]
@@ -3298,7 +3349,7 @@ fn main() {
             add_receipt_line,
             add_receipt_cost,
             preview_landed_cost,
-            post_goods_receipt,
+            post_goods_receipt, receipt_export,
             recost_receipt,
             part_cost_now,
             rebate_standing,

@@ -26,6 +26,7 @@
 // not discovered in a report next quarter.
 import { useCallback, useEffect, useRef, useState } from "react";
 import * as api from "./data/api";
+import { sendReceiptToCloud } from "./data/zoho";
 import { money, type Hit } from "./App";
 
 type Supplier = { id: number; code: string; name: string; currency: string; incoterm: string | null };
@@ -203,7 +204,16 @@ export default function ReceivingView() {
     try {
       const r = await api.postGoodsReceipt<Posted>(receipt.id);
       setPosted(r);
-      setMsg(`posted · ${r.units} unit${r.units === 1 ? "" : "s"} into stock`);
+      const base = `posted · ${r.units} unit${r.units === 1 ? "" : "s"} into stock`;
+      setMsg(`${base} · sending to Zoho…`);
+      // The receipt is posted either way. The cloud copy + Zoho bill (0047) is
+      // a second step whose outcome is always shown. Both halves are
+      // idempotent, so a failure is fixed with the "Send to Zoho" button —
+      // never by posting again.
+      const z = await api.receiptExport(receipt.id)
+        .then((p) => sendReceiptToCloud(p))
+        .catch((e) => ({ ok: false, message: `NOT sent to Zoho: ${String(e)}` }));
+      setMsg(`${base} · ${z.ok ? "" : "✕ "}${z.message}`);
     } catch (e) { setMsg("✕ " + String(e)); } finally { setBusy(false); }
   }, [receipt]);
 
@@ -397,7 +407,16 @@ export default function ReceivingView() {
             )}
           </div>
 
-          {msg && <div className={"msg" + (msg.startsWith("✕") ? " err" : "")}>{msg}</div>}
+          {msg && <div className={"msg" + (msg.includes("✕") ? " err" : "")}>{msg}</div>}
+          {posted && receipt && msg.includes("NOT sent") && (
+            <button disabled={busy} onClick={async () => {
+              setBusy(true);
+              const z = await api.receiptExport(receipt.id).then((p) => sendReceiptToCloud(p))
+                .catch((e) => ({ ok: false, message: `NOT sent to Zoho: ${String(e)}` }));
+              setMsg(`posted · ${z.ok ? "" : "✕ "}${z.message}`);
+              setBusy(false);
+            }}>Send to Zoho</button>
+          )}
 
           {landed && <LandedTable landed={landed} posted={!!posted} />}
 
