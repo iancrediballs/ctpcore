@@ -255,6 +255,16 @@ fn init_db(path: &PathBuf) -> rusqlite::Result<Connection> {
         conn.execute_batch("PRAGMA user_version = 23;")?;
     }
 
+    // v23 -> v24: the OEM / Multicat code is the item code (= the Zoho SKU).
+    // Renames part.sku in place BEFORE the next cloud pull, because the pull
+    // upserts parts by sku and would otherwise add every part a second time.
+    // The old CTP-xxx code stays searchable as a 'CTP legacy' xref. Generated
+    // with the cloud's 0046 by server/gen_0046_multicat_codes.py.
+    if ver < 24 {
+        conn.execute_batch(include_str!("../migrations/0025_multicat_codes.sql"))?;
+        conn.execute_batch("PRAGMA user_version = 24;")?;
+    }
+
     Ok(conn)
 }
 

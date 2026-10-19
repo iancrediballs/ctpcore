@@ -19,7 +19,7 @@ import { useCallback, useEffect, useState } from "react";
 import { supabase } from "../sync/supabase";
 import type { Role } from "../auth/AuthProvider";
 
-type Section = "company" | "email" | "staff" | "places" | "tiers";
+type Section = "company" | "email" | "staff" | "places" | "tiers" | "zoho";
 
 type Company = {
   name: string; address: string | null; phone: string | null; email: string | null;
@@ -97,6 +97,7 @@ export default function SettingsView({ role, onClose }: { role: Role; onClose: (
           ...(isAdmin ? [["staff", "Staff & access"]] as [Section, string][] : []),
           ["places", "Warehouses"],
           ["tiers", "Pricing tiers"],
+          ["zoho", "Zoho"],
         ] as [Section, string][]).map(([k, label]) => (
           <button key={k} className={"st-tab" + (section === k ? " on" : "")}
             onClick={() => { setSection(k); setErr(null); }}>{label}</button>
@@ -112,6 +113,7 @@ export default function SettingsView({ role, onClose }: { role: Role; onClose: (
         {section === "staff"   && <StaffPanel   flash={flash} fail={fail} />}
         {section === "places"  && <PlacesPanel  flash={flash} fail={fail} />}
         {section === "tiers"   && <TiersPanel   flash={flash} fail={fail} />}
+        {section === "zoho"    && <ZohoPanel    flash={flash} fail={fail} />}
       </div>
     </div>
   );
@@ -522,6 +524,126 @@ function TiersPanel({ flash, fail }: PanelProps) {
         keeps the price it was quoted at — that is deliberate, and it is why a
         price change today cannot silently alter what you promised last week.
       </p>
+    </>
+  );
+}
+
+/* ── Zoho ────────────────────────────────────────────────────────────────── */
+
+// The Zoho link is a PULL: the zoho-sync Edge Function reads Zoho items (the
+// OAuth refresh token lives in function secrets, never here) and mirrors them
+// into zoho_item. "Check" changes nothing in CTP Core and lists what would
+// change; "Pull & apply" writes names, list prices and landed costs. Zoho stock
+// is shown beside CTP Core's own ledger, never merged into it.
+
+type ZohoRow = {
+  zoho_item_id: string; sku: string; name: string | null; status: string | null;
+  rate_minor: number | null; stock_on_hand: number | null; part_id: number | null;
+  synced_at: string;
+};
+type ZohoRun = { started_at: string; finished_at: string | null; ok: boolean | null;
+  items_seen: number | null; linked: number | null; error: string | null };
+type ZohoResult = {
+  ok: boolean; applied?: boolean; items_seen?: number; linked?: number; zoho_stock_units?: number;
+  unmatched?: { sku: string | null; name: string }[];
+  changes?: { sku: string; field: string; from: unknown; to: unknown }[];
+  error?: string;
+};
+
+const zar = (m: number | null | undefined) =>
+  m == null ? "—" : "R " + (m / 100).toLocaleString("en-ZA", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+function ZohoPanel({ flash, fail }: PanelProps) {
+  const [rows, setRows] = useState<ZohoRow[] | null>(null);
+  const [last, setLast] = useState<ZohoRun | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<ZohoResult | null>(null);
+  const [filter, setFilter] = useState("");
+
+  const load = useCallback(() => {
+    supabase.from("zoho_item")
+      .select("zoho_item_id,sku,name,status,rate_minor,stock_on_hand,part_id,synced_at")
+      .order("sku").limit(2000)
+      .then(({ data, error }) => { if (error) return fail(error); setRows((data ?? []) as ZohoRow[]); });
+    supabase.from("zoho_sync_run").select("started_at,finished_at,ok,items_seen,linked,error")
+      .order("started_at", { ascending: false }).limit(1)
+      .then(({ data }) => setLast(((data ?? [])[0] as ZohoRun) ?? null));
+  }, []);
+  useEffect(load, [load]);
+
+  const sync = async (apply: boolean) => {
+    if (apply && !confirm("Write Zoho's item names, selling prices and landed costs into CTP Core?\n\nPast quotes and invoices keep their prices.")) return;
+    setBusy(true); setResult(null);
+    const { data, error } = await supabase.functions.invoke("zoho-sync", { body: { apply } });
+    setBusy(false);
+    // A non-2xx reply arrives as `error`; its body still carries our message.
+    let res = data as ZohoResult | null;
+    if (error) {
+      try { res = await (error as { context?: Response }).context?.json(); } catch { /* fall through */ }
+      if (!res) return fail(error);
+    }
+    setResult(res);
+    if (res?.ok) flash(apply ? `Zoho applied: ${res.changes?.length ?? 0} changes.` : `Zoho checked: ${res.items_seen} items.`);
+    load();
+  };
+
+  const f = filter.trim().toLowerCase();
+  const shown = (rows ?? []).filter((r) => !f || r.sku.toLowerCase().includes(f) || (r.name ?? "").toLowerCase().includes(f));
+
+  return (
+    <>
+      <p className="st-lead">
+        CTP Core reads items and stock from Zoho. The item code is the Zoho SKU
+        (the Multicat code). Nothing is sent to Zoho from here.
+      </p>
+
+      <div className="st-card">
+        <div className="st-sub">Last sync</div>
+        {last
+          ? <p className="st-note">
+              {new Date(last.started_at).toLocaleString("en-ZA")} · {last.ok ? "OK" : last.ok === false ? "FAILED" : "running"}
+              {last.items_seen != null && ` · ${last.items_seen} Zoho items, ${last.linked} linked`}
+              {last.error && <><br />{last.error}</>}
+            </p>
+          : <p className="st-note">Never synced from the app. The 19 Oct 2026 catalogue load linked the 155 items.</p>}
+        <div className="st-row2">
+          <button className="st-save" disabled={busy} onClick={() => sync(false)}>{busy ? "Working…" : "Check Zoho"}</button>
+          <button className="st-save" disabled={busy} onClick={() => sync(true)}>Pull &amp; apply</button>
+        </div>
+      </div>
+
+      {result && (
+        <div className="st-card">
+          <div className="st-sub">{result.ok ? (result.applied ? "Applied" : "Would change") : "Error"}</div>
+          {!result.ok && <p className="st-note">{result.error}</p>}
+          {result.ok && <p className="st-note">
+            {result.items_seen} Zoho items · {result.linked} linked · {result.zoho_stock_units ?? 0} units on hand in Zoho
+          </p>}
+          {(result.changes ?? []).slice(0, 200).map((c, i) => (
+            <p className="st-note" key={i}><span className="st-code">{c.sku}</span> {c.field}: {String(c.from ?? "—")} → {String(c.to)}</p>
+          ))}
+          {(result.unmatched ?? []).length > 0 && <>
+            <div className="st-sub">In Zoho, not in CTP Core</div>
+            {result.unmatched!.map((u, i) => (
+              <p className="st-note" key={i}><span className="st-code">{u.sku ?? "(no SKU)"}</span> {u.name}</p>
+            ))}
+          </>}
+        </div>
+      )}
+
+      <div className="st-card">
+        <div className="st-sub">Zoho items ({rows?.length ?? "…"})</div>
+        <Field label="Find" value={filter} onChange={setFilter} />
+        {shown.slice(0, 300).map((r) => (
+          <p className="st-note" key={r.zoho_item_id}>
+            <span className="st-code">{r.sku}</span> {r.name}
+            {" · "}{zar(r.rate_minor)}
+            {" · Zoho stock "}{r.stock_on_hand ?? "—"}
+            {r.status === "inactive" && " · inactive"}
+            {r.part_id == null && " · NOT LINKED"}
+          </p>
+        ))}
+      </div>
     </>
   );
 }
