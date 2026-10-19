@@ -56,6 +56,43 @@ Deno.serve(async (req: Request) => {
                   client: !!env("ZOHO_CLIENT_ID") && !!env("ZOHO_CLIENT_SECRET"), org: env("ZOHO_ORG_ID") || null });
   }
 
+  // read-only health check: stored token -> access token -> org, items, taxes
+  if (body.action === "check") {
+    const { data: tok } = await db.rpc("zoho_secret_get", { p_name: "zoho_refresh_token" });
+    const { data: cfg } = await db.from("zoho_config").select("dc").eq("id", 1).maybeSingle();
+    if (!tok) return json({ ok: false, error: "No refresh token stored" }, 412);
+    const dc = cfg?.dc || "com";
+    const accounts = DCS.find(([d]) => d === dc)?.[1] ?? "https://accounts.zoho.com";
+    const r = await fetch(`${accounts}/oauth/v2/token`, { method: "POST", body: new URLSearchParams({
+      grant_type: "refresh_token", refresh_token: String(tok),
+      client_id: env("ZOHO_CLIENT_ID"), client_secret: env("ZOHO_CLIENT_SECRET") }) });
+    const t = await r.json().catch(() => ({}));
+    if (!t.access_token) return json({ ok: false, step: "refresh", error: String(t.error ?? r.status) }, 502);
+    const host = dc === "ca" ? "https://www.zohoapis.ca" : `https://www.zohoapis.${dc}`;
+    const api = (env("ZOHO_API") || "inventory").toLowerCase() === "books" ? "books/v3" : "inventory/v1";
+    const get = async (path: string) => {
+      const u = new URL(`${host}/${api}${path}`);
+      u.searchParams.set("organization_id", env("ZOHO_ORG_ID"));
+      const x = await fetch(u, { headers: { Authorization: `Zoho-oauthtoken ${t.access_token}` } });
+      const j = await x.json().catch(() => ({}));
+      return { status: x.status, code: j.code, message: j.message, j };
+    };
+    const items = await get("/items?per_page=200&filter_by=Status.All");
+    const taxes = await get("/settings/taxes");
+    const inv = await get("/invoices?per_page=200");
+    const bills = await get("/bills?per_page=200");
+    return json({
+      ok: [items, taxes, inv, bills].every((x) => x.code === 0), dc, api,
+      items: { status: items.status, n: items.j.items?.length, more: items.j.page_context?.has_more_page, msg: items.message },
+      // deno-lint-ignore no-explicit-any
+      taxes: (taxes.j.taxes ?? []).map((x: any) => `${x.tax_name} ${x.tax_percentage}%`),
+      // deno-lint-ignore no-explicit-any
+      invoices: { status: inv.status, n: inv.j.invoices?.length, numbers: (inv.j.invoices ?? []).map((x: any) => `${x.invoice_number}:${x.status}`).slice(0, 40), msg: inv.message },
+      // deno-lint-ignore no-explicit-any
+      bills: { status: bills.status, n: bills.j.bills?.length, numbers: (bills.j.bills ?? []).map((x: any) => `${x.bill_number}:${x.status}`).slice(0, 40), msg: bills.message },
+    });
+  }
+
   const code = String(body.code ?? "").trim();
   if (!code) return json({ ok: false, error: "No code given" }, 400);
   if (!env("ZOHO_CLIENT_ID") || !env("ZOHO_CLIENT_SECRET")) {

@@ -28,14 +28,28 @@
 //                          then delete all four; returns what was created.
 //
 // Secrets: same as zoho-sync (ZOHO_CLIENT_ID, ZOHO_CLIENT_SECRET,
-// ZOHO_REFRESH_TOKEN, ZOHO_ORG_ID, ZOHO_DC, optional ZOHO_SYNC_TOKEN).
+// ZOHO_ORG_ID, ZOHO_API, optional ZOHO_SYNC_TOKEN); refresh token in Vault, DC in
+// zoho_config.dc — both written by zoho-auth.
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient, type SupabaseClient } from "jsr:@supabase/supabase-js@2";
 
 const env = (k: string) => Deno.env.get(k) ?? "";
-const DC = env("ZOHO_DC") || "com";
+let DC = env("ZOHO_DC") || "com";
 const ORG = env("ZOHO_ORG_ID");
-const BASE = `https://www.zohoapis.${DC}/inventory/v1`;
+const API = (env("ZOHO_API") || "inventory").toLowerCase();
+let BASE = "";
+
+// Refresh token from Vault (zoho-auth writes it), DC from zoho_config.dc;
+// the env secrets remain only as a fallback. ZOHO_API picks Books or Inventory.
+let REFRESH = "";
+async function zohoInit(db: SupabaseClient) {
+  const { data: tok } = await db.rpc("zoho_secret_get", { p_name: "zoho_refresh_token" });
+  const { data: c } = await db.from("zoho_config").select("dc").eq("id", 1).maybeSingle();
+  REFRESH = (tok as string | null) || env("ZOHO_REFRESH_TOKEN");
+  DC = c?.dc || env("ZOHO_DC") || "com";
+  const host = DC === "ca" ? "https://www.zohoapis.ca" : `https://www.zohoapis.${DC}`;
+  BASE = API === "books" ? `${host}/books/v3` : `${host}/inventory/v1`;
+}
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -52,7 +66,7 @@ let token: string | null = null;
 async function zohoToken(): Promise<string> {
   if (token) return token;
   const p = new URLSearchParams({
-    refresh_token: env("ZOHO_REFRESH_TOKEN"), client_id: env("ZOHO_CLIENT_ID"),
+    refresh_token: REFRESH, client_id: env("ZOHO_CLIENT_ID"),
     client_secret: env("ZOHO_CLIENT_SECRET"), grant_type: "refresh_token",
   });
   const accounts = DC === "ca" ? "https://accounts.zohocloud.ca" : `https://accounts.zoho.${DC}`;
@@ -161,7 +175,11 @@ async function taxIdFor(bps: number, configured: string | null): Promise<string 
   if (bps <= 0) return undefined;
   if (configured) return configured;
   if (!taxCache) taxCache = ((await zoho("GET", "/settings/taxes")).taxes ?? []) as Record<string, unknown>[];
-  const t = taxCache.find((x) => Math.round(Number(x.tax_percentage) * 100) === bps);
+  // Several Zoho taxes share 15% ("Change in use …", accommodation, export).
+  // Only the default / "Standard Rate" one is right for a normal sale or bill.
+  const atRate = taxCache.filter((x) => Math.round(Number(x.tax_percentage) * 100) === bps);
+  const t = atRate.find((x) => x.is_default_tax === true) ?? atRate.find((x) => /^standard/i.test(String(x.tax_name)))
+         ?? (atRate.length === 1 ? atRate[0] : undefined);
   if (!t) throw new Blocked(`No Zoho tax at ${(bps / 100).toFixed(2)}% — create it in Zoho or set the tax id in Settings → Zoho.`);
   return String(t.tax_id);
 }
@@ -446,7 +464,9 @@ Deno.serve(async (req: Request) => {
   if (body.action !== "test" && body.action !== "status" && (!cfg?.push_enabled || !cfg?.push_from)) {
     return json({ ok: true, skipped: "Sending to Zoho is off (Settings → Zoho). Nothing was sent." });
   }
-  const missing = ["ZOHO_CLIENT_ID", "ZOHO_CLIENT_SECRET", "ZOHO_REFRESH_TOKEN", "ZOHO_ORG_ID"].filter((k) => !env(k));
+  await zohoInit(db);
+  const missing = ["ZOHO_CLIENT_ID", "ZOHO_CLIENT_SECRET", "ZOHO_ORG_ID"].filter((k) => !env(k));
+  if (!REFRESH) missing.push("refresh token (run zoho-auth)");
   if (missing.length) return json({ ok: false, error: `Zoho is not connected yet. Missing secrets: ${missing.join(", ")}` }, 412);
 
   try {

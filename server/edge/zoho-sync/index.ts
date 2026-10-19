@@ -36,8 +36,21 @@ import { createClient, type SupabaseClient } from "jsr:@supabase/supabase-js@2";
 const env = (k: string) => Deno.env.get(k) ?? "";
 const SUPABASE_URL = env("SUPABASE_URL");
 const SERVICE_KEY = env("SUPABASE_SERVICE_ROLE_KEY");
-const DC = env("ZOHO_DC") || "com";
+let DC = env("ZOHO_DC") || "com";
 const API = (env("ZOHO_API") || "inventory").toLowerCase();
+let BASE = "";
+
+// Refresh token from Vault (zoho-auth writes it), DC from zoho_config.dc;
+// the env secrets remain only as a fallback. ZOHO_API picks Books or Inventory.
+let REFRESH = "";
+async function zohoInit(db: SupabaseClient) {
+  const { data: tok } = await db.rpc("zoho_secret_get", { p_name: "zoho_refresh_token" });
+  const { data: c } = await db.from("zoho_config").select("dc").eq("id", 1).maybeSingle();
+  REFRESH = (tok as string | null) || env("ZOHO_REFRESH_TOKEN");
+  DC = c?.dc || env("ZOHO_DC") || "com";
+  const host = DC === "ca" ? "https://www.zohoapis.ca" : `https://www.zohoapis.${DC}`;
+  BASE = API === "books" ? `${host}/books/v3` : `${host}/inventory/v1`;
+}
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -67,10 +80,11 @@ const norm = (s: string | null | undefined) => (s ?? "").trim().toUpperCase();
 
 async function accessToken(): Promise<string> {
   const p = new URLSearchParams({
-    refresh_token: env("ZOHO_REFRESH_TOKEN"), client_id: env("ZOHO_CLIENT_ID"),
+    refresh_token: REFRESH, client_id: env("ZOHO_CLIENT_ID"),
     client_secret: env("ZOHO_CLIENT_SECRET"), grant_type: "refresh_token",
   });
-  const r = await fetch(`https://accounts.zoho.${DC}/oauth/v2/token`, { method: "POST", body: p });
+  const accounts = DC === "ca" ? "https://accounts.zohocloud.ca" : `https://accounts.zoho.${DC}`;
+  const r = await fetch(`${accounts}/oauth/v2/token`, { method: "POST", body: p });
   const b = await r.json().catch(() => ({}));
   if (!r.ok || !b.access_token) {
     // Never echo the response body: on some errors Zoho repeats the request.
@@ -81,9 +95,7 @@ async function accessToken(): Promise<string> {
 }
 
 async function zohoItems(token: string): Promise<ZohoItem[]> {
-  const base = API === "books"
-    ? `https://www.zohoapis.${DC}/books/v3/items`
-    : `https://www.zohoapis.${DC}/inventory/v1/items`;
+  const base = `${BASE}/items`;
   const out: ZohoItem[] = [];
   for (let page = 1; page <= 50; page++) {
     const u = new URL(base);
@@ -124,7 +136,9 @@ Deno.serve(async (req: Request) => {
   const who = await authorise(req, db);
   if (!who.ok) return json({ error: who.why }, who.actor ? 403 : 401);
 
-  const missing = ["ZOHO_CLIENT_ID", "ZOHO_CLIENT_SECRET", "ZOHO_REFRESH_TOKEN", "ZOHO_ORG_ID"].filter((k) => !env(k));
+  await zohoInit(db);
+  const missing = ["ZOHO_CLIENT_ID", "ZOHO_CLIENT_SECRET", "ZOHO_ORG_ID"].filter((k) => !env(k));
+  if (!REFRESH) missing.push("refresh token (run zoho-auth)");
   if (missing.length) return json({ error: `Zoho is not connected yet. Missing secrets: ${missing.join(", ")}` }, 412);
 
   const body = await req.json().catch(() => ({}));
