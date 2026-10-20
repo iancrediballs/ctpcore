@@ -14,6 +14,7 @@
 // POST { "action": "status" } says whether a token is stored, nothing more.
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient, type SupabaseClient } from "jsr:@supabase/supabase-js@2";
+import { zohoInit, zohoToken } from "../_shared/zoho.ts";
 
 const env = (k: string) => Deno.env.get(k) ?? "";
 const json = (b: unknown, status = 200) =>
@@ -67,11 +68,12 @@ Deno.serve(async (req: Request) => {
     if (!tok) return json({ ok: false, error: "No refresh token stored" }, 412);
     const dc = cfg?.dc || "com";
     const accounts = DCS.find(([d]) => d === dc)?.[1] ?? "https://accounts.zoho.com";
-    const r = await fetch(`${accounts}/oauth/v2/token`, { method: "POST", body: new URLSearchParams({
-      grant_type: "refresh_token", refresh_token: String(tok),
-      client_id: env("ZOHO_CLIENT_ID"), client_secret: env("ZOHO_CLIENT_SECRET") }) });
-    const t = await r.json().catch(() => ({}));
-    if (!t.access_token) return json({ ok: false, step: "refresh", error: String(t.error ?? r.status) }, 502);
+    void accounts;
+    // the shared, Vault-cached access token (0055) — no new token per call
+    await zohoInit(db);
+    let t: { access_token: string };
+    try { t = { access_token: await zohoToken() }; }
+    catch (e) { return json({ ok: false, step: "refresh", error: e instanceof Error ? e.message : String(e) }, 502); }
     const host = dc === "ca" ? "https://www.zohoapis.ca" : `https://www.zohoapis.${dc}`;
     const base = `${host}/books/v3`;
     const org = env("ZOHO_ORG_ID");
@@ -131,11 +133,12 @@ Deno.serve(async (req: Request) => {
     if (!tok) return json({ ok: false, error: "No refresh token stored" }, 412);
     const dc = cfg?.dc || "com";
     const accounts = DCS.find(([d]) => d === dc)?.[1] ?? "https://accounts.zoho.com";
-    const r = await fetch(`${accounts}/oauth/v2/token`, { method: "POST", body: new URLSearchParams({
-      grant_type: "refresh_token", refresh_token: String(tok),
-      client_id: env("ZOHO_CLIENT_ID"), client_secret: env("ZOHO_CLIENT_SECRET") }) });
-    const t = await r.json().catch(() => ({}));
-    if (!t.access_token) return json({ ok: false, step: "refresh", error: String(t.error ?? r.status) }, 502);
+    void accounts;
+    // the shared, Vault-cached access token (0055) — no new token per call
+    await zohoInit(db);
+    let t: { access_token: string };
+    try { t = { access_token: await zohoToken() }; }
+    catch (e) { return json({ ok: false, step: "refresh", error: e instanceof Error ? e.message : String(e) }, 502); }
     const host = dc === "ca" ? "https://www.zohoapis.ca" : `https://www.zohoapis.${dc}`;
     const api = (env("ZOHO_API") || "inventory").toLowerCase() === "books" ? "books/v3" : "inventory/v1";
     const get = async (path: string) => {
@@ -192,6 +195,10 @@ Deno.serve(async (req: Request) => {
     const { error: putErr } = await db.rpc("zoho_secret_put", { p_name: "zoho_refresh_token", p_value: String(b.refresh_token) });
     if (putErr) return json({ ok: false, dc, error: `token received but not stored: ${putErr.message}` }, 500);
     await db.from("zoho_config").update({ dc, updated_at: new Date().toISOString() }).eq("id", 1);
+    if (b.access_token) {
+      await db.rpc("zoho_secret_put", { p_name: "zoho_access_token",
+        p_value: `${Date.now() + Number(b.expires_in ?? 3600) * 1000}|${b.access_token}` });
+    }
 
     // prove the org is reachable
     const apiDomain = String(b.api_domain ?? (dc === "ca" ? "https://www.zohoapis.ca" : `https://www.zohoapis.${dc}`));

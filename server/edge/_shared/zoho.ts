@@ -12,11 +12,13 @@ let BASE = "";
 // Refresh token from Vault (zoho-auth writes it), DC from zoho_config.dc;
 // the env secrets remain only as a fallback. ZOHO_API picks Books or Inventory.
 let REFRESH = "";
+let DB: SupabaseClient | null = null;
 export async function zohoInit(db: SupabaseClient) {
+  DB = db;
   const { data: tok } = await db.rpc("zoho_secret_get", { p_name: "zoho_refresh_token" });
   const { data: c } = await db.from("zoho_config").select("dc").eq("id", 1).maybeSingle();
   REFRESH = (tok as string | null) || "";   // Vault only: the env / integration_secret tokens are retired
-  token = null; contactCache = null; taxCache = null;
+  contactCache = null; taxCache = null;   // the access token survives: it is cached until it expires
   DC = c?.dc || env("ZOHO_DC") || "com";
   const host = DC === "ca" ? "https://www.zohoapis.ca" : `https://www.zohoapis.${DC}`;
   BASE = API === "books" ? `${host}/books/v3` : `${host}/inventory/v1`;
@@ -25,9 +27,19 @@ export async function zohoInit(db: SupabaseClient) {
 export class Blocked extends Error {}   // a rule refused the document: not retried blindly
 
 // ── Zoho HTTP ────────────────────────────────────────────────────────────────
-let token: string | null = null;
-async function zohoToken(): Promise<string> {
-  if (token) return token;
+// Access token cache (0055): this instance first, then Vault (shared by every
+// function and cold start), and only then a refresh — Zoho allows ~10 new
+// tokens per 10 minutes. Refreshed when under 5 minutes remain.
+let token: { value: string; until: number } | null = null;
+const MARGIN = 5 * 60_000;
+export async function zohoToken(): Promise<string> {
+  if (token && token.until - MARGIN > Date.now()) return token.value;
+  if (DB) {
+    const { data: cached } = await DB.rpc("zoho_secret_get", { p_name: "zoho_access_token" });
+    const s = String(cached ?? ""), i = s.indexOf("|");
+    const until = i > 0 ? Number(s.slice(0, i)) : 0;
+    if (until - MARGIN > Date.now()) { token = { value: s.slice(i + 1), until }; return token.value; }
+  }
   const p = new URLSearchParams({
     refresh_token: REFRESH, client_id: env("ZOHO_CLIENT_ID"),
     client_secret: env("ZOHO_CLIENT_SECRET"), grant_type: "refresh_token",
@@ -38,8 +50,14 @@ async function zohoToken(): Promise<string> {
   if (!r.ok || !b.access_token) {
     throw new Error(`Zoho token refresh failed (${r.status}${b.error ? ", " + b.error : ""}). Check the Zoho secrets and ZOHO_DC.`);
   }
-  return (token = b.access_token as string);
+  const until = Date.now() + Number(b.expires_in ?? 3600) * 1000;
+  token = { value: b.access_token as string, until };
+  if (DB) await DB.rpc("zoho_secret_put", { p_name: "zoho_access_token", p_value: `${until}|${b.access_token}` });
+  return token.value;
 }
+
+/** For callers that build their own requests (zoho-sync, zoho-auth). */
+export function zohoBase() { return BASE; }
 
 // deno-lint-ignore no-explicit-any
 export async function zoho(method: string, path: string, query: Record<string, string> = {}, body?: unknown): Promise<any> {

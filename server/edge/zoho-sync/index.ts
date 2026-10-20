@@ -32,6 +32,7 @@
 // --no-verify-jwt only if a scheduler is used, the token check below still gates it.
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient, type SupabaseClient } from "jsr:@supabase/supabase-js@2";
+import { zohoInit as sharedInit, zohoToken } from "../_shared/zoho.ts";
 
 const env = (k: string) => Deno.env.get(k) ?? "";
 const SUPABASE_URL = env("SUPABASE_URL");
@@ -149,7 +150,8 @@ Deno.serve(async (req: Request) => {
     run ? db.from("zoho_sync_run").update({ finished_at: new Date().toISOString(), ...patch }).eq("id", run.id) : null;
 
   try {
-    const items = await zohoItems(await accessToken());
+    await sharedInit(db);   // the shared, Vault-cached access token (0055)
+    const items = await zohoItems(await zohoToken());
 
     // ── CTP Core side: parts, existing links, legacy codes, current price & cost
     const [{ data: parts }, { data: links }, { data: legacy }, { data: prices }, { data: costs }] = await Promise.all([
