@@ -53,6 +53,29 @@ import { makeUuid } from "./uuid";
 import { powerSync } from "../sync/system";
 import { supabase } from "../sync/supabase";
 import { pushToZoho } from "./zoho";
+import { ShelfRefusedError } from "./errors";
+
+/** 0049's rule, run locally before a negative movement is written: on_hand at
+ *  that location (every movement except reserve/release) must not go below
+ *  zero. Positive movements always pass, so an already-negative row can be
+ *  corrected upward. The local ledger can be stale offline, so the server
+ *  trigger remains the authority; this check exists so the refusal is
+ *  immediate and worded, not a dropped upload later. */
+async function shelfCheck(partId: number, locationId: number, delta: number): Promise<void> {
+  if (delta >= 0) return;
+  const r = await one<Row>(
+    `SELECT COALESCE((SELECT SUM(m.delta) FROM stock_movement m
+                       WHERE m.part_id = ? AND m.location_id = ? AND m.reason NOT IN ('reserve','release')), 0) AS on_hand,
+            (SELECT COALESCE(NULLIF(p.name, ''), p.sku) FROM part p WHERE p.id = ?) AS part,
+            (SELECT COALESCE(NULLIF(l.name, ''), l.code) FROM location l WHERE l.id = ?) AS loc`,
+    [String(partId), String(locationId), String(partId), String(locationId)]);
+  const onHand = Number(r?.["on_hand"] ?? 0);
+  if (onHand + delta < 0) {
+    throw new ShelfRefusedError(
+      `Cannot take ${-delta} × ${str(r?.["part"]) || "part " + partId} out of ${str(r?.["loc"]) || "location " + locationId}: ` +
+      `only ${Math.max(onHand, 0)} on the shelf. Count the shelf and book what you find first (a receipt or an adjustment), then try again.`);
+  }
+}
 
 type Row = Record<string, unknown>;
 type Handler = (args: Record<string, unknown>) => Promise<unknown>;
@@ -97,6 +120,9 @@ const bool = (v: unknown): boolean => Number(v) !== 0;
 const str = (v: unknown): string => (v == null ? "" : String(v));
 const nstr = (v: unknown): string | null => (v == null || v === "" ? null : String(v));
 const nnum = (v: unknown): number | null => (v == null ? null : Number(v));
+/** part.in_stock (0050): NULL until the column has synced (schema older than
+ *  0050) — "unknown" must never read as "out". */
+const nbool = (v: unknown): boolean | null => (v == null || v === "" ? null : Number(v) !== 0);
 
 // ─── the part_detail view, re-expressed ──────────────────────────────────────
 // Mirrors migrations/0013_pricing_reset.sql's CREATE VIEW part_detail — the
@@ -127,7 +153,8 @@ const PART_DETAIL_SQL = `
     p.match_status      AS match_status,
     p.notes             AS notes,
     p.list_price_minor  AS list_price_minor,
-    COALESCE((SELECT SUM(m.delta) FROM stock_movement m WHERE m.part_id = p.id), 0) AS qty_on_hand,
+    p.in_stock          AS in_stock,
+    COALESCE((SELECT SUM(m.delta) FROM stock_movement m WHERE m.part_id = p.id AND m.reason NOT IN ('reserve','release')), 0) AS qty_on_hand,
     (SELECT sp.bin FROM stock_policy sp WHERE sp.part_id = p.id LIMIT 1) AS bin,
     -- Migration 0013 moved landed cost out of the price table (where it sat
     -- mislabelled as tier='list') into part_cost, and made tier='list' the
@@ -204,7 +231,8 @@ const SEARCH_SQL = `
   SELECT
     p.id, p.sku, p.name, p.mpn, p.locator, p.catalogue_pn, p.inventory_pn,
     b.name AS brand,
-    COALESCE((SELECT SUM(m.delta) FROM stock_movement m WHERE m.part_id = p.id), 0) AS on_hand,
+    p.in_stock AS in_stock,
+    COALESCE((SELECT SUM(m.delta) FROM stock_movement m WHERE m.part_id = p.id AND m.reason NOT IN ('reserve','release')), 0) AS on_hand,
     -- Was ORDER BY (currency <> 'USD') first, preferring a USD row. Migration
     -- 0013 deleted every USD price and stopped tracking USD, so that tiebreak
     -- is dead code that would silently prefer a stale currency if one ever came
@@ -299,6 +327,7 @@ async function searchParts(query: string): Promise<unknown[]> {
       name: str(r["name"]),
       brand: nstr(r["brand"]),
       on_hand: Number(r["on_hand"]),
+      in_stock: nbool(r["in_stock"]),
       price_cents: nnum(r["price_cents"]),
       matched_on: matched_on ?? `part ${sku}`,
       bin: nstr(r["bin"]),
@@ -331,13 +360,16 @@ async function partDetail(partId: number): Promise<unknown> {
   const stock = await all(
     `SELECT l.id, l.code, l.name,
             COALESCE((SELECT SUM(m.delta) FROM stock_movement m
-                       WHERE m.location_id = l.id AND m.part_id = ?), 0) AS on_hand,
+                       WHERE m.location_id = l.id AND m.part_id = ? AND m.reason NOT IN ('reserve','release')), 0) AS on_hand,
+            -- 0047: holds on this part here (reserve − release); available = on_hand − reserved
+            COALESCE((SELECT -SUM(m.delta) FROM stock_movement m
+                       WHERE m.location_id = l.id AND m.part_id = ? AND m.reason IN ('reserve','release')), 0) AS reserved,
             sp.bin, sp.reorder_point, sp.reorder_qty
        FROM location l
        LEFT JOIN stock_policy sp ON sp.location_id = l.id AND sp.part_id = ?
       WHERE l.deleted_at IS NULL
       ORDER BY CAST(l.id AS INTEGER)`,
-    [pid, pid]
+    [pid, pid, pid]
   );
 
   // Order by timestamp, not id. Locally-posted movements carry a UUID id until
@@ -368,6 +400,8 @@ async function partDetail(partId: number): Promise<unknown> {
     location_code: str(s["code"]),
     location_name: str(s["name"]),
     on_hand: Number(s["on_hand"]),
+    reserved: Number(s["reserved"] ?? 0),
+    available: Number(s["on_hand"]) - Number(s["reserved"] ?? 0),
     bin: nstr(s["bin"]),
     reorder_point: nnum(s["reorder_point"]),
     reorder_qty: nnum(s["reorder_qty"]),
@@ -396,6 +430,7 @@ async function partDetail(partId: number): Promise<unknown> {
     price_cents: priceCents,
     list_price_minor: nnum(d["list_price_minor"]),
     total_on_hand: stockLines.reduce((t, s) => t + s.on_hand, 0),
+    in_stock: nbool(d["in_stock"]),
     stock: stockLines,
     // numId() would THROW on the UUID a locally-posted movement carries before
     // its round-trip — taking the whole part sheet down for the seconds (or
@@ -452,6 +487,7 @@ async function listParts(): Promise<unknown[]> {
     status: nstr(r["status"]),
     match_status: nstr(r["match_status"]),
     qty_on_hand: Number(r["qty_on_hand"]),
+    in_stock: nbool(r["in_stock"]),
     bin: nstr(r["bin"]),
     price_cents: nnum(r["list_row_minor"]) ?? nnum(r["list_price_minor"]),
     // The mobile cards want the actual thumbnail path, not just the boolean.
@@ -588,6 +624,8 @@ async function getCompany(): Promise<unknown> {
 //     mistakes are corrected by posting the inverse, never by editing.
 //
 // Reads pick the local row up instantly (on_hand is SUM(delta) over the local
+// rows whose reason is not a hold — 0047's reserve/release rows lower
+// AVAILABLE, not on hand — see stock_position)
 // table), so the UI updates offline and the sync happens when it happens.
 const MOVEMENT_REASONS = ["receipt", "sale", "return", "adjustment"] as const;
 
@@ -633,16 +671,21 @@ async function transferStock(a: Record<string, unknown>): Promise<unknown> {
   }
 
   await ready();
+  await shelfCheck(partId, fromId, -qty);
   const now = new Date().toISOString();
-  const leg = async (locationId: number, delta: number, clientUuid: string) =>
-    powerSync.execute(
-      `INSERT INTO stock_movement (id, part_id, location_id, delta, reason, client_uuid, actor_id, created_at)
-       VALUES (?, ?, ?, ?, 'transfer', ?, ?, ?)`,
-      [makeUuid(), String(partId), String(locationId), delta, clientUuid, actorId, now]
-    );
-
-  await leg(fromId, -qty, outUuid);
-  await leg(toId, qty, inUuid);
+  // One local transaction -> one upload unit (0049): if the server refuses
+  // the OUT leg, the IN leg is dropped with it rather than creating stock at
+  // the destination out of nothing. The out leg goes first for that reason.
+  await powerSync.writeTransaction(async (tx) => {
+    const leg = (locationId: number, delta: number, clientUuid: string) =>
+      tx.execute(
+        `INSERT INTO stock_movement (id, part_id, location_id, delta, reason, client_uuid, actor_id, created_at)
+         VALUES (?, ?, ?, ?, 'transfer', ?, ?, ?)`,
+        [makeUuid(), String(partId), String(locationId), delta, clientUuid, actorId, now]
+      );
+    await leg(fromId, -qty, outUuid);
+    await leg(toId, qty, inUuid);
+  });
   return qty;
 }
 
@@ -670,6 +713,7 @@ async function postMovement(a: Record<string, unknown>): Promise<unknown> {
     : raw;
 
   await ready();
+  await shelfCheck(partId, locationId, delta);
   await powerSync.execute(
     `INSERT INTO stock_movement (id, part_id, location_id, delta, reason, client_uuid, actor_id, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -697,7 +741,7 @@ async function postMovement(a: Record<string, unknown>): Promise<unknown> {
 async function myRequests(): Promise<unknown[]> {
   const orders = await all(
     `SELECT id, number, status, currency, notes, created_at,
-            client_response, client_responded_at
+            client_response, client_responded_at, zoho_salesorder_number
        FROM sales_order
       WHERE deleted_at IS NULL
       ORDER BY created_at DESC, CAST(id AS INTEGER) DESC
@@ -732,6 +776,7 @@ async function myRequests(): Promise<unknown[]> {
       created_at: str(o["created_at"]),
       client_response: nstr(o["client_response"]),
       client_responded_at: nstr(o["client_responded_at"]),
+      zoho_salesorder_number: nstr(o["zoho_salesorder_number"]),
       priced,
       total_minor: mapped.reduce((t, l) => t + (l.unit_price_minor ?? 0) * l.qty, 0),
       lines: mapped,
@@ -750,7 +795,7 @@ async function staffOrders(): Promise<unknown[]> {
   const orders = await all(
     `SELECT so.id, so.number, so.status, so.currency, so.notes, so.created_at,
             so.fulfilled_at, so.tax_rate_bps, so.client_response, so.client_responded_at,
-            so.invoice_no, so.invoiced_at,
+            so.invoice_no, so.invoiced_at, so.zoho_salesorder_number,
             so.zoho_invoice_number, so.zoho_status, so.zoho_status_at, so.zoho_error,
             c.name AS customer_name, c.contact AS customer_contact,
             c.phone AS customer_phone, c.email AS customer_email,
@@ -794,6 +839,7 @@ async function staffOrders(): Promise<unknown[]> {
       created_at: str(o["created_at"]),
       fulfilled_at: nstr(o["fulfilled_at"]),
       invoice_no: nstr(o["invoice_no"]),
+      zoho_salesorder_number: nstr(o["zoho_salesorder_number"]),
       invoiced_at: nstr(o["invoiced_at"]),
       zoho_invoice_number: nstr(o["zoho_invoice_number"]),
       zoho_status: nstr(o["zoho_status"]),
@@ -862,6 +908,12 @@ async function fulfilOrder(a: Record<string, unknown>): Promise<unknown> {
   return data;
 }
 
+async function cancelOrder(a: Record<string, unknown>): Promise<unknown> {
+  const { data, error } = await supabase.rpc("cancel_order", { order_id: numId(a["orderId"], "orderId"), p_reason: str(a["reason"]) });
+  if (error) throw new Error(`[CTP web] could not cancel: ${error.message}`);
+  return data;
+}
+
 /** Allocate the invoice number and close the order (0042). */
 async function invoiceOrder(a: Record<string, unknown>): Promise<unknown> {
   const orderId = numId(a["orderId"], "orderId");
@@ -874,7 +926,45 @@ async function invoiceOrder(a: Record<string, unknown>): Promise<unknown> {
   return { ...(data as object), zoho: await pushToZoho("invoice", orderId) };
 }
 
-/** Accept or decline a quote. All the rules live in the database (0021). */
+/** 0051: the customer drops one item from their own quote. Every rule lives in
+ *  the database — whose quote it is, that it is still a quote, that it is not
+ *  the last line — so the X being on screen is cosmetic and the function is the
+ *  control, same doctrine as the rest of the order RPCs. */
+async function quoteDropLine(a: Record<string, unknown>): Promise<unknown> {
+  const { data, error } = await supabase.rpc("quote_drop_line", { line_id: numId(a["lineId"], "lineId") });
+  if (error) throw new Error(`[CTP web] could not remove that item: ${error.message}`);
+  return data;
+}
+
+/** 0047: the blockers, by name, before the Accept button is offered. */
+async function quoteAcceptCheck(a: Record<string, unknown>): Promise<unknown> {
+  const { data, error } = await supabase.rpc("quote_accept_check", { order_id: numId(a["orderId"], "orderId") });
+  if (error) throw new Error(`[CTP web] could not check the quote: ${error.message}`);
+  return data;
+}
+
+/** 0047: accept = the accept-quote edge function. It creates the Zoho sales
+ *  order and calls accept_quote() — one transaction — and reverses the Zoho
+ *  side if the database side fails. The message it returns is written for
+ *  the customer and is shown as-is. */
+async function acceptQuote(a: Record<string, unknown>): Promise<unknown> {
+  const orderId = numId(a["orderId"], "orderId");
+  const { data, error } = await supabase.functions.invoke("accept-quote", { body: { order_id: orderId } });
+  if (error) {
+    // the function's own JSON body carries the reason; the SDK wraps non-2xx as an error
+    let detail = "";
+    try {
+      const ctx = (error as { context?: Response }).context;
+      if (ctx && typeof ctx.json === "function") { const j = await ctx.json(); detail = j?.message || j?.error || ""; }
+    } catch { /* no body */ }
+    throw new Error(`[CTP web] could not accept: ${detail || error.message}`);
+  }
+  if (data && data.error) throw new Error(`[CTP web] could not accept: ${data.message || data.error}`);
+  return data;
+}
+
+/** Decline a quote. All the rules live in the database (0021/0047). Accept goes
+ *  through acceptQuote above — the server refuses a direct accept. */
 async function respondToQuote(a: Record<string, unknown>): Promise<unknown> {
   const orderId = numId(a["orderId"], "orderId");
   const accept = a["accept"] === true;
@@ -999,6 +1089,19 @@ async function deviceAudit(): Promise<unknown[]> {
 // wrong one for the stock counter, which is why they are built differently:
 // nobody submits a parts enquiry from a dead spot in the warehouse, but people
 // count stock there all day.
+/** 0053: who the counter can raise an order for. Read from the local mirror
+ *  rather than the network — the counter picks a customer on every sale and
+ *  this list changes about once a month, so a round trip buys nothing and
+ *  costs responsiveness on a bad line. */
+async function staffCustomers(): Promise<unknown[]> {
+  return all(
+    `SELECT id, name, contact, phone, email
+       FROM customer
+      WHERE deleted_at IS NULL
+      ORDER BY name COLLATE NOCASE`
+  );
+}
+
 async function requestParts(a: Record<string, unknown>): Promise<unknown> {
   const raw = Array.isArray(a["items"]) ? (a["items"] as unknown[]) : [];
   const items = raw
@@ -1011,6 +1114,22 @@ async function requestParts(a: Record<string, unknown>): Promise<unknown> {
   if (items.length === 0) throw new Error("[CTP web] request_parts: nothing to request.");
 
   const note = a["note"] == null ? null : String(a["note"]).slice(0, 2000);
+
+  // 0053: the counter raises the same request against a named customer. The
+  // database refuses request_parts_for() unless the caller is staff, so this
+  // branch is a convenience, not the security boundary.
+  const forCustomer = a["customerId"] == null ? null : Number(a["customerId"]);
+  if (forCustomer != null) {
+    if (!Number.isInteger(forCustomer)) {
+      throw new Error("[CTP web] request failed: pick a customer first.");
+    }
+    const { data, error } = await supabase.rpc("request_parts_for", {
+      p_customer_id: forCustomer, items, note,
+    });
+    if (error) throw new Error(`[CTP web] request failed: ${error.message}`);
+    return data;
+  }
+
   const { data, error } = await supabase.rpc("request_parts", { items, note });
   if (error) {
     // The function raises readable messages for the cases that matter (no
@@ -1131,8 +1250,8 @@ async function diagramParts(a: Record<string, unknown>): Promise<unknown> {
     `SELECT (SELECT COUNT(*) FROM stock_movement) AS mv, (SELECT COUNT(*) FROM price) AS pr`);
   const hasStock = Number(has?.["mv"] ?? 0) > 0, hasPrice = Number(has?.["pr"] ?? 0) > 0;
   const rows = await all(
-    `SELECT p.id, p.sku, p.name, p.catalogue_pn,
-            COALESCE((SELECT SUM(m.delta) FROM stock_movement m WHERE m.part_id = p.id), 0) AS on_hand,
+    `SELECT p.id, p.sku, p.name, p.catalogue_pn, p.in_stock,
+            COALESCE((SELECT SUM(m.delta) FROM stock_movement m WHERE m.part_id = p.id AND m.reason NOT IN ('reserve','release')), 0) AS on_hand,
             (SELECT pr.amount_minor FROM price pr WHERE pr.part_id = p.id AND pr.tier = 'list'
               AND pr.deleted_at IS NULL ORDER BY pr.valid_from DESC LIMIT 1) AS list_minor,
             (SELECT pi.path FROM part_image pi WHERE pi.part_id = p.id AND pi.deleted_at IS NULL
@@ -1142,6 +1261,7 @@ async function diagramParts(a: Record<string, unknown>): Promise<unknown> {
     id: numId(r["id"], "part.id"), sku: str(r["sku"]), name: str(r["name"]),
     catalogue_pn: nstr(r["catalogue_pn"]), image: nstr(r["image"]),
     on_hand: hasStock ? Number(r["on_hand"] ?? 0) : null,
+    in_stock: nbool(r["in_stock"]),
     list_minor: hasPrice ? nnum(r["list_minor"]) : null,
   }));
 }
@@ -1215,10 +1335,15 @@ const PORTED: Record<string, Handler> = {
   post_movement: (a) => postMovement(a),
   transfer_stock: (a) => transferStock(a),
   request_parts: (a) => requestParts(a),
+  staff_customers: () => staffCustomers(),
   my_requests: () => myRequests(),
   respond_to_quote: (a) => respondToQuote(a),
+  quote_drop_line: (a) => quoteDropLine(a),
+  quote_accept_check: (a) => quoteAcceptCheck(a),
+  accept_quote: (a) => acceptQuote(a),
   fulfil_order: (a) => fulfilOrder(a),
   invoice_order: (a) => invoiceOrder(a),
+  cancel_order: (a) => cancelOrder(a),
   staff_orders: () => staffOrders(),
   price_quote: (a) => priceQuote(a),
   quote_price_check: (a) => quotePriceCheck(a),

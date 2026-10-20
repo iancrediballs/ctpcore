@@ -1,0 +1,6 @@
+# Only what `supabase functions deploy` needs. The project ref is passed on
+# the command line; nothing else in the CLI config is used by this repo.
+project_id = "hkzmydowyiajkbakxfkj"
+
+[functions.accept-quote]
+verify_jwt = true

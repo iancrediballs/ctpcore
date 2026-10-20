@@ -1,0 +1,180 @@
+[
+ {
+  "name": "anon cannot call fulfil_order",
+  "ok": true,
+  "detail": "permission denied for function fulfil_order"
+ },
+ {
+  "name": "anon cannot call invoice_order",
+  "ok": true,
+  "detail": "permission denied for function invoice_order"
+ },
+ {
+  "name": "a signed-in non-staff user is refused",
+  "ok": true,
+  "detail": "Only staff can fulfil an order."
+ },
+ {
+  "name": "short order refused with the shortfall named (5 on hand, 7 promised ahead of it → 0)",
+  "ok": true,
+  "detail": "Not enough stock to fulfil RQ-2. T-A: need 10, available 0"
+ },
+ {
+  "name": "…and nothing was written",
+  "ok": true
+ },
+ {
+  "name": "fulfil writes one sale movement per line",
+  "ok": true,
+  "detail": "{\"number\":\"RQ-1\",\"status\":\"fulfilled\",\"already\":false,\"order_id\":1,\"movements\":2,\"fulfilled_at\":\"2026-10-20T10:36:43.803+02:00\"}"
+ },
+ {
+  "name": "on hand fell by the line quantities",
+  "ok": true
+ },
+ {
+  "name": "double tap: already=true, zero movements",
+  "ok": true,
+  "detail": "{\"number\":\"RQ-1\",\"status\":\"fulfilled\",\"already\":true,\"order_id\":1,\"movements\":0,\"fulfilled_at\":\"2026-10-20T10:36:43.803+02:00\"}"
+ },
+ {
+  "name": "movement client_uuids follow so-<order>-line-<line>",
+  "ok": true,
+  "detail": "[{\"client_uuid\":\"so-1-line-1\"},{\"client_uuid\":\"so-1-line-2\"}]"
+ },
+ {
+  "name": "movement carries actor_id/server_session/ref",
+  "ok": true,
+  "detail": "{\"actor_id\":\"11111111-1111-1111-1111-111111111111\",\"actor_source\":\"server_session\",\"origin\":\"server\",\"ref_type\":\"sales_order\",\"ref_id\":1}"
+ },
+ {
+  "name": "O4 (accepted later, needs 2) refused: 3 on hand minus 3 promised to O3",
+  "ok": true,
+  "detail": "Not enough stock to fulfil RQ-4. T-A: need 2, available 0"
+ },
+ {
+  "name": "O3 (accepted first, needs 3) fulfils against the 3 on hand",
+  "ok": true,
+  "detail": "{\"number\":\"RQ-3\",\"status\":\"fulfilled\",\"already\":false,\"order_id\":3,\"movements\":1,\"fulfilled_at\":\"2026-10-20T10:36:43.833+02:00\"}"
+ },
+ {
+  "name": "O4 still refused afterwards: need 2, available 0",
+  "ok": true,
+  "detail": "Not enough stock to fulfil RQ-4. T-A: need 2, available 0"
+ },
+ {
+  "name": "quote cannot be invoiced",
+  "ok": true,
+  "detail": "RQ-5 is quote — an invoice is issued only for goods that have left (fulfil it first)."
+ },
+ {
+  "name": "quote cannot be fulfilled",
+  "ok": true,
+  "detail": "RQ-5 is quote, not accepted — only an accepted order can be fulfilled."
+ },
+ {
+  "name": "empty order cannot be fulfilled",
+  "ok": true,
+  "detail": "RQ-6 has no lines — nothing to fulfil."
+ },
+ {
+  "name": "invoice number is bare YYMMDD01 with empty prefix",
+  "ok": true,
+  "detail": "{\"number\":\"RQ-1\",\"already\":false,\"order_id\":1,\"invoice_no\":\"26102001\",\"invoiced_at\":\"2026-10-20T10:36:43.862+02:00\"}"
+ },
+ {
+  "name": "invoicing again returns the same number",
+  "ok": true,
+  "detail": "{\"number\":\"RQ-1\",\"already\":true,\"order_id\":1,\"invoice_no\":\"26102001\",\"invoiced_at\":\"2026-10-20T10:36:43.862+02:00\"}"
+ },
+ {
+  "name": "order row: invoiced, number and time stamped",
+  "ok": "2026-10-20T08:36:43.862Z",
+  "detail": "{\"status\":\"invoiced\",\"fulfilled_at\":\"2026-10-20T08:36:43.803Z\",\"invoice_no\":\"26102001\",\"invoiced_at\":\"2026-10-20T08:36:43.862Z\"}"
+ },
+ {
+  "name": "counter holds one row for today at 1",
+  "ok": true,
+  "detail": "[{\"day\":\"2026-10-20\",\"last\":1}]"
+ },
+ {
+  "name": "second invoice today is YYMMDD02",
+  "ok": true,
+  "detail": "{\"number\":\"RQ-3\",\"already\":false,\"order_id\":3,\"invoice_no\":\"26102002\",\"invoiced_at\":\"2026-10-20T10:36:43.873+02:00\"}"
+ },
+ {
+  "name": "a prefix, when set, is honoured",
+  "ok": true,
+  "detail": "INV-26102003"
+ },
+ {
+  "name": "the 100th invoice of a day is three digits, no collision",
+  "ok": true,
+  "detail": "261020100 (counter before: [{\"last\":99}])"
+ },
+ {
+  "name": "a new day starts again at 01; yesterday's row untouched",
+  "ok": true,
+  "detail": "26102001 [{\"day\":\"2026-10-19\",\"last\":100},{\"day\":\"2026-10-20\",\"last\":1}]"
+ },
+ {
+  "name": "unique index refuses a duplicate invoice number",
+  "ok": true,
+  "detail": "duplicate key value violates unique constraint \"sales_order_invoice_no_uniq\""
+ },
+ {
+  "name": "a new customer request inherits company.default_tax_bps (1500)",
+  "ok": true,
+  "detail": "tax_rate_bps=1500"
+ },
+ {
+  "name": "authenticated cannot UPDATE stock_movement",
+  "ok": true,
+  "detail": "permission denied for table stock_movement"
+ },
+ {
+  "name": "authenticated cannot DELETE stock_movement",
+  "ok": true,
+  "detail": "permission denied for table stock_movement"
+ },
+ {
+  "name": "authenticated cannot mint a number directly",
+  "ok": true,
+  "detail": "permission denied for function next_invoice_no"
+ },
+ {
+  "name": "invoice prefix can be set",
+  "ok": true,
+  "detail": "{\"invoice_prefix\":\"INV-\",\"quote_prefix\":\"QT-\"}"
+ },
+ {
+  "name": "invoice prefix can be CLEARED to '' (was impossible before 0043)",
+  "ok": true,
+  "detail": "{\"invoice_prefix\":\"\",\"quote_prefix\":\"QT-\"}"
+ },
+ {
+  "name": "a save that does not mention the prefix leaves it alone",
+  "ok": true,
+  "detail": "{\"invoice_prefix\":\"\",\"quote_prefix\":\"QT-\"}"
+ },
+ {
+  "name": "quote prefix cannot be blanked",
+  "ok": true,
+  "detail": "{\"invoice_prefix\":\"\",\"quote_prefix\":\"QT-\"}"
+ },
+ {
+  "name": "quote prefix can be changed",
+  "ok": true,
+  "detail": "{\"invoice_prefix\":\"\",\"quote_prefix\":\"Q-\"}"
+ },
+ {
+  "name": "minting after the round trip still yields a bare number",
+  "ok": true,
+  "detail": "26102002"
+ },
+ {
+  "name": "warehouse staff cannot change company details",
+  "ok": true,
+  "detail": "Only a manager or administrator can change company details"
+ }
+]

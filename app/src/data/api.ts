@@ -101,6 +101,15 @@ export const adminAddPhoto = <T>(partId: number, blob: Blob, filename: string) =
 /** A signed-in customer asks for parts. Creates a quote-status order server-side. */
 export const requestParts = <T>(items: { part_id: number; qty: number }[], note: string | null) =>
   call<T>("request_parts", { items, note });
+/** The counter raises the same request FOR a customer. Staff only — the
+ *  database refuses it otherwise, and the order records who keyed it. */
+export const requestPartsFor = <T>(
+  customerId: number,
+  items: { part_id: number; qty: number }[],
+  note: string | null,
+) => call<T>("request_parts", { items, note, customerId });
+/** Customers the counter can raise an order against. Staff only. */
+export const staffCustomers = <T>() => call<T>("staff_customers");
 /** A client's own requests/quotes, newest first, with their lines. */
 export const myRequests = <T>() => call<T>("my_requests");
 // ─── staff order desk (web-only) ─────────────────────────────────────────
@@ -132,10 +141,31 @@ export const fulfilOrder = <T>(orderId: number) => call<T>("fulfil_order", { ord
 /** Issue the tax invoice for a fulfilled order: allocates the next invoice
  *  number at that moment and never again for this order (0042). */
 export const invoiceOrder = <T>(orderId: number) => call<T>("invoice_order", { orderId });
+/** Staff: cancel a quote or an accepted order; releases its stock hold (0046). */
+export const cancelOrder = <T>(orderId: number, reason: string) => call<T>("cancel_order", { orderId, reason });
 
 /** Accept or decline one of your own quotes. */
 export const respondToQuote = <T>(orderId: number, accept: boolean) =>
   call<T>("respond_to_quote", { orderId, accept });
+/** A customer takes one item off their own quote before accepting it (0051).
+ *  Soft-deletes the line, so the quote as sent stays on record and the Zoho
+ *  sales order — built from the live lines at the moment of acceptance — is
+ *  what was ACCEPTED. The server refuses the last remaining line. */
+export type DropLineResult = {
+  order_id: number; number: string; line_id: number;
+  removed_sku: string; removed_name: string;
+  remaining_lines: number; total_minor: number;
+};
+export const quoteDropLine = (lineId: number) =>
+  call<DropLineResult>("quote_drop_line", { lineId });
+/** Why a quote cannot be accepted yet (0047): blockers by name, or ok. */
+export type AcceptBlocker = { kind: string; message: string; sku?: string; name?: string };
+export const quoteAcceptCheck = (orderId: number) =>
+  call<{ ok: boolean; blockers: AcceptBlocker[] }>("quote_accept_check", { orderId });
+/** Accept a quote: raises the sales order in Zoho Books AND reserves the stock,
+ *  both or neither (the accept-quote edge function, 0047). */
+export type AcceptResult = { ok: true; already: boolean; number: string; zoho_salesorder_number: string; reserved_lines: number };
+export const acceptQuote = (orderId: number) => call<AcceptResult>("accept_quote", { orderId });
 
 // ─── sales ───────────────────────────────────────────────────────────────
 export const listCustomers = <T>() => call<T>("list_customers");
@@ -275,6 +305,8 @@ export const listHotspots = (path: string) => call<DiagramHotspots>("list_hotspo
 export type DiagramPart = {
   id: number; sku: string; name: string; catalogue_pn: string | null; image: string | null;
   on_hand: number | null; list_minor: number | null;
+  // 0050: in stock yes/no for a customer device (its on_hand is null). null = not synced yet.
+  in_stock?: boolean | null;
 };
 export const diagramParts = (partIds: number[]) => call<DiagramPart[]>("diagram_parts", { partIds });
 /** Keyed on clientUuid when the marker has one; a marker that predates the

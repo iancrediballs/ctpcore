@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useEffect, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { supabase } from "../sync/supabase";
+import { initialAuthIntent } from "./authIntent";
 
 /** Background sync, supplied by the surface rather than imported here.
  *
@@ -30,10 +31,17 @@ type AuthCtx = {
   role: Role;
   loading: boolean;
   signOut: () => Promise<void>;
+  /** True when this session arrived from an invite or reset link and the
+   *  person has not chosen a password yet. The app stays behind a
+   *  "set your password" screen until they do — otherwise they are signed in
+   *  on a one-time token and locked out the moment it expires. */
+  mustSetPassword: boolean;
+  passwordSet: () => void;
 };
 
 const Ctx = createContext<AuthCtx>({
   session: null, role: null, loading: true, signOut: async () => {},
+  mustSetPassword: false, passwordSet: () => {},
 });
 export const useAuth = () => useContext(Ctx);
 
@@ -43,13 +51,23 @@ export function AuthProvider(
   const [session, setSession] = useState<Session | null>(null);
   const [role, setRole] = useState<Role>(null);
   const [loading, setLoading] = useState(true);
+  // Seeded from the URL this page was opened with, captured before supabase-js
+  // wiped it. PASSWORD_RECOVERY below is the second route to the same state:
+  // belt and braces, because the two flows differ between implicit and PKCE.
+  const [mustSetPassword, setMustSetPassword] = useState(initialAuthIntent !== null);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
       setSession(data.session);
       setLoading(false);
     });
-    const { data: sub } = supabase.auth.onAuthStateChange((_e, s) => setSession(s));
+    const { data: sub } = supabase.auth.onAuthStateChange((e, s) => {
+      setSession(s);
+      if (e === "PASSWORD_RECOVERY") setMustSetPassword(true);
+      // A deliberate sign-out clears it, so the next person to use this browser
+      // gets the normal login screen rather than somebody else's reset flow.
+      if (e === "SIGNED_OUT") setMustSetPassword(false);
+    });
     return () => sub.subscription.unsubscribe();
   }, []);
 
@@ -84,6 +102,10 @@ export function AuthProvider(
   };
 
   return (
-    <Ctx.Provider value={{ session, role, loading, signOut }}>{children}</Ctx.Provider>
+    <Ctx.Provider value={{
+      session, role, loading, signOut,
+      mustSetPassword,
+      passwordSet: () => setMustSetPassword(false),
+    }}>{children}</Ctx.Provider>
   );
 }

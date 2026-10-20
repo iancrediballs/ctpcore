@@ -41,3 +41,25 @@ Michelle.
 ## Not present (no code exists)
 WhatsApp, SMS, web push. Email is the only outbound channel. Email still sends
 from `onboarding@resend.dev` until a CTP domain is verified in Resend.
+
+## 20 Oct — diagram viewer regression (fixed)
+Root cause: production had been running branch `final-sprint` (SW v16, deployed
+7 Oct). `multicat-codes-zoho` was cut from main before final-sprint's web work,
+so deploying it on 19 Oct (SW v15) rolled back the section → hotspot viewer,
+gentle zoom, photo carousel, sheet layering, invite flow, counter sales and the
+customer accept-via-`accept-quote` path. Data was fine: every section's diagram
+and hotspots are intact and keyed by part_id (unchanged by the Multicat rename).
+Fix: final-sprint merged into main (SW v17). Tests: focus harness 13/13, PGlite
+0042 36, 0045 11, 0046_0047 23, 0048 18, 0049 12, 0051 23 — all pass.
+
+Migration numbers now clash between the two lines of work. Live has: main's
+0046_multicat_codes, 0047_zoho_writeback, 0048_go_live_tidy, AND final-sprint's
+0046_reservations / 0047_zoho_sales_order (accept_quote, reserve_order) and
+request_parts_for (0053). NOT on live: final-sprint 0048_stock_guard,
+0049_part_in_stock, 0051_customer_drops_quote_line.
+
+OPEN DECISION (Ian + Michelle): live accept_quote() requires a Zoho SALES ORDER
+id (Sept design, accept-quote edge fn). The 19 Oct go-live design says invoices
+only, no sales orders. accept-quote still reads its token from
+integration_secret (Sept token), not the new Vault token. SO-00001..00007 were
+created in Zoho by it for test orders now deleted in CTP — check Zoho.

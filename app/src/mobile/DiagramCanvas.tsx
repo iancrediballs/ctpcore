@@ -29,6 +29,21 @@ export type Pt = { x: number; y: number };
 const MIN_S = 1;
 const MAX_S = 8;
 
+// ── how far "zoom to hotspot" goes ────────────────────────────────────────
+// Ian, 2026-09-25: 15%. A nudge, not a dive — the drawing must stay
+// recognisable so the callout is seen IN ITS PLACE on the truck.
+//
+// Know what this buys and what it does not. The transform is clamped to the
+// drawing (nothing may show past its edge), so at s = 1.15 the drawing's
+// centre can only travel ±7.5% of its width. A marker in the middle lands
+// dead centre; a marker near an edge is already as near the centre as the
+// clamp allows and barely moves at all. So the ZOOM is the nudge and the
+// PULSE RING is the answer to "where" — which is why focus() always leaves
+// the pulse to the caller and never suppresses it. Raising this number is the
+// only way to make edge markers travel, and it costs exactly the context Ian
+// asked to keep.
+export const FOCUS_SCALE = 1.15;
+
 export type DiagramCanvasProps = {
   href: string;
   /** The drawing's natural units. If null the canvas measures the image once
@@ -67,6 +82,14 @@ export type CanvasApi = {
    *  (fraction of the view) around it. Being TAKEN to the part, not a jump:
    *  ~450 ms, ease-out. */
   zoomTo: (r: Rect, pad?: number, instant?: boolean) => void;
+  /** Move ATTENTION to `r` without losing the drawing: centre it at `scale`
+   *  (absolute — 1 is fit), rather than filling the view with it. Ian,
+   *  2026-09-25: "set the zoom to hotspot to 15% so it just moves the user's
+   *  attention to where it is rather than losing context." zoomTo's
+   *  fill-the-view behaviour landed at MAX_S for a single callout, which threw
+   *  the rest of the drawing away; this is the gentle nudge instead. The pulse
+   *  ring is what actually says "here" — see the note on FOCUS_SCALE. */
+  focus: (r: Rect, scale?: number, instant?: boolean) => void;
   /** Animate back to fit. */
   fit: () => void;
 };
@@ -153,6 +176,19 @@ export function DiagramCanvas({ href, frame, onFrame, children, onTap, onSwipe, 
     tx = Math.min(0, Math.max(mx, tx)); ty = Math.min(0, Math.max(my, ty));
     if (instant) { stopAnim(); t.current = { s, tx, ty }; apply(); } else animateTo({ s, tx, ty });
   }, [fr, animateTo, apply]);
+  /** Centre `r` at an ABSOLUTE scale. No fitting, no padding maths: the scale
+   *  is the scale, so the drawing stays as recognisable as the caller asked
+   *  for. Clamped to the drawing like every other transform, which at a small
+   *  scale is the interesting part — see FOCUS_SCALE. */
+  const focus = useCallback((r: Rect, scale = FOCUS_SCALE, instant = false) => {
+    if (!fr) return;
+    const s = Math.min(MAX_S, Math.max(MIN_S, scale));
+    const cx = r.x + r.w / 2, cy = r.y + r.h / 2;
+    let tx = fr.w / 2 - cx * s, ty = fr.h / 2 - cy * s;
+    const mx = fr.w * (1 - s), my = fr.h * (1 - s);
+    tx = Math.min(0, Math.max(mx, tx)); ty = Math.min(0, Math.max(my, ty));
+    if (instant) { stopAnim(); t.current = { s, tx, ty }; apply(); } else animateTo({ s, tx, ty });
+  }, [fr, animateTo, apply]);
   const fit = useCallback(() => animateTo({ s: 1, tx: 0, ty: 0 }, 350), [animateTo]);
 
   // ── screen → viewBox → drawing ───────────────────────────────────────────
@@ -174,7 +210,7 @@ export function DiagramCanvas({ href, frame, onFrame, children, onTap, onSwipe, 
     return { x: cl((v.x - tx) / s, fr.w), y: cl((v.y - ty) / s, fr.h) };
   }, [toView, fr]);
 
-  useEffect(() => { bind?.({ toDrawing, svg: () => svgRef.current, capture: (id) => capturePointer(svgRef.current, id), reset, zoomTo, fit }); }, [bind, toDrawing, reset, zoomTo, fit]);
+  useEffect(() => { bind?.({ toDrawing, svg: () => svgRef.current, capture: (id) => capturePointer(svgRef.current, id), reset, zoomTo, focus, fit }); }, [bind, toDrawing, reset, zoomTo, focus, fit]);
 
   /** Zoom so the viewBox point `v` stays under the pointer. */
   const zoomAt = useCallback((v: Pt, sNew: number) => {
@@ -333,6 +369,20 @@ export function saveMarkerScale(v: number) { try { localStorage.setItem(SCALE_KE
 /** Display radius in drawing units for a frame of width w. */
 export function markerRadius(frameW: number, scale: number): number {
   return Math.max(6, frameW * 0.010 * scale);
+}
+
+/** The rectangle enclosing every callout of one part, padded by a ring, in
+ *  drawing units. A part with one callout gives a small square around it; a
+ *  part shown twice (L/H and R/H on the same drawing, or item 16 on SEC101)
+ *  gives the box containing both, so focus() centres BETWEEN them and neither
+ *  is picked arbitrarily. Exported so the thing that is tested is the thing
+ *  that runs. */
+export function calloutRect(pts: { x: number; y: number }[], r: number): Rect {
+  const pad = r * 2;
+  const xs = pts.map((p) => p.x), ys = pts.map((p) => p.y);
+  const x0 = Math.min(...xs) - pad, x1 = Math.max(...xs) + pad;
+  const y0 = Math.min(...ys) - pad, y1 = Math.max(...ys) + pad;
+  return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
 }
 
 /** A callout marker in drawing units: an open ring, no number — the drawing's

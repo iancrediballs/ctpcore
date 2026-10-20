@@ -24,6 +24,7 @@ import { markerState, markerTitle } from "./hotspotState";
 import type { DiagramPart } from "../data/api";
 import { makeUuid } from "../data/uuid";
 import { buildDocHTML, openPrintWindow, type DocCompany, type DocOrder } from "../invoiceDoc";
+import { ShelfRefusedError } from "../data/errors";
 import type { WebHotspot } from "../data/api";
 import { useAuth, type Role } from "../auth/AuthProvider";
 import SettingsView from "../admin/SettingsView";
@@ -43,18 +44,22 @@ type Section = {
 type PartRow = {
   id: number; sku: string; name: string; category_code: string | null;
   qty_on_hand: number; bin: string | null; price_cents: number | null;
+  // 0050: the one stock fact a customer gets. null = not synced yet (unknown).
+  in_stock?: boolean | null;
   image?: string | null;
 };
 
 type Hit = {
   id: number; sku: string; name: string; brand: string | null;
-  on_hand: number; price_cents: number | null; matched_on: string;
+  on_hand: number; in_stock?: boolean | null; price_cents: number | null; matched_on: string;
   bin?: string | null; thumb?: string | null;
 };
 
 type StockLine = {
   location_id: number; location_code: string; location_name: string;
   on_hand: number; bin: string | null;
+  // 0047: holds for accepted orders. available = on_hand − reserved.
+  reserved?: number; available?: number;
 };
 
 type LedgerLine = {
@@ -65,7 +70,7 @@ type Detail = {
   id: number; sku: string; name: string; locator: string | null;
   catalogue_pn: string | null; inventory_pn: string | null; brand: string | null;
   category_name: string | null; drawing_no: string | null; notes: string | null;
-  price_cents: number | null; total_on_hand: number;
+  price_cents: number | null; total_on_hand: number; in_stock?: boolean | null;
   stock: StockLine[]; ledger: LedgerLine[];
   images: { id: number; path: string; is_primary: boolean }[];
   diagram_image: string | null; diagram_item: string | null;
@@ -89,6 +94,8 @@ type StaffOrder = {
   invoice_no: string | null; invoiced_at: string | null;
   zoho_invoice_number?: string | null; zoho_status?: string | null;
   zoho_status_at?: string | null; zoho_error?: string | null;
+  // 0047: the Zoho Books sales order raised when the customer accepted
+  zoho_salesorder_number?: string | null;
   client_response: string | null; client_responded_at: string | null;
   unpriced: number; total_minor: number;
   stage: "to_price" | "with_customer" | "to_pick" | "fulfilled" | string;
@@ -99,6 +106,8 @@ type MyRequest = {
   id: number; number: string; status: string; currency: string;
   notes: string | null; created_at: string;
   client_response: string | null; client_responded_at: string | null;
+  // 0047: the sales order raised in Zoho Books when they accepted — their proforma
+  zoho_salesorder_number?: string | null;
   priced: boolean; total_minor: number; lines: MyLine[];
 };
 
@@ -299,6 +308,10 @@ export default function MobileShell() {
   const [hits, setHits] = useState<Hit[] | null>(null); // null = not searching
   const [chip, setChip] = useState<string | null>(null);
   const [detail, setDetail] = useState<Detail | null>(null);
+  // Which photo the part sheet is showing. Only visible as a carousel when the
+  // part has more than one (Ian, 2026-09-25); reset whenever the sheet changes
+  // part, or photo 3 of the last part becomes photo 3 of a part with two.
+  const [shot, setShot] = useState(0);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [counterOpen, setCounterOpen] = useState(false);
   const [toast, setToast] = useState<Toast | null>(null);
@@ -306,6 +319,10 @@ export default function MobileShell() {
   const [cart, setCart] = useState<{ id: number; sku: string; name: string; qty: number }[]>([]);
   const [note, setNote] = useState("");
   const [sending, setSending] = useState(false);
+  // 0053 — counter sales. The cart is shared with the customer flow; these two
+  // say who a STAFF cart is being raised for.
+  const [customers, setCustomers] = useState<{ id: number; name: string }[]>([]);
+  const [counterCustomer, setCounterCustomer] = useState<number | null>(null);
   const [audit, setAudit] = useState<{ table: string; rows: number }[] | null>(null);
   const [mine, setMine] = useState<MyRequest[] | null>(null);
   const [answering, setAnswering] = useState<number | null>(null);
@@ -438,6 +455,18 @@ export default function MobileShell() {
     toastTimer.current = window.setTimeout(() => setToast(null), 6000);
   }, []);
 
+  // 0049: a movement this device booked while its ledger was stale, refused by
+  // the server's shelf guard on upload. It was dropped, not retried; say so.
+  useEffect(() => {
+    const h = (ev: Event) => {
+      const msg = (ev as CustomEvent<{ message: string }>).detail?.message;
+      showToast({ text: (msg ?? "A stock movement was refused by the shelf guard.") + " That entry was not booked.", err: true });
+      refresh();
+    };
+    window.addEventListener("ctp-sync-refused", h);
+    return () => window.removeEventListener("ctp-sync-refused", h);
+  }, [showToast, refresh]);
+
   // ── desktop keyboard (P12a) ──
   // A mouse-and-keyboard user expects the cursor to be in the search box, and
   // Escape to close whatever is on top. Both are desktop-only: a phone has no
@@ -543,6 +572,7 @@ export default function MobileShell() {
   const openPart = useCallback(async (partId: number) => {
     try {
       setDetail(await api.partDetail<Detail>(partId));
+      setShot(0);                       // a new part starts on its primary photo
       setSheetOpen(true);
       setCounterOpen(false);
     } catch (e) {
@@ -573,7 +603,7 @@ export default function MobileShell() {
       reloadDetail(d.id);
     } catch (e) {
       console.error(e);
-      showToast({ text: "Post failed — nothing was booked.", err: true });
+      showToast({ text: e instanceof ShelfRefusedError ? e.message : "Post failed — nothing was booked.", err: true });
     }
   }, [showToast, reloadDetail]);
 
@@ -656,6 +686,15 @@ export default function MobileShell() {
     if (isClient) return;
     refreshZohoStatus().then((r) => { if (r.changed > 0) loadOrders(); });
   }, [isClient, loadOrders]);
+
+  // 0053 — the customer list for counter sales. Staff only, and read from the
+  // local mirror, so it costs nothing to refresh whenever sync moves.
+  useEffect(() => {
+    if (isClient) { setCustomers([]); return; }
+    api.staffCustomers<{ id: number; name: string }[]>()
+      .then(setCustomers)
+      .catch((e) => { console.error(e); setCustomers([]); });
+  }, [isClient, lastSynced]);
 
   /**
    * "1850", "1850.50", "1 850,50", "R1,850.50" — all of them are money here.
@@ -756,6 +795,18 @@ const parseRand = (s: string): number => {
 
   /** Stock out. One server transaction (0042): refuses if any line is short,
    *  names the shortfall, writes nothing in that case. Idempotent on retry. */
+  const cancelOrder = useCallback(async (o: StaffOrder) => {
+    const reason = window.prompt(`Cancel ${o.number}? Any stock held for it is released. Reason:`);
+    if (reason == null) return;
+    setSavingOrder(true);
+    try {
+      const r = await api.cancelOrder<{ released: number }>(o.id, reason);
+      showToast({ text: `${o.number} cancelled${r.released ? ` — ${r.released} stock hold${r.released === 1 ? "" : "s"} released` : ""}.` });
+      loadOrders();
+    } catch (e) { showToast({ text: e instanceof Error ? e.message.replace(/^\[CTP web\] could not cancel: /, "") : "Could not cancel.", err: true }); }
+    finally { setSavingOrder(false); }
+  }, [showToast, loadOrders]);
+
   const fulfilOrder = useCallback(async (o: StaffOrder) => {
     setSavingOrder(true);
     try {
@@ -807,18 +858,80 @@ const parseRand = (s: string): number => {
     }
   }, [showToast, loadOrders]);
 
+  // 0047: why a quote cannot be accepted yet, by order id — read when the
+  // quote is ready so the button says so before anyone taps it.
+  const [blockers, setBlockers] = useState<Record<number, api.AcceptBlocker[]>>({});
+  useEffect(() => {
+    if (!isClient) return;
+    const ready = (mine ?? []).filter((r) => r.status === "quote" && r.priced);
+    let stale = false;
+    (async () => {
+      const next: Record<number, api.AcceptBlocker[]> = {};
+      for (const r of ready) {
+        try { const c = await api.quoteAcceptCheck(r.id); next[r.id] = c.ok ? [] : c.blockers; }
+        catch (e) { console.error(e); }
+      }
+      if (!stale) setBlockers(next);
+    })();
+    return () => { stale = true; };
+  }, [isClient, mine]);
+
+  // ── the customer trims their own quote (0051) ──
+  // myRequests() reads the LOCAL PowerSync database, and quote_drop_line is a
+  // SERVER call, so the removal is not in the local copy until a sync pass
+  // brings it back down — a second or two in which the row would sit there
+  // looking ignored. `dropped` holds the line ids we have asked the server to
+  // remove so the list and the total can answer immediately. It is an OPTIMISM,
+  // not a truth: it is cleared per line the moment the synced data agrees, and
+  // a refused removal puts the line straight back.
+  const [dropped, setDropped] = useState<Set<number>>(new Set());
+  const [droppingLine, setDroppingLine] = useState<number | null>(null);
+  useEffect(() => {
+    if (!mine) return;
+    const stillThere = new Set(mine.flatMap((r) => r.lines.map((l) => l.id)));
+    setDropped((s) => {
+      const next = new Set([...s].filter((id) => stillThere.has(id)));
+      return next.size === s.size ? s : next;     // no churn when nothing changed
+    });
+  }, [mine]);
+
+  const dropLine = useCallback(async (r: MyRequest, lineId: number, label: string) => {
+    setDroppingLine(lineId);
+    setDropped((s) => new Set(s).add(lineId));
+    try {
+      const res = await api.quoteDropLine(lineId);
+      showToast({ text: `${label} removed — ${r.number} is now ${fmtR(res.total_minor)} excl VAT.` });
+      loadMine();
+      // The quote changed, so why-it-cannot-be-accepted may have changed with
+      // it: the removed line might have been the only blocker.
+      try { const c = await api.quoteAcceptCheck(r.id); setBlockers((b) => ({ ...b, [r.id]: c.ok ? [] : c.blockers })); }
+      catch (e) { console.error(e); }
+    } catch (e) {
+      console.error(e);
+      setDropped((s) => { const n = new Set(s); n.delete(lineId); return n; });   // put it back
+      const msg = e instanceof Error ? e.message.replace(/^\[CTP web\] could not remove that item: /, "") : "Could not remove that item.";
+      showToast({ text: msg, err: true });
+    } finally {
+      setDroppingLine(null);
+    }
+  }, [showToast, loadMine]);
+
   const answerQuote = useCallback(async (r: MyRequest, accept: boolean) => {
     setAnswering(r.id);
     try {
-      await api.respondToQuote(r.id, accept);
-      showToast({ text: accept
-        ? `${r.number} accepted — we'll get it ready.`
-        : `${r.number} declined.` });
+      if (accept) {
+        // Zoho sales order + stock hold, both or neither (accept-quote function).
+        const res = await api.acceptQuote(r.id);
+        showToast({ text: `${r.number} accepted — sales order ${res.zoho_salesorder_number} raised. We'll be in touch with the proforma.` });
+      } else {
+        await api.respondToQuote(r.id, false);
+        showToast({ text: `${r.number} declined.` });
+      }
       loadMine();
     } catch (e) {
       console.error(e);
       const msg = e instanceof Error
-        ? e.message.replace(/^\[CTP web\] could not send your answer: /, "")
+        ? e.message.replace(/^\[CTP web\] could not (send your answer|accept): /, "")
         : "Could not send your answer.";
       showToast({ text: msg, err: true });
     } finally {
@@ -850,6 +963,36 @@ const parseRand = (s: string): number => {
     }
   }, [cart, note, sending, showToast]);
 
+  /** 0053 — the counter raises the same request, for a customer it names.
+   *  Deliberately a separate function from submitRequest rather than a flag on
+   *  it: the two have different failure messages and different follow-ups (a
+   *  customer watches for their quote, the counter goes straight to pricing). */
+  const sendCounterSale = useCallback(async () => {
+    if (cart.length === 0 || sending || counterCustomer == null) return;
+    setSending(true);
+    try {
+      const res = await api.requestPartsFor<{ number?: string; lines?: number }>(
+        counterCustomer,
+        cart.map((c) => ({ part_id: c.id, qty: c.qty })),
+        note.trim() || null
+      );
+      const who = customers.find((c) => c.id === counterCustomer)?.name ?? "the customer";
+      setCart([]);
+      setNote("");
+      setCounterCustomer(null);
+      showToast({ text: `${res?.number ?? "Request"} raised for ${who} — price it below and send.` });
+      loadOrders();
+    } catch (e) {
+      console.error(e);
+      const msg = e instanceof Error
+        ? e.message.replace(/^\[CTP web\] request failed: /, "")
+        : "Could not raise the request.";
+      showToast({ text: msg, err: true });
+    } finally {
+      setSending(false);
+    }
+  }, [cart, note, sending, counterCustomer, customers, showToast]);
+
   /** "Issue 1": one unit out of the first location that has stock. */
   const issueOne = useCallback((d: Detail) => {
     const line = d.stock.find((s) => s.on_hand > 0) ?? d.stock[0];
@@ -862,7 +1005,7 @@ const parseRand = (s: string): number => {
     if (hits) {
       return hits.map((h) => ({
         id: h.id, sku: h.sku, name: h.name, category_code: null,
-        qty_on_hand: h.on_hand, bin: h.bin ?? null, price_cents: h.price_cents,
+        qty_on_hand: h.on_hand, in_stock: h.in_stock ?? null, bin: h.bin ?? null, price_cents: h.price_cents,
         image: h.thumb ?? null,
       }));
     }
@@ -882,11 +1025,28 @@ const parseRand = (s: string): number => {
 
   // The front page: every section of the truck as a big card — the SEC
   // exploded-view drawing IS the picture of "this part of the truck" — plus
-  // one search box and an All-parts card. Tap a section → the list, filtered.
+  // one search box and an All-parts card.
+  //
+  // Ian, 2026-09-25: "when selecting a parts section it must go straight to the
+  // parts list screen where the diagram is fitted to the screen and the parts
+  // on the right with visible hotspots." So a section with a drawing opens the
+  // VIEWER, not a preview of it. The filtered list is still set up underneath,
+  // so closing the viewer lands on that section's parts rather than nowhere.
+  // A section with no drawing yet (or All parts) behaves as before: the list.
   const openSection = (code: string | null) => {
     setChip(code);
     setQ("");
     setTab("find");
+    const s = code ? sections.find((x) => x.code === code) : null;
+    if (s?.diagram) openDiagram(s.diagram);
+  };
+  /** The Find tab's category chips are the same act of choosing a section, so
+   *  they do the same thing. Tapping the chip that is already on clears it —
+   *  that is how you get back to the whole catalogue — and clearing opens
+   *  nothing. */
+  const selectChip = (code: string) => {
+    if (chip === code) { setChip(null); return; }
+    openSection(code);
   };
 
   const homeView = (
@@ -967,7 +1127,7 @@ const parseRand = (s: string): number => {
           <button className={"mb-chip" + (chip == null ? " on" : "")} onClick={() => setChip(null)}>All</button>
           {cats.map((c) => (
             <button key={c.id} className={"mb-chip" + (chip === c.code ? " on" : "")}
-              title={c.name} onClick={() => setChip(chip === c.code ? null : c.code)}>
+              title={c.name} onClick={() => selectChip(c.code)}>
               {c.name}
             </button>
           ))}
@@ -975,26 +1135,13 @@ const parseRand = (s: string): number => {
       )}
 
       <div className="mb-body">
-        {/* Came in from a section card: lead with that section's exploded view,
-            tappable into the zoom viewer. This is the "and then it breaks
-            down" half of the home page. */}
-        {!hits && chip && (() => {
-          const s = sections.find((x) => x.code === chip);
-          if (!s?.diagram) return null;
-          return (
-            <div className="mb-dgm" role="button" style={{ marginTop: 4 }}
-              onClick={() => openDiagram(s.diagram!)}>
-              <img src={assetUrl(s.diagram)} alt={s.name} loading="lazy" />
-              <span className="mb-zoomtag">⤢</span>
-              <div className="mb-dgm-cap">
-                <span>
-                  <div className="mb-dgm-k">Section</div>
-                  <div className="mb-dgm-v">{s.name}</div>
-                </span>
-              </div>
-            </div>
-          );
-        })()}
+        {/* There was a PREVIEW TILE here: a zoomed-in crop of the section
+            drawing, no markers, no parts list, which you then had to tap to
+            reach the real viewer. Ian, 2026-09-25: choosing a section must land
+            on the viewer itself. It does now — openSection() and the chips open
+            it directly (see selectChip) — so the tile is gone rather than
+            demoted. Closing the viewer drops you here, on this section's parts,
+            which is what the tile was standing in front of. */}
         <div className="mb-count">
           {hits ? `${cards.length} match${cards.length === 1 ? "" : "es"}` : `${cards.length} parts`}
         </div>
@@ -1011,8 +1158,17 @@ const parseRand = (s: string): number => {
               <span className="mb-csku mb-mono">{p.sku}</span>
               {/* A client's device holds no bins and no stock movements, so
                   these would not merely be private — they would be WRONG
-                  (every count would read zero). Omitted, not blanked. */}
-              {!isClient && (
+                  (every count would read zero). Omitted, not blanked. What a
+                  customer DOES get is in_stock (0050): yes/no, never a
+                  number, derived on the server. Unknown (not synced yet)
+                  shows nothing rather than "out". */}
+              {isClient ? (
+                p.in_stock != null && (
+                  <span className="mb-cmeta">
+                    <span className={"mb-qty" + (p.in_stock ? "" : " zero")}>{p.in_stock ? "In stock" : "Out of stock"}</span>
+                  </span>
+                )
+              ) : (
                 <span className="mb-cmeta">
                   {p.bin && <span className="mb-bin"><IcPin />{p.bin}</span>}
                   <span className={"mb-qty" + qtyClass(p.qty_on_hand)}>
@@ -1186,8 +1342,8 @@ const parseRand = (s: string): number => {
   const STAGES: { key: string; label: string; hint: string }[] = [
     { key: "to_price",      label: "Needs pricing",   hint: "came in from a customer" },
     { key: "with_customer", label: "With the customer", hint: "quoted, waiting on their answer" },
-    { key: "to_pick",       label: "Ready to pick",   hint: "accepted — pull the stock" },
-    { key: "fulfilled",     label: "Goods out",       hint: "stock taken — invoice once paid" },
+    { key: "to_pick",       label: "Accepted",        hint: "sales order in Zoho — check it is paid there before the goods go" },
+    { key: "fulfilled",     label: "Goods out",       hint: "stock taken — Zoho issues the invoice from the sales order" },
   ];
 
   const ordersView = (
@@ -1202,6 +1358,57 @@ const parseRand = (s: string): number => {
         </div>
       </div>
       <div className="mb-body">
+        {/* 0053 — COUNTER SALE.
+            Appears only once something is on the counter, so the desk is not
+            cluttered the rest of the time. It raises exactly the same kind of
+            request a customer would, against a customer you name, and then
+            lands in "To price" below where the normal flow takes over. */}
+        {cart.length > 0 && (
+          <div className="mb-card" style={{ borderColor: "var(--amber)", marginBottom: 14 }}>
+            <div className="mb-cbody">
+              <div className="mb-count" style={{ color: "var(--amber)", paddingTop: 0 }}>
+                Counter sale · {cart.length} part{cart.length === 1 ? "" : "s"}
+              </div>
+
+              <select className="mb-hs-in" style={{ width: "100%", marginBottom: 10 }}
+                value={counterCustomer ?? ""}
+                onChange={(e) => setCounterCustomer(e.target.value ? Number(e.target.value) : null)}>
+                <option value="">— which customer is this for? —</option>
+                {customers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+
+              <div className="mb-rows">
+                {cart.map((c) => (
+                  <div className="mb-row" key={c.id}>
+                    <span style={{ flex: 1, minWidth: 0 }}>
+                      <div className="mb-cname">{c.name}</div>
+                      <div className="mb-csku mb-mono">{c.sku}</div>
+                    </span>
+                    <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <button className="mb-chip" onClick={() => setCartQty(c.id, c.qty - 1)}>−</button>
+                      <b style={{ minWidth: 24, textAlign: "center" }}>{c.qty}</b>
+                      <button className="mb-chip" onClick={() => setCartQty(c.id, c.qty + 1)}>+</button>
+                    </span>
+                  </div>
+                ))}
+              </div>
+
+              <textarea className="mb-note-in" rows={2} value={note} maxLength={2000}
+                placeholder="Vehicle, urgency, who asked — anything the desk should see…"
+                onChange={(e) => setNote(e.target.value)} />
+
+              <div className="mb-actions" style={{ marginTop: 10 }}>
+                <button className="mb-btn s" disabled={sending}
+                  onClick={() => { setCart([]); setNote(""); setCounterCustomer(null); }}>Clear</button>
+                <button className="mb-btn p" disabled={sending || counterCustomer == null}
+                  onClick={() => void sendCounterSale()}>
+                  {sending ? "Raising…" : counterCustomer == null ? "Pick a customer" : "Raise request"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {orders === null && !ordersErr && <div className="mb-count">Loading…</div>}
         {ordersErr && (
           <div className="mb-empty">
@@ -1291,11 +1498,20 @@ const parseRand = (s: string): number => {
                           </div>
                         )}
                         {o.stage === "to_pick" && (
+                          <div className="mb-row">
+                            <span className="mb-rk">Stock</span>
+                            <span className="mb-rv">held for this order since acceptance · <button className="mb-chip" disabled={savingOrder} onClick={() => { void cancelOrder(o); }}>Cancel order &amp; release</button></span>
+                          </div>
+                        )}
+                        {o.stage === "to_pick" && (
                           <>
                             <div className="mb-row">
                               <span className="mb-rk">Accepted</span>
                               <span className="mb-rv" style={{ color: "var(--green)" }}>
                                 {o.client_responded_at ? timeAgo(o.client_responded_at) : "by the customer"}
+                                {o.zoho_salesorder_number
+                                  ? <> · sales order <b className="mb-mono">{o.zoho_salesorder_number}</b> in Zoho Books — payment and the tax invoice live there</>
+                                  : <> · <span style={{ color: "var(--amber)" }}>no Zoho sales order on this one (accepted before the Zoho link) — raise it by hand</span></>}
                               </span>
                             </div>
                             <div className="mb-row">
@@ -1505,7 +1721,18 @@ const parseRand = (s: string): number => {
           <>
             <div className="mb-count" style={{ marginTop: 22 }}>Sent to us</div>
             {mine.map((r) => {
-              const awaiting = r.status === "quote" && r.priced;
+              // What the customer is actually looking at, once anything they
+              // have just removed is taken out. Every number below is derived
+              // from THIS list, so the total can never disagree with the lines
+              // above it while a removal is in flight.
+              const lines = r.lines.filter((l) => !dropped.has(l.id));
+              const total = lines.reduce((t, l) => t + (l.unit_price_minor ?? 0) * l.qty, 0);
+              const priced = lines.length > 0 && lines.every((l) => (l.unit_price_minor ?? 0) > 0);
+              const awaiting = r.status === "quote" && priced;
+              // Removable while it is still a quote. Not the last one: a quote
+              // must keep an item, and turning the whole thing down is Decline
+              // (0051 refuses it server-side too — this only saves the trip).
+              const canDrop = r.status === "quote" && lines.length > 1;
               return (
                 <div className="mb-rows" key={r.id} style={{ marginBottom: 12 }}>
                   <div className="mb-row">
@@ -1513,14 +1740,14 @@ const parseRand = (s: string): number => {
                     <span className="mb-rv">
                       {awaiting ? <b style={{ color: "var(--amber)" }}>Quote ready</b>
                         : r.status === "quote" ? "With us for pricing"
-                        : r.status === "confirmed" ? <b style={{ color: "var(--green)" }}>Accepted</b>
+                        : r.status === "confirmed" ? <b style={{ color: "var(--green)" }}>Accepted{r.zoho_salesorder_number ? ` · sales order ${r.zoho_salesorder_number}` : ""}</b>
                         : r.status === "cancelled" ? "Declined"
                         : r.status === "fulfilled" ? "Ready for collection"
                         : r.status === "invoiced" ? "Invoiced"
                         : r.status}
                     </span>
                   </div>
-                  {r.lines.map((l) => (
+                  {lines.map((l) => (
                     <div className="mb-row" key={l.id}>
                       <span style={{ flex: 1, minWidth: 0 }}>
                         <div className="mb-cname">{l.qty} × {l.name}</div>
@@ -1530,12 +1757,36 @@ const parseRand = (s: string): number => {
                       {(l.unit_price_minor ?? 0) > 0 && (
                         <span className="mb-rv">{fmtR((l.unit_price_minor ?? 0) * l.qty)}</span>
                       )}
+                      {/* Ian, 2026-09-25: let them drop what they do not want
+                          before accepting. Disabled on the last remaining line
+                          — that is what Decline is for. */}
+                      {r.status === "quote" && (
+                        <button className="mb-lx" aria-label={`Remove ${l.name} from this quote`}
+                          title={canDrop ? `Remove ${l.name}` : "The last item cannot be removed — use Decline to turn the whole quote down"}
+                          disabled={!canDrop || droppingLine === l.id || answering === r.id}
+                          onClick={() => { void dropLine(r, l.id, l.name); }}>✕</button>
+                      )}
                     </div>
                   ))}
-                  {r.priced && (
+                  {priced && (
                     <div className="mb-row">
                       <span className="mb-rk">Total</span>
-                      <span className="mb-rv"><b>{fmtR(r.total_minor)}</b> excl VAT</span>
+                      <span className="mb-rv"><b>{fmtR(total)}</b> excl VAT</span>
+                    </div>
+                  )}
+                  {/* No "n items removed" banner: r.lines stops carrying a
+                      removed line as soon as the sync pass lands, so such a
+                      banner would appear for a second and then vanish, which
+                      reads as a glitch. The line going, the total changing and
+                      the toast are the confirmation. */}
+                  {r.status === "confirmed" && r.zoho_salesorder_number && (
+                    <div className="mb-note" style={{ margin: "6px 0 0" }}>
+                      Your sales order <b className="mb-mono">{r.zoho_salesorder_number}</b> has been raised in our accounts system — we will send you the proforma from there. The tax invoice follows once payment is received.
+                    </div>
+                  )}
+                  {awaiting && (blockers[r.id]?.length ?? 0) > 0 && (
+                    <div className="mb-note" style={{ margin: "6px 0 0" }}>
+                      <b>Not quite ready to accept:</b> {blockers[r.id].map((b) => b.message).join(" ")}
                     </div>
                   )}
                   {awaiting && (
@@ -1544,9 +1795,9 @@ const parseRand = (s: string): number => {
                         disabled={answering === r.id}
                         onClick={() => { void answerQuote(r, false); }}>Decline</button>
                       <button className="mb-btn p" style={{ height: 46 }}
-                        disabled={answering === r.id}
+                        disabled={answering === r.id || (blockers[r.id]?.length ?? 0) > 0}
                         onClick={() => { void answerQuote(r, true); }}>
-                        {answering === r.id ? "Sending…" : "Accept quote"}
+                        {answering === r.id ? "Raising the sales order…" : "Accept quote"}
                       </button>
                     </div>
                   )}
@@ -1571,11 +1822,51 @@ const parseRand = (s: string): number => {
   // ─── part sheet ────────────────────────────────────────────────────────────
 
   const d = detail;
-  const hero = d?.images.find((i) => i.is_primary)?.path ?? d?.images[0]?.path ?? null;
+  // The part's photos, primary first — the order the carousel walks and the
+  // order the lightbox inherits, so "photo 2 of 4" means the same thing in both.
+  const photos = useMemo(() => {
+    if (!d) return [];
+    return [...d.images].sort((a, b) => Number(b.is_primary) - Number(a.is_primary));
+  }, [d]);
+  // Clamped rather than corrected by an effect: staff can retire a photo from
+  // the admin gallery while the sheet is open, and shot would then point past
+  // the end for one render. `at` can never be out of range.
+  const at = Math.min(shot, Math.max(0, photos.length - 1));
+  const hero = photos[at]?.path ?? null;
   const mainBin = d?.stock.find((s) => s.bin)?.bin ?? null;
 
+  // The diagram on a part's own page is a thumbnail, and it has never carried
+  // markers — Ian read that as "the hotspots are gone" on 7 Oct. Full marker
+  // sets belong in the viewer (they need the zoom to be legible at all), but
+  // the ONE marker that matters here — this part's own position on the drawing
+  // — is worth showing, so the thumbnail answers "where is it" on its own.
+  // Percentages, because hotspots are stored in the drawing's natural frame
+  // and the thumbnail is rendered at whatever width the sheet happens to be.
+  const [spot, setSpot] = useState<{ x: number; y: number; label: string } | null>(null);
+  useEffect(() => {
+    setSpot(null);
+    const path = d?.diagram_image;
+    if (!path || !d) return;
+    let live = true;
+    api.listHotspots(path).then((r) => {
+      if (!live || !r.img_w || !r.img_h) return;      // no frame, no honest placement
+      const h = r.hotspots.find((x) => x.part_id === d.id);
+      if (!h) return;
+      setSpot({ x: (h.x / r.img_w) * 100, y: (h.y / r.img_h) * 100, label: h.item_no ?? "•" });
+    }).catch((e) => console.error("hotspots:", e));
+    return () => { live = false; };
+  }, [d?.diagram_image, d?.id]);
+
+  // 2026-09-26: "Open" in the diagram parts list appeared to do nothing. It was
+  // doing its job — openPart() fetched the part and opened this sheet — but the
+  // sheet is z-index 40 and the diagram lightbox (.mb-lb) is 70, so it opened
+  // UNDERNEATH the diagram, invisibly. The Lightbox caller dodged this by
+  // closing itself first; the DiagramView caller deliberately does not, because
+  // closing the drawing to read a part and having to navigate back to it is the
+  // behaviour Ian asked us to get rid of. So the sheet rises above the drawing
+  // instead, and closing it puts you back on the same drawing, same zoom.
   const sheet = (
-    <div className={"mb-sheet" + (sheetOpen ? " open" : "")}>
+    <div className={"mb-sheet" + (sheetOpen ? " open" : "") + (diagram || viewer || hotspotEditor ? " over-lightbox" : "")}>
       {d && (
         <>
           <div className="mb-shead">
@@ -1583,15 +1874,44 @@ const parseRand = (s: string): number => {
             <span className="mb-shead-t">{d.category_name ?? "Part"}</span>
           </div>
           <div className="mb-sbody">
+            {/* One photo: exactly what it always was. More than one: a carousel
+                (Ian, 2026-09-25). The big image still opens the lightbox, at
+                the photo you are looking at — `photos` is the order both use,
+                so "photo 2 of 4" means the same in each. Today only one part in
+                the catalogue has a second live photo (CTP-CBY-006-C); the other
+                158 have one each and are untouched by this. */}
             {hero && (
-              <div className="mb-hero" role="button"
-                onClick={() => setViewer({
-                  items: d.images.map((i, n) => ({ path: i.path, label: `${d.sku} · photo ${n + 1} of ${d.images.length}` })),
-                  idx: Math.max(0, d.images.findIndex((i) => i.path === hero)),
-                })}>
-                <PhotoImg path={hero} alt={d.name} />
-                <span className="mb-zoomtag">⤢</span>
-              </div>
+              <>
+                <div className="mb-hero" role="button"
+                  onClick={() => setViewer({
+                    items: photos.map((i, n) => ({ path: i.path, label: `${d.sku} · photo ${n + 1} of ${photos.length}` })),
+                    idx: at,
+                  })}>
+                  <PhotoImg path={hero} alt={d.name} />
+                  <span className="mb-zoomtag">⤢</span>
+                  {photos.length > 1 && (
+                    <>
+                      <button className="mb-carr prev" aria-label="Previous photo"
+                        onClick={(e) => { e.stopPropagation(); setShot((at - 1 + photos.length) % photos.length); }}>‹</button>
+                      <button className="mb-carr next" aria-label="Next photo"
+                        onClick={(e) => { e.stopPropagation(); setShot((at + 1) % photos.length); }}>›</button>
+                      <span className="mb-carcount">{at + 1} / {photos.length}</span>
+                    </>
+                  )}
+                </div>
+                {photos.length > 1 && (
+                  <div className="mb-carstrip" role="tablist" aria-label="Photos of this part">
+                    {photos.map((i, n) => (
+                      <button key={i.id} role="tab" aria-selected={n === at}
+                        aria-label={`Photo ${n + 1} of ${photos.length}`}
+                        className={"mb-carthumb" + (n === at ? " on" : "")}
+                        onClick={() => setShot(n)}>
+                        <PhotoImg path={i.path} alt="" />
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </>
             )}
             <h1 className="mb-pname">{d.name}</h1>
             <div className="mb-psku mb-mono">
@@ -1599,11 +1919,22 @@ const parseRand = (s: string): number => {
             </div>
 
             {isClient ? (
-              <div className="mb-box">
-                <div className="mb-k">Part number</div>
-                <div className="mb-v mono-pn">{d.sku}</div>
-                <div className="mb-sub">Add it to your request and we'll quote you</div>
-              </div>
+              <>
+                <div className="mb-box">
+                  <div className="mb-k">Part number</div>
+                  <div className="mb-v mono-pn">{d.catalogue_pn ?? d.sku}</div>
+                  <div className="mb-sub">Add it to your request and we'll quote you</div>
+                </div>
+                {/* 0050: availability without the number. Stacked, not beside
+                    the part number — a long OEM number needs the width. */}
+                {d.in_stock != null && (
+                  <div className="mb-box" style={{ marginTop: 8 }}>
+                    <div className="mb-k">Availability</div>
+                    <div className={"mb-v" + (d.in_stock ? " g" : " z")} style={{ fontSize: 18 }}>{d.in_stock ? "In stock" : "Out of stock"}</div>
+                    <div className="mb-sub">{d.in_stock ? "Ready to quote" : "We'll quote a lead time"}</div>
+                  </div>
+                )}
+              </>
             ) : (
               <div className="mb-2col">
                 <div className="mb-box hi">
@@ -1623,6 +1954,11 @@ const parseRand = (s: string): number => {
               <div className="mb-dgm" role="button"
                 onClick={() => openDiagram(d.diagram_image!, d.id)}>
                 <img src={assetUrl(d.diagram_image)} alt="Section diagram" loading="lazy" />
+                {spot && (
+                  <span className="mb-dgm-spot" style={{ left: `${spot.x}%`, top: `${spot.y}%` }}>
+                    {spot.label}
+                  </span>
+                )}
                 <span className="mb-zoomtag">⤢</span>
                 <div className="mb-dgm-cap">
                   {d.diagram_item && <span className="mb-itembdg">{d.diagram_item}</span>}
@@ -1642,7 +1978,9 @@ const parseRand = (s: string): number => {
               {!isClient && d.stock.filter((s) => s.on_hand !== 0 || s.bin).map((s) => (
                 <div className="mb-row" key={s.location_id}>
                   <span className="mb-rk">{s.location_code}</span>
-                  <span className="mb-rv">{s.on_hand} on hand{s.bin ? ` · bin ${s.bin}` : ""}</span>
+                  <span className="mb-rv">
+                    {s.on_hand} on hand{(s.reserved ?? 0) > 0 && <span style={{ color: "var(--amber)" }}> · {s.reserved} held for orders · <b>{s.available}</b> free</span>}{s.bin ? ` · bin ${s.bin}` : ""}
+                  </span>
                 </div>
               ))}
               {!isClient && d.notes && <div className="mb-row"><span className="mb-rk">Notes</span><span className="mb-rv">{d.notes}</span></div>}
@@ -1725,10 +2063,24 @@ const parseRand = (s: string): number => {
               )
             ) : (
               <>
+                {/* 0053: the counter can build a request for a customer the same
+                    way the customer would, so the part sheet offers it here too.
+                    Issue 1 still takes stock out directly for a walk-in who is
+                    paying there and then; this is for "quote it to Denver". */}
+                {inCart(d.id) > 0 ? (
+                  <>
+                    <button className="mb-btn s" onClick={() => addToCart(d, -1)}>−</button>
+                    <button className="mb-btn s" style={{ flex: "0 0 110px" }}
+                      onClick={() => setTab("cart")}>{inCart(d.id)} on counter</button>
+                    <button className="mb-btn s" onClick={() => addToCart(d, 1)}>+</button>
+                  </>
+                ) : (
+                  <button className="mb-btn s" onClick={() => addToCart(d, 1)}>Add to order</button>
+                )}
                 <button className="mb-btn p" onClick={() => issueOne(d)}
                   disabled={d.stock.length === 0}>Issue 1</button>
                 <button className="mb-btn s" onClick={() => setCounterOpen(true)}
-                  disabled={d.stock.length === 0}>Count / receive</button>
+                  disabled={d.stock.length === 0}>Count</button>
               </>
             )}
           </div>
@@ -1763,8 +2115,16 @@ const parseRand = (s: string): number => {
           onClose={() => { setDiagram(null); if (/^#dg=/.test(location.hash)) history.replaceState(null, "", location.pathname + location.search); }}
           onOpenPart={(pid) => { void openPart(pid); }}
           onEditMarkers={(path, label) => setHotspotEditor({ path, label })}
-          onAddToRequest={isClient ? (p: DiagramPart, n: number) => { addToCart({ id: p.id, sku: p.sku, name: p.name } as Detail, n); showToast({ text: `${p.sku} × ${n} added to your request` }); } : undefined}
-          inRequest={isClient ? inCart : undefined} />
+          /* 0053: staff get this too now — building an order off the drawing is
+             exactly how a counter conversation goes ("the hinge, and the lock").
+             Wording differs because for staff it is somebody else's order. */
+          onAddToRequest={(p: DiagramPart, n: number) => {
+            addToCart({ id: p.id, sku: p.sku, name: p.name } as Detail, n);
+            showToast({ text: isClient
+              ? `${p.sku} × ${n} added to your request`
+              : `${p.sku} × ${n} on the counter` });
+          }}
+          inRequest={inCart} />
       )}
       {viewer && !hotspotEditor && (
         <Lightbox items={viewer.items} start={viewer.idx} onClose={() => setViewer(null)}
@@ -1943,7 +2303,9 @@ function Lightbox({ items, start, onClose, canEdit, onOpenPart, onEditMarkers }:
   )), [marks, frame, onOpenPart]);
 
   return (
-    <div className="mb-lb">
+    // mb-lb-top: this viewer is opened from the part sheet, so it has to sit
+    // above it (sheet 80, this 90). Without it the photo lands behind the sheet.
+    <div className="mb-lb mb-lb-top">
       <div className="mb-lb-head">
         <button className="mb-back" onClick={onClose}>✕</button>
         <span className="mb-lb-cap">{item.label}</span>
