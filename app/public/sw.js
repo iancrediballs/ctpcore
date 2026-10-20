@@ -42,7 +42,7 @@
 //   non-http(s) scheme. So the guard WAS the whole bug on that count. It is
 //   still wrapped in a catch below, because quota exhaustion is real and an
 //   image that fails to cache must still be shown.
-const CACHE = "ctp-core-v17";   // v17: final-sprint viewer/counter/invite + Multicat codes + Settings → Zoho, together again (2026-10-20)
+const CACHE = "ctp-core-v18";   // v18: accept -> Zoho sales order on the Vault token; invoice made from it (2026-10-20)
 const ASSET_HOST = "hkzmydowyiajkbakxfkj.supabase.co";
 
 // ── TIMEOUTS, and the mistake the first version of this file made with them.

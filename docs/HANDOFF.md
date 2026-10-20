@@ -63,3 +63,22 @@ id (Sept design, accept-quote edge fn). The 19 Oct go-live design says invoices
 only, no sales orders. accept-quote still reads its token from
 integration_secret (Sept token), not the new Vault token. SO-00001..00007 were
 created in Zoho by it for test orders now deleted in CTP — check Zoho.
+
+## 20 Oct — accept -> Zoho sales order, wired properly (Ian: "sales order as before")
+- 0054 applied on live (dry run first): accept_quote/quote_accept_check use zoho_item
+  (the 19 Oct link; part.zoho_item_id re-synced — it had drifted on 5 parts), no SO
+  while sending is off / before push_from, SO required from go-live on; "customer
+  not in Zoho" no longer blocks (contact matched/created); sales_order.zoho_so_status /
+  zoho_so_status_at / zoho_so_error; zoho_push_log doc_type 'salesorder'.
+- server/edge/_shared/zoho.ts: one Zoho module (Vault token, Books, contacts, SKU,
+  Standard Rate VAT, rebate as line discount, salesOrderFor, linkToSalesOrder).
+  accept-quote and zoho-push use it. accept-quote/zoho.ts, zoho-connect and the
+  integration_secret token path are retired.
+- Invoice from SO: lines carry salesorder_item_id; SO's contact; if Zoho refuses a
+  draft SO, it is marked open then and logged. Rebate now on invoice lines too (was
+  missing: a rebated order would have over-invoiced).
+- Status read-back covers sales orders. Live test: + draft SO, + invoice from SO,
+  all deleted after.
+- Tests: tests_0054_local.js 15/15; all suites pass.
+- TOKEN SCOPE: current token lacks ZohoBooks.salesorders (401). New code needed with
+  the scope list in docs/05.

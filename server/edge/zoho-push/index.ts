@@ -33,23 +33,9 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient, type SupabaseClient } from "jsr:@supabase/supabase-js@2";
 
-const env = (k: string) => Deno.env.get(k) ?? "";
-let DC = env("ZOHO_DC") || "com";
-const ORG = env("ZOHO_ORG_ID");
-const API = (env("ZOHO_API") || "inventory").toLowerCase();
-let BASE = "";
+import { env, zohoInit, zohoMissing, Blocked, zoho, rands, jhbDate, findByReference, resolveContact, itemIds, taxIdFor,
+         rebateDiscount, linkToSalesOrder, salesOrderFor, deleteSalesOrder, type Logger } from "../_shared/zoho.ts";
 
-// Refresh token from Vault (zoho-auth writes it), DC from zoho_config.dc;
-// the env secrets remain only as a fallback. ZOHO_API picks Books or Inventory.
-let REFRESH = "";
-async function zohoInit(db: SupabaseClient) {
-  const { data: tok } = await db.rpc("zoho_secret_get", { p_name: "zoho_refresh_token" });
-  const { data: c } = await db.from("zoho_config").select("dc").eq("id", 1).maybeSingle();
-  REFRESH = (tok as string | null) || env("ZOHO_REFRESH_TOKEN");
-  DC = c?.dc || env("ZOHO_DC") || "com";
-  const host = DC === "ca" ? "https://www.zohoapis.ca" : `https://www.zohoapis.${DC}`;
-  BASE = API === "books" ? `${host}/books/v3` : `${host}/inventory/v1`;
-}
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -59,143 +45,14 @@ const CORS = {
 const json = (b: unknown, status = 200) =>
   new Response(JSON.stringify(b), { status, headers: { ...CORS, "Content-Type": "application/json" } });
 
-class Blocked extends Error {}   // a rule refused the document: not retried blindly
-
-// ── Zoho HTTP ────────────────────────────────────────────────────────────────
-let token: string | null = null;
-async function zohoToken(): Promise<string> {
-  if (token) return token;
-  const p = new URLSearchParams({
-    refresh_token: REFRESH, client_id: env("ZOHO_CLIENT_ID"),
-    client_secret: env("ZOHO_CLIENT_SECRET"), grant_type: "refresh_token",
-  });
-  const accounts = DC === "ca" ? "https://accounts.zohocloud.ca" : `https://accounts.zoho.${DC}`;
-  const r = await fetch(`${accounts}/oauth/v2/token`, { method: "POST", body: p });
-  const b = await r.json().catch(() => ({}));
-  if (!r.ok || !b.access_token) {
-    throw new Error(`Zoho token refresh failed (${r.status}${b.error ? ", " + b.error : ""}). Check the Zoho secrets and ZOHO_DC.`);
-  }
-  return (token = b.access_token as string);
-}
-
-// deno-lint-ignore no-explicit-any
-async function zoho(method: string, path: string, query: Record<string, string> = {}, body?: unknown): Promise<any> {
-  const u = new URL(BASE + path);
-  u.searchParams.set("organization_id", ORG);
-  for (const [k, v] of Object.entries(query)) u.searchParams.set(k, v);
-  const r = await fetch(u, {
-    method,
-    headers: { Authorization: `Zoho-oauthtoken ${await zohoToken()}`, ...(body ? { "Content-Type": "application/json" } : {}) },
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  const b = await r.json().catch(() => ({}));
-  if (!r.ok || (b.code !== undefined && b.code !== 0)) {
-    throw new Error(`Zoho ${method} ${path} failed (${r.status}, code ${b.code ?? "?"}): ${b.message ?? "no message"}`);
-  }
-  return b;
-}
-
-const norm = (s: unknown) => String(s ?? "").trim().toLowerCase().replace(/\s+/g, " ");
-const vatOf = (c: Record<string, unknown>) =>
-  norm(c.tax_reg_no ?? c.vat_reg_no ?? c.tax_id ?? c.gst_no ?? "").replace(/[^0-9a-z]/g, "");
-const rands = (minor: number) => Math.round(minor) / 100;
-const jhbDate = (iso: string) =>
-  new Date(iso).toLocaleDateString("en-CA", { timeZone: "Africa/Johannesburg" }); // yyyy-mm-dd
-
-// Find our own document again by its reference. The list filter is not
-// documented for every field, so the result is ALWAYS re-checked exactly here:
-// a filter Zoho ignores can widen the result, never produce a false match.
-async function findByReference(kind: "invoices" | "bills", ref: string) {
-  for (const q of [{ reference_number: ref }, { search_text: ref }]) {
-    const b = await zoho("GET", `/${kind}`, { ...q, per_page: "200" });
-    const rows = (b[kind] ?? []) as Record<string, unknown>[];
-    const hit = rows.find((r) => String(r.reference_number ?? "") === ref);
-    if (hit) return hit;
-  }
-  return null;
-}
-
-// ── contacts ─────────────────────────────────────────────────────────────────
-type Party = { id: number; name: string; email: string | null; vat_no: string | null;
-               zoho_contact_id: string | null; code: string };
-let contactCache: Record<string, unknown>[] | null = null;
-async function allContacts() {
-  if (contactCache) return contactCache;
-  const out: Record<string, unknown>[] = [];
-  for (let page = 1; page <= 25; page++) {
-    const b = await zoho("GET", "/contacts", { page: String(page), per_page: "200" });
-    out.push(...(b.contacts ?? []));
-    if (!b.page_context?.has_more_page) break;
-  }
-  return (contactCache = out);
-}
-
-async function resolveContact(db: SupabaseClient, table: "customer" | "supplier", p: Party,
-                              type: "customer" | "vendor", log: Logger): Promise<string> {
-  if (p.zoho_contact_id) return p.zoho_contact_id;
-  const list = (await allContacts()).filter((c) => !c.contact_type || c.contact_type === type);
-  const email = norm(p.email), vat = norm(p.vat_no).replace(/[^0-9a-z]/g, ""), name = norm(p.name);
-  const hit =
-    (email && list.find((c) => norm(c.email) === email)) ||
-    (vat && list.find((c) => vatOf(c) === vat)) ||
-    list.find((c) => norm(c.contact_name) === name || norm(c.company_name) === name);
-  let id: string;
-  let how: string;
-  if (hit) {
-    id = String(hit.contact_id);
-    how = email && norm(hit.email) === email ? "email" : vat && vatOf(hit) === vat ? "VAT no." : "name";
-  } else {
-    const b = await zoho("POST", "/contacts", {}, {
-      contact_name: p.name, company_name: p.name, contact_type: type,
-      ...(p.email ? { contact_persons: [{ first_name: p.name, email: p.email, is_primary_contact: true }] } : {}),
-      notes: `Created by CTP Core (${table} ${p.code})${p.vat_no ? ` · VAT no. ${p.vat_no}` : ""}`,
-    });
-    id = String(b.contact.contact_id);
-    how = "created";
-    contactCache?.push(b.contact);
-  }
-  const { error } = await db.from(table).update({ zoho_contact_id: id }).eq("id", p.id);
-  if (error) throw new Error(`Saving Zoho contact id on ${table} ${p.code}: ${error.message}`);
-  await log({ doc_type: "contact", ctp_id: p.id, ctp_ref: `${table}:${p.code}`, action: how === "created" ? "create" : "link",
-              ok: true, zoho_id: id, message: `${p.name} → Zoho ${type} (${how})` });
-  return id;
-}
-
-// ── items and tax ────────────────────────────────────────────────────────────
-async function itemIds(db: SupabaseClient, partIds: number[]) {
-  const { data, error } = await db.from("zoho_item").select("zoho_item_id, part_id, status").in("part_id", partIds);
-  if (error) throw new Error(`zoho_item: ${error.message}`);
-  const m = new Map<number, string>();
-  for (const r of data ?? []) if (r.status !== "inactive") m.set(r.part_id, r.zoho_item_id);
-  return m;
-}
-
-let taxCache: Record<string, unknown>[] | null = null;
-async function taxIdFor(bps: number, configured: string | null): Promise<string | undefined> {
-  if (bps <= 0) return undefined;
-  if (configured) return configured;
-  if (!taxCache) taxCache = ((await zoho("GET", "/settings/taxes")).taxes ?? []) as Record<string, unknown>[];
-  // Several Zoho taxes share 15% ("Change in use …", accommodation, export).
-  // Only the default / "Standard Rate" one is right for a normal sale or bill.
-  const atRate = taxCache.filter((x) => Math.round(Number(x.tax_percentage) * 100) === bps);
-  const t = atRate.find((x) => x.is_default_tax === true) ?? atRate.find((x) => /^standard/i.test(String(x.tax_name)))
-         ?? (atRate.length === 1 ? atRate[0] : undefined);
-  if (!t) throw new Blocked(`No Zoho tax at ${(bps / 100).toFixed(2)}% — create it in Zoho or set the tax id in Settings → Zoho.`);
-  return String(t.tax_id);
-}
-
-// ── logging ──────────────────────────────────────────────────────────────────
-type LogRow = { doc_type: string; ctp_id?: number | null; ctp_ref?: string | null; action: string;
-                ok: boolean; zoho_id?: string | null; message?: string | null };
-type Logger = (r: LogRow) => Promise<void>;
 
 // ── one invoice ──────────────────────────────────────────────────────────────
 // deno-lint-ignore no-explicit-any
 async function pushInvoice(db: SupabaseClient, cfg: any, id: number, log: Logger) {
   const { data: o, error } = await db.from("sales_order")
-    .select("id, number, status, invoice_no, invoiced_at, tax_rate_bps, currency, notes, zoho_invoice_id, zoho_status, zoho_pushed_at, " +
+    .select("id, number, status, invoice_no, invoiced_at, tax_rate_bps, currency, notes, zoho_invoice_id, zoho_status, zoho_pushed_at, zoho_salesorder_id, " +
             "customer:customer_id(id, code, name, email, vat_no, zoho_contact_id), " +
-            "lines:sales_line(qty, unit_price_minor, deleted_at, part:part_id(id, sku, name))")
+            "lines:sales_line(qty, unit_price_minor, rebate_pct, deleted_at, part:part_id(id, sku, name))")
     .eq("id", id).single();
   if (error || !o) throw new Blocked(`Order ${id} not found`);
   const ref = `CTP-INV-${o.invoice_no}`;
@@ -216,6 +73,7 @@ async function pushInvoice(db: SupabaseClient, cfg: any, id: number, log: Logger
   try {
     const existing = await findByReference("invoices", ref);
     let inv = existing;
+    let soNote = "";
     if (!existing) {
       const lines = (o.lines ?? []).filter((l: { deleted_at: string | null }) => !l.deleted_at);
       if (!lines.length) throw new Blocked(`${o.number} has no lines`);
@@ -223,20 +81,46 @@ async function pushInvoice(db: SupabaseClient, cfg: any, id: number, log: Logger
       const missing = lines.filter((l: { part: { id: number } }) => !ids.get(l.part.id)).map((l: { part: { sku: string } }) => l.part.sku);
       if (missing.length) throw new Blocked(`Not linked to a Zoho item: ${missing.join(", ")} — run Settings → Zoho → Check Zoho`);
       const taxId = await taxIdFor(o.tax_rate_bps ?? 0, cfg.tax_id);
-      const customerId = await resolveContact(db, "customer", o.customer, "customer", log);
+      let lineItems = lines.map((l: { qty: number; unit_price_minor: number; rebate_pct: number | null; part: { id: number; sku: string; name: string } }) => ({
+        item_id: ids.get(l.part.id), quantity: l.qty, rate: rands(l.unit_price_minor),
+        description: l.part.sku, ...(taxId ? { tax_id: taxId } : {}), ...rebateDiscount(l.rebate_pct),
+      }));
+      // Accepted with a Zoho sales order: the invoice is converted FROM it
+      // (lines carry salesorder_item_id), for the sales order's own contact.
+      let customerId: string;
+      const so = o.zoho_salesorder_id ? await linkToSalesOrder(o.zoho_salesorder_id, lineItems) : null;
+      if (so) {
+        lineItems = so.lines; customerId = so.customer_id;
+        soNote = ` from sales order (${so.linked}/${lineItems.length} lines linked)`;
+      } else {
+        if (o.zoho_salesorder_id) {
+          await log({ doc_type: "salesorder", ctp_id: id, ctp_ref: o.number, action: "missing", ok: false, zoho_id: o.zoho_salesorder_id,
+                      message: `${o.number}: its Zoho sales order is gone (deleted in Zoho) — invoicing without it` });
+          soNote = " — sales order deleted in Zoho, invoiced without it";
+        }
+        customerId = await resolveContact(db, "customer", o.customer, "customer", log);
+      }
       const body = {
         customer_id: customerId,
         ...(cfg.use_ctp_invoice_number ? { invoice_number: o.invoice_no } : {}),
         reference_number: ref,
         date: jhbDate(o.invoiced_at),
         is_inclusive_tax: false,
-        line_items: lines.map((l: { qty: number; unit_price_minor: number; part: { id: number; sku: string; name: string } }) => ({
-          item_id: ids.get(l.part.id), quantity: l.qty, rate: rands(l.unit_price_minor),
-          description: l.part.sku, ...(taxId ? { tax_id: taxId } : {}),
-        })),
+        line_items: lineItems,
         notes: `CTP Core order ${o.number}`,
       };
-      const b = await zoho("POST", "/invoices", cfg.use_ctp_invoice_number ? { ignore_auto_number_generation: "true" } : {}, body);
+      const q = cfg.use_ctp_invoice_number ? { ignore_auto_number_generation: "true" } : {};
+      let b;
+      try { b = await zoho("POST", "/invoices", q, body); }
+      catch (e) {
+        // Zoho may refuse to invoice a DRAFT sales order. Then — and only then —
+        // the order is confirmed (open) in Zoho: it is being invoiced now.
+        if (!so || so.status !== "draft" || !/sales ?order|draft|status/i.test(e instanceof Error ? e.message : "")) throw e;
+        await zoho("POST", `/salesorders/${o.zoho_salesorder_id}/status/open`);
+        await log({ doc_type: "salesorder", ctp_id: id, ctp_ref: o.number, action: "update", ok: true, zoho_id: o.zoho_salesorder_id,
+                    message: `${o.number}: Zoho would not invoice a draft sales order, so it was marked open to invoice it` });
+        b = await zoho("POST", "/invoices", q, body);
+      }
       inv = b.invoice;
       if (cfg.invoice_as_draft === false) await zoho("POST", `/invoices/${inv!.invoice_id}/status/sent`);
     }
@@ -247,7 +131,7 @@ async function pushInvoice(db: SupabaseClient, cfg: any, id: number, log: Logger
     }).eq("id", id);
     if (e2) throw new Error(`Zoho invoice ${inv!.invoice_id} CREATED but saving its id failed: ${e2.message}. The next push will find it by ${ref}.`);
     await log({ doc_type: "invoice", ctp_id: id, ctp_ref: o.invoice_no, action: existing ? "found_existing" : "create",
-                ok: true, zoho_id: String(inv!.invoice_id), message: `${o.number} → Zoho invoice ${inv!.invoice_number} (${status})` });
+                ok: true, zoho_id: String(inv!.invoice_id), message: `${o.number} → Zoho invoice ${inv!.invoice_number} (${status})${soNote}` });
     return { ref, zoho_id: String(inv!.invoice_id), number: inv!.invoice_number, status, already: !!existing };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -332,7 +216,7 @@ async function pushBill(db: SupabaseClient, cfg: any, id: number, log: Logger) {
 // (no reliance on list filters) and writes Zoho's own status word onto the CTP
 // record. A document Michelle deleted in Zoho is marked 'deleted' — its Zoho
 // id is KEPT, so it is never silently re-created; re-sending is a deliberate act.
-const FINAL = ["paid", "void", "deleted"];
+const FINAL = ["paid", "void", "deleted", "invoiced", "closed"];
 async function refreshStatus(db: SupabaseClient, log: Logger, force: boolean) {
   const { data: cfg } = await db.from("zoho_config").select("status_synced_at").eq("id", 1).maybeSingle();
   const last = cfg?.status_synced_at ? new Date(cfg.status_synced_at).getTime() : 0;
@@ -341,20 +225,26 @@ async function refreshStatus(db: SupabaseClient, log: Logger, force: boolean) {
 
   const kinds = [
     { table: "sales_order", idCol: "zoho_invoice_id", numCol: "zoho_invoice_number", ref: "invoice_no",
-      path: "invoices", key: "invoice", numKey: "invoice_number", doc: "invoice" },
+      path: "invoices", key: "invoice", numKey: "invoice_number", doc: "invoice",
+      stCol: "zoho_status", atCol: "zoho_status_at", errCol: "zoho_error" },
+    { table: "sales_order", idCol: "zoho_salesorder_id", numCol: "zoho_salesorder_number", ref: "number",
+      path: "salesorders", key: "salesorder", numKey: "salesorder_number", doc: "salesorder",
+      stCol: "zoho_so_status", atCol: "zoho_so_status_at", errCol: "zoho_so_error" },
     { table: "goods_receipt", idCol: "zoho_bill_id", numCol: "zoho_bill_number", ref: "number",
-      path: "bills", key: "bill", numKey: "bill_number", doc: "bill" },
+      path: "bills", key: "bill", numKey: "bill_number", doc: "bill",
+      stCol: "zoho_status", atCol: "zoho_status_at", errCol: "zoho_error" },
   ] as const;
   const changes: { doc: string; ref: string; from: string | null; to: string }[] = [];
   let checked = 0;
   for (const k of kinds) {
     const { data: rows, error } = await db.from(k.table)
-      .select(`id, ${k.ref}, ${k.idCol}, ${k.numCol}, zoho_status`)
+      .select(`id, ${k.ref}, ${k.idCol}, ${k.numCol}, ${k.stCol}`)
       .not(k.idCol, "is", null).limit(200);
     if (error) throw new Error(`${k.table}: ${error.message}`);
     // deno-lint-ignore no-explicit-any
     for (const r of (rows ?? []) as any[]) {
-      if (FINAL.includes(r.zoho_status)) continue;
+      const was: string | null = r[k.stCol];
+      if (FINAL.includes(was ?? "")) continue;
       checked++;
       let status: string, number: string | null = r[k.numCol];
       try {
@@ -367,15 +257,15 @@ async function refreshStatus(db: SupabaseClient, log: Logger, force: boolean) {
         if (/\(404|does not exist|not found/i.test(msg)) status = "deleted";
         else { await log({ doc_type: k.doc, ctp_id: r.id, ctp_ref: r[k.ref], action: "status_error", ok: false, message: msg }); continue; }
       }
-      const patch: Record<string, unknown> = { zoho_status_at: new Date().toISOString() };
-      if (status !== r.zoho_status) {
-        patch.zoho_status = status;
-        patch.zoho_error = status === "deleted"
+      const patch: Record<string, unknown> = { [k.atCol]: new Date().toISOString() };
+      if (status !== was) {
+        patch[k.stCol] = status;
+        patch[k.errCol] = status === "deleted"
           ? "This document was DELETED in Zoho. It will not be re-sent automatically — ask the accountant."
           : null;
-        changes.push({ doc: k.doc, ref: r[k.ref], from: r.zoho_status, to: status });
+        changes.push({ doc: k.doc, ref: r[k.ref], from: was, to: status });
         await log({ doc_type: k.doc, ctp_id: r.id, ctp_ref: r[k.ref], action: "status", ok: status !== "deleted",
-                    zoho_id: r[k.idCol], message: `Zoho status ${r.zoho_status ?? "?"} → ${status}` });
+                    zoho_id: r[k.idCol], message: `Zoho status ${was ?? "?"} → ${status}` });
       }
       if (number && number !== r[k.numCol]) patch[k.numCol] = number;
       await db.from(k.table).update(patch).eq("id", r.id);
@@ -411,13 +301,35 @@ async function liveTest(db: SupabaseClient, cfg: any, log: Logger) {
       line_items: [{ item_id: link.zoho_item_id, quantity: 1, rate: 1, description: `TEST ${link.sku}` }],
       notes: "CTP CORE TEST - DELETE ME" })).bill;
     note("bill", String(bill.bill_id), `${bill.bill_number} status=${bill.status}`);
+    // sales order (draft) and the invoice converted from it
+    const soLine = { item_id: link.zoho_item_id, quantity: 1, rate: 1, description: `TEST ${link.sku}`, ...(taxId ? { tax_id: taxId } : {}) };
+    const so = (await zoho("POST", "/salesorders", {}, { customer_id: cust.contact_id, reference_number: `CTP-TEST-SO-${stamp}`,
+      date: today, is_inclusive_tax: false, line_items: [soLine], notes: "CTP CORE TEST - DELETE ME" })).salesorder;
+    note("salesorder", String(so.salesorder_id), `${so.salesorder_number} status=${so.status}`);
+    out.salesorder_default_status = so.status;
+    out.salesorder_found_by_reference = !!(await findByReference("salesorders", `CTP-TEST-SO-${stamp}`));
+    const linked = await linkToSalesOrder(String(so.salesorder_id), [soLine]);
+    const soInvBody = { customer_id: linked!.customer_id, reference_number: `CTP-TEST-SOINV-${stamp}`, date: today,
+      is_inclusive_tax: false, line_items: linked!.lines, notes: "CTP CORE TEST - DELETE ME" };
+    let soInv;
+    try { soInv = (await zoho("POST", "/invoices", {}, soInvBody)).invoice; out.draft_salesorder_invoiceable = true; }
+    catch (e) {
+      out.draft_salesorder_invoiceable = false;
+      out.draft_salesorder_refusal = e instanceof Error ? e.message : String(e);
+      await zoho("POST", `/salesorders/${so.salesorder_id}/status/open`);
+      soInv = (await zoho("POST", "/invoices", {}, soInvBody)).invoice;
+    }
+    note("invoice", String(soInv.invoice_id), `${soInv.invoice_number} from SO status=${soInv.status}`);
+    out.invoice_from_so_status = soInv.status;
+    out.salesorder_status_after_invoice = (await zoho("GET", `/salesorders/${so.salesorder_id}`)).salesorder?.status;
     out.invoice_default_status = inv.status;
     out.bill_default_status = bill.status;
     out.found_by_reference = !!(await findByReference("invoices", `CTP-TEST-${stamp}`));
   } finally {
     // delete in reverse: documents before the contacts they belong to
     for (const c of created.reverse()) {
-      const path = c.kind === "contact" ? `/contacts/${c.id}` : c.kind === "invoice" ? `/invoices/${c.id}` : `/bills/${c.id}`;
+      const path = c.kind === "contact" ? `/contacts/${c.id}` : c.kind === "invoice" ? `/invoices/${c.id}`
+                 : c.kind === "salesorder" ? `/salesorders/${c.id}` : `/bills/${c.id}`;
       try { await zoho("DELETE", path); (out.deleted as unknown[]).push(c); }
       catch (e) {
         // a delete Zoho refuses: void the document instead, and say so loudly
@@ -465,8 +377,7 @@ Deno.serve(async (req: Request) => {
     return json({ ok: true, skipped: "Sending to Zoho is off (Settings → Zoho). Nothing was sent." });
   }
   await zohoInit(db);
-  const missing = ["ZOHO_CLIENT_ID", "ZOHO_CLIENT_SECRET", "ZOHO_ORG_ID"].filter((k) => !env(k));
-  if (!REFRESH) missing.push("refresh token (run zoho-auth)");
+  const missing = zohoMissing();
   if (missing.length) return json({ ok: false, error: `Zoho is not connected yet. Missing secrets: ${missing.join(", ")}` }, 412);
 
   try {

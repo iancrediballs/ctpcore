@@ -94,8 +94,8 @@ type StaffOrder = {
   invoice_no: string | null; invoiced_at: string | null;
   zoho_invoice_number?: string | null; zoho_status?: string | null;
   zoho_status_at?: string | null; zoho_error?: string | null;
-  // 0047: the Zoho Books sales order raised when the customer accepted
-  zoho_salesorder_number?: string | null;
+  // 0047/0054: the Zoho Books sales order raised when the customer accepted, and its own status
+  zoho_salesorder_number?: string | null; zoho_so_status?: string | null; zoho_so_error?: string | null;
   client_response: string | null; client_responded_at: string | null;
   unpriced: number; total_minor: number;
   stage: "to_price" | "with_customer" | "to_pick" | "fulfilled" | string;
@@ -922,7 +922,9 @@ const parseRand = (s: string): number => {
       if (accept) {
         // Zoho sales order + stock hold, both or neither (accept-quote function).
         const res = await api.acceptQuote(r.id);
-        showToast({ text: `${r.number} accepted — sales order ${res.zoho_salesorder_number} raised. We'll be in touch with the proforma.` });
+        showToast({ text: res.zoho_salesorder_number
+          ? `${r.number} accepted — sales order ${res.zoho_salesorder_number} raised. We'll be in touch with the proforma.`
+          : `${r.number} accepted — your parts are reserved. We'll be in touch.` });
       } else {
         await api.respondToQuote(r.id, false);
         showToast({ text: `${r.number} declined.` });
@@ -1510,8 +1512,8 @@ const parseRand = (s: string): number => {
                               <span className="mb-rv" style={{ color: "var(--green)" }}>
                                 {o.client_responded_at ? timeAgo(o.client_responded_at) : "by the customer"}
                                 {o.zoho_salesorder_number
-                                  ? <> · sales order <b className="mb-mono">{o.zoho_salesorder_number}</b> in Zoho Books — payment and the tax invoice live there</>
-                                  : <> · <span style={{ color: "var(--amber)" }}>no Zoho sales order on this one (accepted before the Zoho link) — raise it by hand</span></>}
+                                  ? <> · sales order <b className="mb-mono">{o.zoho_salesorder_number}</b> in Zoho Books ({zohoStatusLabel(o.zoho_so_status ?? "draft", "salesorder").text}) — the invoice is made from it</>
+                                  : <> · <span style={{ color: "var(--amber)" }}>no Zoho sales order (accepted while Zoho sending was off) — the invoice goes to Zoho on its own</span></>}
                               </span>
                             </div>
                             <div className="mb-row">
@@ -1599,6 +1601,11 @@ const parseRand = (s: string): number => {
                         {o.zoho_error && (
                           <div className="mb-csku" style={{ color: "var(--bad, #c0392b)", padding: "6px 0" }}>
                             ✕ Zoho: {o.zoho_error}
+                          </div>
+                        )}
+                        {o.zoho_so_error && (
+                          <div className="mb-csku" style={{ color: "var(--bad, #c0392b)", padding: "6px 0" }}>
+                            ✕ Zoho sales order: {o.zoho_so_error}
                           </div>
                         )}
                         {o.notes && (

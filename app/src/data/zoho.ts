@@ -43,14 +43,17 @@ export async function refreshZohoStatus(force = false): Promise<{ ok: boolean; c
 
 /** How a Zoho status reads to staff. Zoho's own word is kept in the data;
  *  this is only the label. `doc` matters: an "open" bill is an approved one. */
-export function zohoStatusLabel(status: string | null | undefined, doc: "invoice" | "bill" = "invoice"):
+export function zohoStatusLabel(status: string | null | undefined, doc: "invoice" | "bill" | "salesorder" = "invoice"):
     { text: string; tone: "wait" | "ok" | "done" | "bad" } {
   switch (status) {
     case null: case undefined: case "": return { text: "Not in Zoho yet", tone: "wait" };
     case "pushing": return { text: "Sending to Zoho…", tone: "wait" };
     case "draft": return { text: "Zoho: Draft — awaiting accountant", tone: "wait" };
     case "sent": case "viewed": case "unpaid": return { text: "Zoho: Sent (approved)", tone: "ok" };
-    case "open": return { text: doc === "bill" ? "Zoho: Open (approved)" : "Zoho: Sent (approved)", tone: "ok" };
+    case "open": return { text: doc === "invoice" ? "Zoho: Sent (approved)" : doc === "bill" ? "Zoho: Open (approved)" : "Zoho: Open (confirmed)", tone: "ok" };
+    case "invoiced": return { text: "Zoho: Invoiced", tone: "done" };
+    case "partially_invoiced": return { text: "Zoho: Part-invoiced", tone: "ok" };
+    case "closed": return { text: "Zoho: Closed", tone: "done" };
     case "overdue": return { text: "Zoho: Overdue", tone: "bad" };
     case "partially_paid": return { text: "Zoho: Part-paid", tone: "ok" };
     case "paid": return { text: "Zoho: Paid", tone: "done" };

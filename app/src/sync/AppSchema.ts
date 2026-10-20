@@ -92,6 +92,8 @@ const sales_order = new Table({
   deleted_at: column.text, origin: column.text,
   // 0047: the sales order raised in Zoho Books on acceptance (the customer's proforma)
   zoho_salesorder_id: column.text, zoho_salesorder_number: column.text, zoho_created_at: column.text,
+  // 0054: the sales order's own Zoho status, apart from the invoice's
+  zoho_so_status: column.text, zoho_so_status_at: column.text, zoho_so_error: column.text,
 }, { indexes: { customer: ["customer_id"], status: ["status"] } });
 
 const sales_line = new Table({

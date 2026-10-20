@@ -1,5 +1,14 @@
 // CTP Core — a customer accepts a quote.
 //
+// 2026-10-20 (Ian: "sales order as before"): rewired onto the 19 Oct Zoho link —
+// the refresh token in Vault, the DC in zoho_config, lines by SKU through
+// zoho_item, Standard Rate VAT, contact matched or created, the sales order
+// left in DRAFT. Respects the go-live switch: while Zoho sending is off, or
+// before push_from, the quote is accepted and reserved with NO sales order
+// (history never goes to Zoho). When the order is invoiced, zoho-push converts
+// this sales order into the (draft) invoice. The September token path
+// (integration_secret, ./zoho.ts, zoho-connect) is retired.
+//
 // Ian, 2026-09-20: Zoho Books owns the document chain. Accepting a quote
 // creates the SALES ORDER in Zoho (that is the proforma the customer gets),
 // and reserves the stock in CTP Core (the ledger stays the source of truth
@@ -24,7 +33,7 @@
 // a hold without a document would be a real one.
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
-import { ZohoError, zohoConfigured, findSalesOrderByReference, createSalesOrder, deleteSalesOrder, type ZohoLine } from "./zoho.ts";
+import { zohoInit, zohoMissing, salesOrderFor, deleteSalesOrder, Blocked, type Logger } from "../_shared/zoho.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -67,7 +76,7 @@ Deno.serve(async (req: Request) => {
   if (!cust || cust.auth_user_id !== uid) return json({ error: "That order belongs to a different customer" }, 403);
 
   // already done (a retry after the response was lost)
-  if (o.status === "confirmed" && o.zoho_salesorder_id) {
+  if (o.status === "confirmed") {
     return json({ ok: true, already: true, order_id: o.id, number: o.number, zoho_salesorder_number: o.zoho_salesorder_number });
   }
 
@@ -80,75 +89,54 @@ Deno.serve(async (req: Request) => {
   if (!chk?.ok) {
     return json({ error: "This quote cannot be accepted yet.", blockers, message: blockers.map((b) => b.message).join(" ") }, 409);
   }
-  if (!await zohoConfigured()) {
-    return json({ error: "Ordering is not connected to the accounts system on this server yet — please tell us and we will accept it by hand." }, 503);
-  }
 
-  // the lines, as Zoho wants them: item, quantity, unit rate ex VAT, and the
-  // rebate (if the rebate columns exist on this database) as a line discount
-  let lines: Record<string, unknown>[] | null = null;
-  const withRebate = await db.from("sales_line").select("qty, unit_price_minor, part:part_id(sku, name, zoho_item_id), rebate_pct").eq("order_id", orderId).is("deleted_at", null);
-  if (!withRebate.error) lines = withRebate.data as Record<string, unknown>[];
-  else {
-    // no rebate column yet on this database (0044 not applied): read without it
-    const plain = await db.from("sales_line").select("qty, unit_price_minor, part:part_id(sku, name, zoho_item_id)").eq("order_id", orderId).is("deleted_at", null);
-    if (plain.error) return json({ error: plain.error.message }, 500);
-    lines = plain.data as Record<string, unknown>[];
-  }
-  const items: ZohoLine[] = (lines ?? []).map((l: Record<string, unknown>) => {
-    const p = (Array.isArray(l.part) ? l.part[0] : l.part) as { sku: string; name: string; zoho_item_id: string };
-    const pct = Number(l.rebate_pct ?? 0);
-    return {
-      item_id: p.zoho_item_id, quantity: Number(l.qty), rate: Number(l.unit_price_minor) / 100,
-      description: `${p.sku} · CTP ${o.number}`,
-      ...(pct > 0 ? { discount: `${pct}%` } : {}),
-    };
-  });
-  if (items.length === 0) return json({ error: "This quote has no lines." }, 409);
+  // ── 3. Zoho, only from go-live on ─────────────────────────────────────────
+  const { data: cfg } = await db.from("zoho_config").select("*").eq("id", 1).maybeSingle();
+  const live = !!(cfg?.push_enabled && cfg?.push_from && new Date(cfg.push_from) <= new Date());
+  const log: Logger = async (r) => { await db.from("zoho_push_log").insert({ ...r, actor: uid }); };
 
-  // ── 3. Zoho: reuse or create ─────────────────────────────────────────────
-  let so: { salesorder_id: string; salesorder_number: string } | null = null; let created = false;
-  try {
-    const existing = await findSalesOrderByReference(o.number);
-    if (existing) { so = existing; }
-    else {
-      so = await createSalesOrder({
-        customer_id: cust.zoho_contact_id!, reference_number: o.number,
-        date: new Date().toISOString().slice(0, 10), line_items: items,
-        notes: `Accepted in CTP Core on ${new Date().toISOString().slice(0, 16).replace("T", " ")} UTC · CTP order ${o.number}`,
-      });
-      created = true;
+  let so: { salesorder_id: string; salesorder_number: string; created: boolean; warning?: string } | null = null;
+  if (live) {
+    await zohoInit(db);
+    const missing = zohoMissing();
+    if (missing.length) {
+      await log({ doc_type: "salesorder", ctp_id: orderId, ctp_ref: o.number, action: "blocked", ok: false,
+                  message: `Zoho not connected: ${missing.join(", ")}` });
+      return json({ error: "Ordering is not connected to the accounts system on this server yet — please tell us and we will accept it by hand." }, 503);
     }
-  } catch (e) {
-    console.error("zoho create failed:", e);
-    const msg = e instanceof ZohoError ? e.message : String(e);
-    return json({ error: `We could not raise the sales order in our accounts system, so nothing was accepted or reserved. Please try again in a minute; if it keeps failing, call us. (${msg})` }, 502);
+    try {
+      so = await salesOrderFor(db, cfg, orderId, log);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      await log({ doc_type: "salesorder", ctp_id: orderId, ctp_ref: o.number, action: e instanceof Blocked ? "blocked" : "error", ok: false, message: msg });
+      await db.from("sales_order").update({ zoho_so_error: msg }).eq("id", orderId);
+      return json({ error: `We could not raise the sales order in our accounts system, so nothing was accepted or reserved. Please try again in a minute; if it keeps failing, call us. (${msg})` }, 502);
+    }
   }
-  if (!so) return json({ error: "We could not raise the sales order in our accounts system; nothing was accepted or reserved." }, 502);
 
   // ── 4. the one transaction ───────────────────────────────────────────────
   const { data: acc, error: accErr } = await db.rpc("accept_quote", {
-    order_id: orderId, p_auth_user: uid, p_zoho_salesorder_id: so.salesorder_id, p_zoho_salesorder_number: so.salesorder_number,
+    order_id: orderId, p_auth_user: uid,
+    p_zoho_salesorder_id: so?.salesorder_id ?? null, p_zoho_salesorder_number: so?.salesorder_number ?? null,
   });
   if (accErr) {
-    console.error("accept_quote failed after Zoho SO", so.salesorder_number, ":", accErr.message);
-    // ── 5. compensate ──
-    if (created) {
-      try { await deleteSalesOrder(so.salesorder_id); }
-      catch (delErr) {
-        console.error("compensation failed; logging orphan:", delErr);
-        await db.rpc("log_integration_issue", {
-          p_system: "zoho", p_kind: "orphan_salesorder", p_order_id: orderId, p_external_id: so.salesorder_id,
-          p_detail: `Sales order ${so.salesorder_number} was created in Zoho but CTP could not record the acceptance (${accErr.message}); deleting it failed too (${String(delErr)}). Delete it in Zoho by hand.`,
-        });
+    // ── 5. compensate: a sales order we just created is removed again ──
+    if (so?.created) {
+      try {
+        await deleteSalesOrder(so.salesorder_id);
+        await log({ doc_type: "salesorder", ctp_id: orderId, ctp_ref: o.number, action: "delete", ok: true, zoho_id: so.salesorder_id,
+                    message: `${so.salesorder_number} deleted again: the acceptance failed (${accErr.message})` });
+      } catch (delErr) {
+        await log({ doc_type: "salesorder", ctp_id: orderId, ctp_ref: o.number, action: "error", ok: false, zoho_id: so.salesorder_id,
+                    message: `ORPHAN: sales order ${so.salesorder_number} was created in Zoho but the acceptance failed (${accErr.message}) and deleting it failed too (${String(delErr)}). Delete it in Zoho by hand.` });
       }
     }
     return json({ error: `Nothing was accepted or reserved: ${accErr.message.replace(/^[A-Z0-9]+: /, "")}` }, 409);
   }
+  if (so?.warning) await db.from("sales_order").update({ zoho_so_error: so.warning }).eq("id", orderId);
 
-  // Everything after this — sending the proforma, recording the payment,
-  // converting to the invoice — Ian does in Zoho's own screens (2026-09-21).
   return json({ ok: true, already: acc?.already ?? false, order_id: orderId, number: o.number,
-                zoho_salesorder_id: so.salesorder_id, zoho_salesorder_number: so.salesorder_number,
+                zoho_salesorder_id: so?.salesorder_id ?? null, zoho_salesorder_number: so?.salesorder_number ?? null,
+                zoho: live ? "sales order raised (draft)" : "not sent: Zoho sending is off or before the go-live date",
                 reserved_lines: acc?.reserved_lines ?? 0 });
 });

@@ -777,6 +777,8 @@ async function myRequests(): Promise<unknown[]> {
       client_response: nstr(o["client_response"]),
       client_responded_at: nstr(o["client_responded_at"]),
       zoho_salesorder_number: nstr(o["zoho_salesorder_number"]),
+      zoho_so_status: nstr(o["zoho_so_status"]),
+      zoho_so_error: nstr(o["zoho_so_error"]),
       priced,
       total_minor: mapped.reduce((t, l) => t + (l.unit_price_minor ?? 0) * l.qty, 0),
       lines: mapped,
@@ -795,7 +797,7 @@ async function staffOrders(): Promise<unknown[]> {
   const orders = await all(
     `SELECT so.id, so.number, so.status, so.currency, so.notes, so.created_at,
             so.fulfilled_at, so.tax_rate_bps, so.client_response, so.client_responded_at,
-            so.invoice_no, so.invoiced_at, so.zoho_salesorder_number,
+            so.invoice_no, so.invoiced_at, so.zoho_salesorder_number, so.zoho_so_status, so.zoho_so_error,
             so.zoho_invoice_number, so.zoho_status, so.zoho_status_at, so.zoho_error,
             c.name AS customer_name, c.contact AS customer_contact,
             c.phone AS customer_phone, c.email AS customer_email,

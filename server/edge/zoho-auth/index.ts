@@ -81,14 +81,17 @@ Deno.serve(async (req: Request) => {
     const taxes = await get("/settings/taxes");
     const inv = await get("/invoices?per_page=200");
     const bills = await get("/bills?per_page=200");
+    const sos = await get("/salesorders?per_page=200");
     return json({
-      ok: [items, taxes, inv, bills].every((x) => x.code === 0), dc, api,
+      ok: [items, taxes, inv, bills, sos].every((x) => x.code === 0), dc, api,
       items: { status: items.status, n: items.j.items?.length, more: items.j.page_context?.has_more_page, msg: items.message },
       // deno-lint-ignore no-explicit-any
       taxes: (taxes.j.taxes ?? []).map((x: any) => `${x.tax_name} ${x.tax_percentage}%`),
       // deno-lint-ignore no-explicit-any
       invoices: { status: inv.status, n: inv.j.invoices?.length, numbers: (inv.j.invoices ?? []).map((x: any) => `${x.invoice_number}:${x.status}`).slice(0, 40), msg: inv.message },
       // deno-lint-ignore no-explicit-any
+      // deno-lint-ignore no-explicit-any
+      salesorders: { status: sos.status, n: sos.j.salesorders?.length, numbers: (sos.j.salesorders ?? []).map((x: any) => `${x.salesorder_number}:${x.status}:${x.reference_number ?? ""}`).slice(0, 40), msg: sos.message },
       bills: { status: bills.status, n: bills.j.bills?.length, numbers: (bills.j.bills ?? []).map((x: any) => `${x.bill_number}:${x.status}`).slice(0, 40), msg: bills.message },
     });
   }
