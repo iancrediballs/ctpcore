@@ -126,6 +126,32 @@ Deno.serve(async (req: Request) => {
     return json({ ok: out.failed.length === 0, total, offset, limit, next: offset + limit < total ? offset + limit : null, ...out });
   }
 
+  // READ-ONLY: one Zoho document, for verifying a live test
+  //   { action: "doc", kind: "salesorders" | "invoices" | "contacts", id }
+  if (body.action === "doc") {
+    if (!["salesorders", "invoices", "contacts"].includes(body.kind) || !/^\d+$/.test(String(body.id ?? ""))) {
+      return json({ ok: false, error: "kind/id" }, 400);
+    }
+    await zohoInit(db);
+    const tk = await zohoToken();
+    const r = await fetch(`https://www.zohoapis.com/books/v3/${body.kind}/${body.id}?organization_id=${env("ZOHO_ORG_ID")}`,
+      { headers: { Authorization: `Zoho-oauthtoken ${tk}` } });
+    const j = await r.json().catch(() => ({}));
+    const d = j.salesorder ?? j.invoice ?? j.contact;
+    if (!d) return json({ ok: false, status: r.status, error: j.message }, 502);
+    return json({ ok: true, doc: {
+      number: d.salesorder_number ?? d.invoice_number ?? d.contact_name, status: d.status, customer: d.customer_name,
+      customer_id: d.customer_id, reference: d.reference_number, date: d.date, sub_total: d.sub_total, tax_total: d.tax_total, total: d.total,
+      is_inclusive_tax: d.is_inclusive_tax, contact_type: d.contact_type, email: d.email,
+      // deno-lint-ignore no-explicit-any
+      lines: (d.line_items ?? []).map((l: any) => ({ sku: l.sku, name: l.name, qty: l.quantity, rate: l.rate, discount: l.discount,
+        tax: `${l.tax_name ?? ""} ${l.tax_percentage ?? ""}%`, total: l.item_total, so_item: l.salesorder_item_id ?? null })),
+      // deno-lint-ignore no-explicit-any
+      salesorders: (d.salesorders ?? []).map((s: any) => s.salesorder_number), invoices: (d.invoices ?? []).map((i: any) => `${i.invoice_number}:${i.status}`),
+      invoiced_status: d.invoiced_status, order_status: d.order_status,
+    } });
+  }
+
   // READ-ONLY preview: Zoho customer contacts vs CTP customers
   if (body.action === "contacts_preview") {
     await zohoInit(db);
