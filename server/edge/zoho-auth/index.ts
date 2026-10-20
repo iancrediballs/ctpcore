@@ -56,6 +56,74 @@ Deno.serve(async (req: Request) => {
                   client: !!env("ZOHO_CLIENT_ID") && !!env("ZOHO_CLIENT_SECRET"), org: env("ZOHO_ORG_ID") || null });
   }
 
+  // Part photos -> Zoho item images (Ian, 20 Oct). One image per item: the
+  // part's primary photo, else its first. Only ACTIVE Zoho items linked to a CTP
+  // part, re-checked live in Zoho (same SKU, status active) right before the
+  // upload. POST /items/{id}/image touches the image and nothing else.
+  //   { action: "item_images", dry_run?: true, skus?: string[], offset?: 0, limit?: 25 }
+  if (body.action === "item_images") {
+    const { data: tok } = await db.rpc("zoho_secret_get", { p_name: "zoho_refresh_token" });
+    const { data: cfg } = await db.from("zoho_config").select("dc").eq("id", 1).maybeSingle();
+    if (!tok) return json({ ok: false, error: "No refresh token stored" }, 412);
+    const dc = cfg?.dc || "com";
+    const accounts = DCS.find(([d]) => d === dc)?.[1] ?? "https://accounts.zoho.com";
+    const r = await fetch(`${accounts}/oauth/v2/token`, { method: "POST", body: new URLSearchParams({
+      grant_type: "refresh_token", refresh_token: String(tok),
+      client_id: env("ZOHO_CLIENT_ID"), client_secret: env("ZOHO_CLIENT_SECRET") }) });
+    const t = await r.json().catch(() => ({}));
+    if (!t.access_token) return json({ ok: false, step: "refresh", error: String(t.error ?? r.status) }, 502);
+    const host = dc === "ca" ? "https://www.zohoapis.ca" : `https://www.zohoapis.${dc}`;
+    const base = `${host}/books/v3`;
+    const org = env("ZOHO_ORG_ID");
+    const auth = { Authorization: `Zoho-oauthtoken ${t.access_token}` };
+
+    const { data: links, error: lerr } = await db.from("zoho_item")
+      .select("zoho_item_id, sku, part_id").eq("status", "active").not("part_id", "is", null).order("sku");
+    if (lerr) return json({ ok: false, error: lerr.message }, 500);
+    const { data: imgs, error: ierr } = await db.from("part_image")
+      .select("part_id, path, is_primary, sort_order, id").is("deleted_at", null)
+      .order("is_primary", { ascending: false }).order("sort_order").order("id");
+    if (ierr) return json({ ok: false, error: ierr.message }, 500);
+    const pick = new Map<number, string>();
+    for (const i of imgs ?? []) if (!pick.has(i.part_id)) pick.set(i.part_id, i.path);
+
+    let rows = links ?? [];
+    if (Array.isArray(body.skus) && body.skus.length) rows = rows.filter((x) => body.skus.includes(x.sku));
+    const total = rows.length;
+    const offset = Number(body.offset ?? 0), limit = Math.min(Number(body.limit ?? 25), 60);
+    rows = rows.slice(offset, offset + limit);
+    const assetBase = `${env("SUPABASE_URL")}/storage/v1/object/public/ctp-assets`;
+    const out = { updated: [] as string[], no_image: [] as string[], skipped: [] as string[], failed: [] as string[], would_upload: [] as string[] };
+
+    for (const l of rows) {
+      const path = pick.get(l.part_id);
+      if (!path) { out.no_image.push(l.sku); continue; }
+      try {
+        const g = await fetch(`${base}/items/${l.zoho_item_id}?organization_id=${org}`, { headers: auth });
+        const gj = await g.json().catch(() => ({}));
+        const item = gj.item;
+        if (!item) { out.failed.push(`${l.sku}: item not found in Zoho (${g.status} ${gj.message ?? ""})`); continue; }
+        if (String(item.sku ?? "") !== l.sku || item.status !== "active") {
+          out.skipped.push(`${l.sku}: Zoho has sku "${item.sku}" status ${item.status}`); continue;
+        }
+        if (body.dry_run) { out.would_upload.push(`${l.sku} <- ${path}`); continue; }
+        const f = await fetch(`${assetBase}/${path.replace(/^\/+/, "")}`);
+        if (!f.ok) { out.failed.push(`${l.sku}: photo not downloadable (${f.status}) ${path}`); continue; }
+        const blob = await f.blob();
+        const ext = (path.match(/\.(png|jpe?g|gif)$/i)?.[1] ?? "png").toLowerCase();
+        const fd = new FormData();
+        fd.append("image", new Blob([blob], { type: ext === "png" ? "image/png" : ext === "gif" ? "image/gif" : "image/jpeg" }), `${l.sku}.${ext === "jpeg" ? "jpg" : ext}`);
+        const u = await fetch(`${base}/items/${l.zoho_item_id}/image?organization_id=${org}`, { method: "POST", headers: auth, body: fd });
+        const uj = await u.json().catch(() => ({}));
+        if (!u.ok || (uj.code !== undefined && uj.code !== 0)) { out.failed.push(`${l.sku}: upload ${u.status} code ${uj.code ?? "?"} ${uj.message ?? ""}`); continue; }
+        out.updated.push(l.sku);
+      } catch (e) {
+        out.failed.push(`${l.sku}: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
+    return json({ ok: out.failed.length === 0, total, offset, limit, next: offset + limit < total ? offset + limit : null, ...out });
+  }
+
   // read-only health check: stored token -> access token -> org, items, taxes
   if (body.action === "check") {
     const { data: tok } = await db.rpc("zoho_secret_get", { p_name: "zoho_refresh_token" });
