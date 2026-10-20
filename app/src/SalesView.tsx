@@ -78,6 +78,7 @@ function NewQuote({ onClose, onCreated }: { onClose: () => void; onCreated: (d: 
   const [custs, setCusts] = useState<Customer[]>([]);
   const [locs, setLocs] = useState<Loc[]>([]);
   const [cust, setCust] = useState<number | null>(null);
+  const [find, setFind] = useState("");   // 0056: Zoho customers make this list long
   const [loc, setLoc] = useState<number | null>(null);
   const [err, setErr] = useState("");
 
@@ -86,7 +87,7 @@ function NewQuote({ onClose, onCreated }: { onClose: () => void; onCreated: (d: 
       const c = await api.listCustomers<Customer[]>();
       const l = await api.listLocations<Loc[]>();
       setCusts(c); setLocs(l);
-      setCust(c[0]?.id ?? null);
+      // no default customer: a quote on the wrong account is worse than one more click
       setLoc(l[0]?.id ?? null);
     })();
   }, []);
@@ -108,8 +109,11 @@ function NewQuote({ onClose, onCreated }: { onClose: () => void; onCreated: (d: 
           <button className="x" onClick={onClose}>✕</button>
         </div>
         <label className="fld">Customer
-          <select value={cust ?? ""} onChange={(e) => setCust(Number(e.target.value))}>
-            {custs.map((c) => <option key={c.id} value={c.id}>{c.name} · {c.price_tier}</option>)}
+          <input type="search" placeholder="Search customers…" value={find} onChange={(e) => setFind(e.target.value)} />
+          <select value={cust ?? ""} onChange={(e) => setCust(e.target.value ? Number(e.target.value) : null)}>
+            <option value="">— pick the customer —</option>
+            {custs.filter((c) => c.id === cust || !find.trim() || c.name.toLowerCase().includes(find.trim().toLowerCase()))
+              .map((c) => <option key={c.id} value={c.id}>{c.name} · {c.price_tier}</option>)}
           </select>
         </label>
         <label className="fld">Fulfill from

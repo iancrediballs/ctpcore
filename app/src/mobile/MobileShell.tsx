@@ -323,6 +323,8 @@ export default function MobileShell() {
   // say who a STAFF cart is being raised for.
   const [customers, setCustomers] = useState<{ id: number; name: string }[]>([]);
   const [counterCustomer, setCounterCustomer] = useState<number | null>(null);
+  // 0056: the customer list includes every synced Zoho customer, so it is searchable
+  const [counterFind, setCounterFind] = useState("");
   const [audit, setAudit] = useState<{ table: string; rows: number }[] | null>(null);
   const [mine, setMine] = useState<MyRequest[] | null>(null);
   const [answering, setAnswering] = useState<number | null>(null);
@@ -1372,11 +1374,19 @@ const parseRand = (s: string): number => {
                 Counter sale · {cart.length} part{cart.length === 1 ? "" : "s"}
               </div>
 
+              {customers.length > 8 && (
+                <input className="mb-hs-in" style={{ width: "100%", marginBottom: 6 }} type="search"
+                  placeholder="Search customers…" value={counterFind}
+                  onChange={(e) => setCounterFind(e.target.value)} />
+              )}
               <select className="mb-hs-in" style={{ width: "100%", marginBottom: 10 }}
                 value={counterCustomer ?? ""}
                 onChange={(e) => setCounterCustomer(e.target.value ? Number(e.target.value) : null)}>
                 <option value="">— which customer is this for? —</option>
-                {customers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                {customers
+                  .filter((c) => c.id === counterCustomer || !counterFind.trim()
+                    || c.name.toLowerCase().includes(counterFind.trim().toLowerCase()))
+                  .map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
               </select>
 
               <div className="mb-rows">

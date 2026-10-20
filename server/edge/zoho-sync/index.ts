@@ -115,6 +115,38 @@ async function zohoItems(token: string): Promise<ZohoItem[]> {
   return out;
 }
 
+// Zoho customer contacts (READ ONLY): contact_type customer, active.
+// deno-lint-ignore no-explicit-any
+async function zohoCustomers(token: string): Promise<any[]> {
+  // deno-lint-ignore no-explicit-any
+  const out: any[] = [];
+  for (let page = 1; page <= 50; page++) {
+    const u = new URL(`${BASE}/contacts`);
+    u.searchParams.set("organization_id", env("ZOHO_ORG_ID"));
+    u.searchParams.set("contact_type", "customer");
+    u.searchParams.set("filter_by", "Status.Active");
+    u.searchParams.set("page", String(page));
+    u.searchParams.set("per_page", "200");
+    const r = await fetch(u, { headers: { Authorization: `Zoho-oauthtoken ${token}` } });
+    const b = await r.json().catch(() => ({}));
+    if (!r.ok || (b.code !== undefined && b.code !== 0)) throw new Error(`Zoho contacts failed (${r.status}): ${b.message ?? "no message"}`);
+    // deno-lint-ignore no-explicit-any
+    out.push(...((b.contacts ?? []) as any[]).map((c) => ({
+      contact_id: String(c.contact_id), contact_name: c.contact_name, company_name: c.company_name || null, email: c.email || null,
+    })));
+    if (!b.page_context?.has_more_page) break;
+  }
+  return out;
+}
+
+// Zoho customers -> CTP customers (0056). Preview unless apply. Never writes to Zoho.
+async function syncCustomers(db: SupabaseClient, token: string, apply: boolean) {
+  const contacts = await zohoCustomers(token);
+  const { data, error } = await db.rpc("zoho_sync_customers", { p_contacts: contacts, p_apply: apply });
+  if (error) throw new Error(`customer sync: ${error.message}`);
+  return data;
+}
+
 async function authorise(req: Request, db: SupabaseClient): Promise<{ ok: boolean; actor: string | null; why?: string }> {
   const syncToken = env("ZOHO_SYNC_TOKEN");
   if (syncToken && req.headers.get("x-sync-token") === syncToken) return { ok: true, actor: null };
@@ -144,6 +176,16 @@ Deno.serve(async (req: Request) => {
 
   const body = await req.json().catch(() => ({}));
   const apply = body?.apply === true;
+
+  // "Sync customers from Zoho" on its own: { customers: true, apply?: true }
+  if (body?.customers === true) {
+    try {
+      await sharedInit(db);
+      return json({ ok: true, customers: await syncCustomers(db, await zohoToken(), apply) });
+    } catch (e) {
+      return json({ ok: false, error: e instanceof Error ? e.message : String(e) }, 502);
+    }
+  }
 
   const { data: run } = await db.from("zoho_sync_run").insert({ actor: who.actor }).select("id").single();
   const finish = (patch: Record<string, unknown>) =>
@@ -249,12 +291,15 @@ Deno.serve(async (req: Request) => {
       }
     }
 
+    // customers ride along with Check (preview) and Pull & apply (apply)
+    const customers = await syncCustomers(db, await zohoToken(), apply);
+
     const linkedCount = mirror.filter((m) => m.part_id != null).length;
     const stockTotal = mirror.reduce((s, m) => s + (Number(m.stock_on_hand) || 0), 0);
     await finish({ ok: true, items_seen: items.length, linked: linkedCount, unmatched });
     return json({
       ok: true, applied: apply, api: API, items_seen: items.length, linked: linkedCount,
-      zoho_stock_units: stockTotal, unmatched, changes,
+      zoho_stock_units: stockTotal, unmatched, changes, customers,
     });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);

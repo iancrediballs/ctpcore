@@ -544,8 +544,18 @@ type ZohoRow = {
 };
 type ZohoRun = { started_at: string; finished_at: string | null; ok: boolean | null;
   items_seen: number | null; linked: number | null; error: string | null };
+// 0056: Zoho customers -> CTP customers (read-only towards Zoho)
+type CustSync = {
+  applied: boolean; zoho_customers: number;
+  already_linked: { zoho: string; ctp: string }[];
+  linked: { zoho: string; ctp: string; by: string }[];
+  new: { zoho: string; code: string; email: string | null }[];
+  skipped: { zoho: string; ctp: string; note: string }[];
+  conflicts: { zoho: string; ctp: string; note: string }[];
+};
 type ZohoResult = {
   ok: boolean; applied?: boolean; items_seen?: number; linked?: number; zoho_stock_units?: number;
+  customers?: CustSync;
   unmatched?: { sku: string | null; name: string }[];
   changes?: { sku: string; field: string; from: unknown; to: unknown }[];
   error?: string;
@@ -553,6 +563,20 @@ type ZohoResult = {
 
 const zar = (m: number | null | undefined) =>
   m == null ? "—" : "R " + (m / 100).toLocaleString("en-ZA", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+function CustSyncList({ c }: { c: CustSync }) {
+  return (
+    <>
+      <p className="st-note">{c.applied ? "Applied" : "Preview"} · {c.zoho_customers} Zoho customers ·
+        {" "}{c.already_linked.length} already linked · {c.linked.length} to link · {c.new.length} new
+        {c.skipped.length ? ` · ${c.skipped.length} skipped` : ""}{c.conflicts.length ? ` · ${c.conflicts.length} conflicts` : ""}</p>
+      {c.linked.map((x, i) => <p className="st-note" key={"l" + i}>Link <b>{x.zoho}</b> → <span className="st-code">{x.ctp}</span> (by {x.by})</p>)}
+      {c.new.map((x, i) => <p className="st-note" key={"n" + i}>New <b>{x.zoho}</b> as <span className="st-code">{x.code}</span>{x.email ? ` · ${x.email}` : ""}</p>)}
+      {c.skipped.map((x, i) => <p className="st-note" key={"s" + i}>Skip <b>{x.zoho}</b>: {x.note} (<span className="st-code">{x.ctp}</span>)</p>)}
+      {c.conflicts.map((x, i) => <p className="st-note" key={"c" + i}>Conflict <b>{x.zoho}</b>: {x.note} (<span className="st-code">{x.ctp}</span>)</p>)}
+    </>
+  );
+}
 
 function ZohoPanel({ flash, fail }: PanelProps) {
   const [rows, setRows] = useState<ZohoRow[] | null>(null);
@@ -573,7 +597,7 @@ function ZohoPanel({ flash, fail }: PanelProps) {
   useEffect(load, [load]);
 
   const sync = async (apply: boolean) => {
-    if (apply && !confirm("Write Zoho's item names, selling prices and landed costs into CTP Core?\n\nPast quotes and invoices keep their prices.")) return;
+    if (apply && !confirm("Write Zoho's item names, selling prices and landed costs into CTP Core, and add/link Zoho customers?\n\nPast quotes and invoices keep their prices.")) return;
     setBusy(true); setResult(null);
     const { data, error } = await supabase.functions.invoke("zoho-sync", { body: { apply } });
     setBusy(false);
@@ -586,6 +610,23 @@ function ZohoPanel({ flash, fail }: PanelProps) {
     setResult(res);
     if (res?.ok) flash(apply ? `Zoho applied: ${res.changes?.length ?? 0} changes.` : `Zoho checked: ${res.items_seen} items.`);
     load();
+  };
+
+  // "Sync customers from Zoho": preview first, then apply what was previewed
+  const [cust, setCust] = useState<CustSync | null>(null);
+  const syncCustomers = async (apply: boolean) => {
+    setBusy(true);
+    const { data, error } = await supabase.functions.invoke("zoho-sync", { body: { customers: true, apply } });
+    setBusy(false);
+    let res = data as { ok: boolean; customers?: CustSync; error?: string } | null;
+    if (error) {
+      try { res = await (error as { context?: Response }).context?.json(); } catch { /* fall through */ }
+      if (!res) return fail(error);
+    }
+    if (!res?.ok || !res.customers) return fail(new Error(res?.error ?? "Customer sync failed"));
+    setCust(res.customers);
+    flash(apply ? `Customers synced: ${res.customers.new.length} added, ${res.customers.linked.length} linked.`
+                : `Preview: ${res.customers.new.length} to add, ${res.customers.linked.length} to link.`);
   };
 
   const f = filter.trim().toLowerCase();
@@ -614,6 +655,22 @@ function ZohoPanel({ flash, fail }: PanelProps) {
           <button className="st-save" disabled={busy} onClick={() => sync(false)}>{busy ? "Working…" : "Check Zoho"}</button>
           <button className="st-save" disabled={busy} onClick={() => sync(true)}>Pull &amp; apply</button>
         </div>
+      </div>
+
+      <div className="st-card">
+        <div className="st-sub">Customers</div>
+        <p className="st-note">
+          Zoho Books customers (active) become selectable in CTP Core. Matched by Zoho id, then name, then email;
+          nothing is written to Zoho, no logins are created, and customers removed from CTP Core are not brought back.
+          Pull &amp; apply runs this too.
+        </p>
+        <div className="st-row2">
+          <button className="st-save" disabled={busy} onClick={() => syncCustomers(false)}>{busy ? "Working…" : "Sync customers from Zoho"}</button>
+          {cust && !cust.applied && (cust.new.length > 0 || cust.linked.length > 0) &&
+            <button className="st-save" disabled={busy} onClick={() => syncCustomers(true)}>
+              Apply: add {cust.new.length}, link {cust.linked.length}</button>}
+        </div>
+        {(cust ?? result?.customers) && <CustSyncList c={(cust ?? result?.customers)!} />}
       </div>
 
       {result && (

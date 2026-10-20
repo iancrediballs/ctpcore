@@ -126,6 +126,45 @@ Deno.serve(async (req: Request) => {
     return json({ ok: out.failed.length === 0, total, offset, limit, next: offset + limit < total ? offset + limit : null, ...out });
   }
 
+  // READ-ONLY preview: Zoho customer contacts vs CTP customers
+  if (body.action === "contacts_preview") {
+    await zohoInit(db);
+    let tk: string;
+    try { tk = await zohoToken(); } catch (e) { return json({ ok: false, error: String(e) }, 502); }
+    const host = "https://www.zohoapis.com";
+    // deno-lint-ignore no-explicit-any
+    const zc: any[] = [];
+    for (let page = 1; page <= 25; page++) {
+      const u = new URL(`${host}/books/v3/contacts`);
+      u.searchParams.set("organization_id", env("ZOHO_ORG_ID"));
+      u.searchParams.set("contact_type", "customer"); u.searchParams.set("filter_by", "Status.Active");
+      u.searchParams.set("page", String(page)); u.searchParams.set("per_page", "200");
+      const r = await fetch(u, { headers: { Authorization: `Zoho-oauthtoken ${tk}` } });
+      const j = await r.json().catch(() => ({}));
+      if (j.code !== 0) return json({ ok: false, error: j.message ?? r.status }, 502);
+      zc.push(...(j.contacts ?? []));
+      if (!j.page_context?.has_more_page) break;
+    }
+    const { data: cust } = await db.from("customer").select("id, code, name, email, zoho_contact_id, deleted_at, auth_user_id");
+    const n = (s: unknown) => String(s ?? "").trim().toLowerCase().replace(/\s+/g, " ");
+    // deno-lint-ignore no-explicit-any
+    const rows = zc.map((c: any) => {
+      const live = (cust ?? []).filter((x) => !x.deleted_at);
+      const byId = live.find((x) => x.zoho_contact_id === String(c.contact_id));
+      const byName = live.find((x) => n(x.name) === n(c.contact_name) || n(x.name) === n(c.company_name));
+      const byEmail = c.email ? live.find((x) => n(x.email) === n(c.email)) : undefined;
+      const m = byId ?? byName ?? byEmail;
+      return { zoho: c.contact_name, company: c.company_name, email: c.email || null, id: String(c.contact_id),
+               match: m ? `${m.code} (${byId ? "id" : byName ? "name" : "email"})` : null };
+    });
+    // likely duplicates inside Zoho: same normalised name or same email
+    const seen = new Map<string, string[]>();
+    for (const c of zc) for (const k of [n(c.contact_name), c.email ? "@" + n(c.email) : ""]) if (k) seen.set(k, [...(seen.get(k) ?? []), c.contact_name]);
+    return json({ ok: true, zoho_customers: zc.length, matched: rows.filter((r) => r.match).length, rows,
+      zoho_dupes: [...seen.entries()].filter(([, v]) => v.length > 1).map(([k, v]) => `${k}: ${v.join(" | ")}`),
+      ctp_customers: (cust ?? []).filter((x) => !x.deleted_at).map((x) => `${x.code}:${x.name}:${x.zoho_contact_id ?? "-"}`) });
+  }
+
   // read-only health check: stored token -> access token -> org, items, taxes
   if (body.action === "check") {
     const { data: tok } = await db.rpc("zoho_secret_get", { p_name: "zoho_refresh_token" });
