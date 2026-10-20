@@ -90,7 +90,7 @@ Deno.serve(async (req: Request) => {
     let rows = links ?? [];
     if (Array.isArray(body.skus) && body.skus.length) rows = rows.filter((x) => body.skus.includes(x.sku));
     const total = rows.length;
-    const offset = Number(body.offset ?? 0), limit = Math.min(Number(body.limit ?? 25), 60);
+    const offset = Number(body.offset ?? 0), limit = Math.min(Number(body.limit ?? 25), body.dry_run ? 200 : 60);
     rows = rows.slice(offset, offset + limit);
     const assetBase = `${env("SUPABASE_URL")}/storage/v1/object/public/ctp-assets`;
     const out = { updated: [] as string[], no_image: [] as string[], skipped: [] as string[], failed: [] as string[], would_upload: [] as string[] };
@@ -106,7 +106,7 @@ Deno.serve(async (req: Request) => {
         if (String(item.sku ?? "") !== l.sku || item.status !== "active") {
           out.skipped.push(`${l.sku}: Zoho has sku "${item.sku}" status ${item.status}`); continue;
         }
-        if (body.dry_run) { out.would_upload.push(`${l.sku} <- ${path}`); continue; }
+        if (body.dry_run) { out.would_upload.push(`${l.sku} <- ${path}${item.image_name ? ` [Zoho image now: ${item.image_name}, doc ${item.image_document_id ?? "?"}]` : " [no Zoho image]"}`); continue; }
         const f = await fetch(`${assetBase}/${path.replace(/^\/+/, "")}`);
         if (!f.ok) { out.failed.push(`${l.sku}: photo not downloadable (${f.status}) ${path}`); continue; }
         const blob = await f.blob();

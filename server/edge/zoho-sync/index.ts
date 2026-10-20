@@ -21,7 +21,7 @@
 // the stock_movement ledger, so the two can be compared but never double-counted.
 //
 // SECRETS (Supabase → Edge Functions → Secrets; never in this repo):
-//   ZOHO_CLIENT_ID, ZOHO_CLIENT_SECRET, ZOHO_REFRESH_TOKEN  — Self Client, Zoho API console
+//   ZOHO_CLIENT_ID, ZOHO_CLIENT_SECRET  — Self Client, Zoho API console (refresh token: Vault, via zoho-auth)
 //   ZOHO_ORG_ID      — Zoho organisation id
 //   ZOHO_DC          — data centre domain suffix: com | eu | in | com.au | jp | ca | sa | uk
 //   ZOHO_API         — inventory (default) | books
@@ -46,7 +46,7 @@ let REFRESH = "";
 async function zohoInit(db: SupabaseClient) {
   const { data: tok } = await db.rpc("zoho_secret_get", { p_name: "zoho_refresh_token" });
   const { data: c } = await db.from("zoho_config").select("dc").eq("id", 1).maybeSingle();
-  REFRESH = (tok as string | null) || env("ZOHO_REFRESH_TOKEN");
+  REFRESH = (tok as string | null) || "";   // Vault only: the env / integration_secret tokens are retired
   DC = c?.dc || env("ZOHO_DC") || "com";
   const host = DC === "ca" ? "https://www.zohoapis.ca" : `https://www.zohoapis.${DC}`;
   BASE = API === "books" ? `${host}/books/v3` : `${host}/inventory/v1`;
@@ -89,7 +89,7 @@ async function accessToken(): Promise<string> {
   if (!r.ok || !b.access_token) {
     // Never echo the response body: on some errors Zoho repeats the request.
     throw new Error(`Zoho token refresh failed (${r.status}${b.error ? ", " + b.error : ""}). ` +
-      "Check ZOHO_CLIENT_ID / ZOHO_CLIENT_SECRET / ZOHO_REFRESH_TOKEN and ZOHO_DC.");
+      "Check ZOHO_CLIENT_ID / ZOHO_CLIENT_SECRET and the Vault token (zoho-auth).");
   }
   return b.access_token as string;
 }

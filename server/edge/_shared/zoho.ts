@@ -15,7 +15,7 @@ let REFRESH = "";
 export async function zohoInit(db: SupabaseClient) {
   const { data: tok } = await db.rpc("zoho_secret_get", { p_name: "zoho_refresh_token" });
   const { data: c } = await db.from("zoho_config").select("dc").eq("id", 1).maybeSingle();
-  REFRESH = (tok as string | null) || env("ZOHO_REFRESH_TOKEN");
+  REFRESH = (tok as string | null) || "";   // Vault only: the env / integration_secret tokens are retired
   token = null; contactCache = null; taxCache = null;
   DC = c?.dc || env("ZOHO_DC") || "com";
   const host = DC === "ca" ? "https://www.zohoapis.ca" : `https://www.zohoapis.${DC}`;
