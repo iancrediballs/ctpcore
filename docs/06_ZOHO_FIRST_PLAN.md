@@ -126,3 +126,45 @@ day-to-day live invoicing.
    phase 2.
 5. Set up Books workflow-rule webhooks (Ian/Michelle in Zoho, ~30 min) for
    phase 3.
+
+## 9. Zoho Inventory (Ian is happy to buy it) — 21 Oct
+
+**Same org, same data.** Zoho Inventory attaches to the existing Books org
+(939422621): one item master, one contact list, one set of sales orders,
+invoices, bills. Nothing is migrated; Inventory adds documents and screens.
+
+**API and scopes.** Base URL `https://www.zohoapis.com/inventory/v1` (same
+`organization_id`, same OAuth client). Scopes `ZohoInventory.*`, e.g.
+`ZohoInventory.items.ALL, ZohoInventory.salesorders.ALL, ZohoInventory.packages.ALL,
+ZohoInventory.shipmentorders.ALL, ZohoInventory.purchasereceives.ALL,
+ZohoInventory.inventoryadjustments.ALL, ZohoInventory.transferorders.ALL,
+ZohoInventory.warehouses.READ, ZohoInventory.settings.READ`. One token can carry
+both `ZohoBooks.*` and `ZohoInventory.*`; estimates stay on the Books API
+(Inventory has no estimates). CTP Core's code already switches base URL on
+`ZOHO_API` (books|inventory), so the change is per call, not a rewrite.
+
+**What it adds that matters to CTP Core**
+- **Packages and shipments**: "goods out" becomes a real Zoho document
+  (package → shipment) separate from the invoice. That is exactly CTP Core's
+  Fulfil step.
+- **Purchase receives**: stock comes in when goods arrive, before the bill.
+  That is CTP Core's desktop Receiving.
+- **Multi-warehouse** (and transfer orders) if a second location ever appears.
+- **Serial / batch tracking**, **reorder points with alerts**, backorders,
+  drop-ship.
+
+**The draft/stock catch goes away.** With Inventory, *physical* stock moves on
+packages/shipments (out) and purchase receives (in); it no longer waits for an
+invoice or bill to be approved. Michelle's draft-only rule can stay exactly as it
+is for invoices and bills, and stock is still right in real time. Sales orders
+must still be confirmed to commit stock (decision §8.1 stands).
+
+**Design change.** Phases 3 and 4 get simpler and more accurate: Fulfil = create
+package + shipment; Receiving = purchase receive, then bill (draft). Phases 1–2
+are unaffected.
+
+**Recommendation.** Buy it **before Phase 3** (stock), not now — Phases 1 and 2
+don't need it. When it is active, generate one code with the Books scopes plus the
+Inventory scopes above, and Phase 3 is built on packages/shipments/receives from
+the start instead of being reworked later. Check the Inventory plan's API cap: it
+is separate from Books' 5,000/day and adds headroom.
