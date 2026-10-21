@@ -17,6 +17,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useStatus } from "@powersync/react";
 import * as api from "../data/api";
 import { refreshZohoStatus, zohoStatusLabel } from "../data/zoho";
+import AddCustomer from "../admin/AddCustomer";
 import { assetUrl, photoWebUrl } from "../assets";
 import { DiagramCanvas, Marker, loadMarkerScale, saveMarkerScale, markerRadius, MARKER_SCALE_MIN, MARKER_SCALE_MAX, type CanvasApi, type Frame, type Pt } from "./DiagramCanvas";
 import { DiagramView, readDiagramHash, type Drawing } from "./DiagramView";
@@ -325,6 +326,7 @@ export default function MobileShell() {
   const [counterCustomer, setCounterCustomer] = useState<number | null>(null);
   // 0056: the customer list includes every synced Zoho customer, so it is searchable
   const [counterFind, setCounterFind] = useState("");
+  const [addingCustomer, setAddingCustomer] = useState(false);   // Phase 1: Zoho-first add customer
   const [audit, setAudit] = useState<{ table: string; rows: number }[] | null>(null);
   const [mine, setMine] = useState<MyRequest[] | null>(null);
   const [answering, setAnswering] = useState<number | null>(null);
@@ -1329,7 +1331,9 @@ const parseRand = (s: string): number => {
       const tax_minor = Math.floor((subtotal_minor * o.tax_rate_bps + 5000) / 10000);
       const doc: DocOrder = {
         number: o.number, status: o.status, created_at: o.created_at, fulfilled_at: o.fulfilled_at,
-        invoice_no: o.invoice_no, invoiced_at: o.invoiced_at,
+        // 21 Oct: Zoho numbers the invoice and Michelle sends it from Zoho; this
+        // printout is a copy, carrying Zoho's number once Zoho has assigned it.
+        invoice_no: o.zoho_invoice_number || o.invoice_no, invoiced_at: o.invoiced_at,
         customer_name: o.customer_name, customer_contact: o.customer_contact,
         customer_phone: o.customer_phone, customer_email: o.customer_email,
         location_code: o.location_code ?? "",
@@ -1341,7 +1345,7 @@ const parseRand = (s: string): number => {
   // A fulfilled order has no invoice yet: what prints is still the quotation
   // (goods out, number not issued). Only 'invoiced' prints as an invoice.
   const docLabel = (o: StaffOrder) =>
-    o.status === "invoiced" ? "Print invoice / PDF" : "Print quote / PDF";
+    o.status === "invoiced" ? "Print copy / PDF" : "Print quote / PDF";
 
   const STAGES: { key: string; label: string; hint: string }[] = [
     { key: "to_price",      label: "Needs pricing",   hint: "came in from a customer" },
@@ -1388,6 +1392,15 @@ const parseRand = (s: string): number => {
                     || c.name.toLowerCase().includes(counterFind.trim().toLowerCase()))
                   .map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
               </select>
+              {!addingCustomer
+                ? <button className="mb-btn" style={{ width: "100%", marginBottom: 10 }} onClick={() => setAddingCustomer(true)}>+ New customer</button>
+                : <div style={{ marginBottom: 10 }}>
+                    <AddCustomer isAdmin={role === "admin"} onCancel={() => setAddingCustomer(false)}
+                      onDone={(id, label) => {
+                        setCustomers((cs) => cs.some((c) => c.id === id) ? cs : [...cs, { id, name: label }].sort((a, b) => a.name.localeCompare(b.name)));
+                        setCounterCustomer(id); setAddingCustomer(false);
+                      }} />
+                  </div>}
 
               <div className="mb-rows">
                 {cart.map((c) => (

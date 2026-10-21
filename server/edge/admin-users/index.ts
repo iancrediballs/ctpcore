@@ -151,7 +151,18 @@ Deno.serve(async (req: Request) => {
         display_name: name || email.split("@")[0],
       });
 
-      return json({ ok: true, id: invited.user.id, email, role });
+      // 0057: a customer invite can name the person (and so the company) the
+      // login belongs to. Only an unlinked person is linked; nothing else changes.
+      let linked: number | null = null;
+      if (role === "customer" && body.person_id != null) {
+        const { data: p } = await client.from("customer_person")
+          .update({ auth_user_id: invited.user.id, updated_at: new Date().toISOString() })
+          .eq("id", Number(body.person_id)).is("auth_user_id", null).is("deleted_at", null)
+          .select("id").maybeSingle();
+        linked = p?.id ?? null;
+      }
+
+      return json({ ok: true, id: invited.user.id, email, role, person_linked: linked });
     }
 
     // ── change role ───────────────────────────────────────────────────────

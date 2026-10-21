@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import * as api from "./data/api";
 import { money, stockClass, type Hit } from "./App";
 import { buildDocHTML, openPrintWindow, type DocCompany } from "./invoiceDoc";
+import AddCustomer from "./admin/AddCustomer";
 
 type Customer = { id: number; code: string; name: string; contact: string | null; phone: string | null; price_tier: string };
 type Loc = { id: number; code: string; name: string };
@@ -79,6 +80,7 @@ function NewQuote({ onClose, onCreated }: { onClose: () => void; onCreated: (d: 
   const [locs, setLocs] = useState<Loc[]>([]);
   const [cust, setCust] = useState<number | null>(null);
   const [find, setFind] = useState("");   // 0056: Zoho customers make this list long
+  const [adding, setAdding] = useState(false);   // Phase 1: Zoho-first add customer
   const [loc, setLoc] = useState<number | null>(null);
   const [err, setErr] = useState("");
 
@@ -116,6 +118,10 @@ function NewQuote({ onClose, onCreated }: { onClose: () => void; onCreated: (d: 
               .map((c) => <option key={c.id} value={c.id}>{c.name} · {c.price_tier}</option>)}
           </select>
         </label>
+        {!adding
+          ? <button onClick={() => setAdding(true)}>+ New customer</button>
+          : <AddCustomer isAdmin={false} onCancel={() => setAdding(false)}
+              onDone={async (id) => { setCusts(await api.listCustomers<Customer[]>()); setCust(id); setAdding(false); }} />}
         <label className="fld">Fulfill from
           <select value={loc ?? ""} onChange={(e) => setLoc(Number(e.target.value))}>
             {locs.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}

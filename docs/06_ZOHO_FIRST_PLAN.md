@@ -168,3 +168,22 @@ don't need it. When it is active, generate one code with the Books scopes plus t
 Inventory scopes above, and Phase 3 is built on packages/shipments/receives from
 the start instead of being reworked later. Check the Inventory plan's API cap: it
 is separate from Books' 5,000/day and adds headroom.
+
+## 10. Decisions (Ian, 21 Oct 2026) — and where they are applied
+
+1. **Sales orders are CONFIRMED (open) in Zoho**, so they commit stock;
+   invoices and bills stay **DRAFT** for Michelle. *Applied 21 Oct:* the
+   accept-quote path creates the SO and marks it open in the same step
+   (`_shared/zoho.ts salesOrderFor`), writes Zoho's status back
+   (`zoho_so_status = open`), and a failed confirm leaves a visible warning on
+   the order instead of blocking it. Tested live: test SO-00010 draft → open,
+   committed stock 1, then deleted. Phase 2 (estimates → SO) keeps this.
+2. **Zoho numbers the invoices.** *Applied 21 Oct:* `zoho_config.use_ctp_invoice_number
+   = false`. CTP Core still allocates its internal number (reference
+   `CTP-INV-<no>` on the Zoho invoice, idempotency); the app's printout is now a
+   "copy" carrying Zoho's invoice number once assigned.
+3. **Michelle sends quotes and invoices to customers from Zoho; the app sends
+   no customer documents.** Already true: the app's only emails are staff
+   notifications (Resend → internal recipients). Phase 2: estimates are created
+   in Zoho as drafts; Michelle sends them; the app shows status and lets the
+   customer accept in-app.

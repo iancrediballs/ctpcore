@@ -73,7 +73,9 @@ Deno.serve(async (req: Request) => {
   if (oErr) return json({ error: oErr.message }, 500);
   if (!o) return json({ error: "No such order" }, 404);
   const cust = (Array.isArray(o.customer) ? o.customer[0] : o.customer) as { id: number; name: string; auth_user_id: string | null; zoho_contact_id: string | null } | null;
-  if (!cust || cust.auth_user_id !== uid) return json({ error: "That order belongs to a different customer" }, 403);
+  // 0057: a login belongs to a company directly (customer.auth_user_id) or as one of its people
+  const { data: mine } = await db.rpc("login_company", { p_auth_user: uid });
+  if (!cust || Number(mine) !== Number(o.customer_id)) return json({ error: "That order belongs to a different customer" }, 403);
 
   // already done (a retry after the response was lost)
   if (o.status === "confirmed") {
@@ -95,7 +97,7 @@ Deno.serve(async (req: Request) => {
   const live = !!(cfg?.push_enabled && cfg?.push_from && new Date(cfg.push_from) <= new Date());
   const log: Logger = async (r) => { await db.from("zoho_push_log").insert({ ...r, actor: uid }); };
 
-  let so: { salesorder_id: string; salesorder_number: string; created: boolean; warning?: string } | null = null;
+  let so: { salesorder_id: string; salesorder_number: string; status: string; created: boolean; warning?: string } | null = null;
   if (live) {
     await zohoInit(db);
     const missing = zohoMissing();
@@ -133,10 +135,14 @@ Deno.serve(async (req: Request) => {
     }
     return json({ error: `Nothing was accepted or reserved: ${accErr.message.replace(/^[A-Z0-9]+: /, "")}` }, 409);
   }
-  if (so?.warning) await db.from("sales_order").update({ zoho_so_error: so.warning }).eq("id", orderId);
+  // Zoho's own status (open = confirmed, since 21 Oct) over accept_quote's default
+  if (so) {
+    await db.from("sales_order").update({ zoho_so_status: so.status === "existing" ? undefined : so.status,
+      zoho_so_status_at: new Date().toISOString(), zoho_so_error: so.warning ?? null }).eq("id", orderId);
+  }
 
   return json({ ok: true, already: acc?.already ?? false, order_id: orderId, number: o.number,
                 zoho_salesorder_id: so?.salesorder_id ?? null, zoho_salesorder_number: so?.salesorder_number ?? null,
-                zoho: live ? "sales order raised (draft)" : "not sent: Zoho sending is off or before the go-live date",
+                zoho: live ? `sales order raised (${so?.status === "open" ? "confirmed" : so?.status ?? "draft"})` : "not sent: Zoho sending is off or before the go-live date",
                 reserved_lines: acc?.reserved_lines ?? 0 });
 });

@@ -14,7 +14,7 @@
 // POST { "action": "status" } says whether a token is stored, nothing more.
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient, type SupabaseClient } from "jsr:@supabase/supabase-js@2";
-import { zohoInit, zohoToken } from "../_shared/zoho.ts";
+import { zohoInit, zohoToken, zoho } from "../_shared/zoho.ts";
 
 const env = (k: string) => Deno.env.get(k) ?? "";
 const json = (b: unknown, status = 200) =>
@@ -169,6 +169,36 @@ Deno.serve(async (req: Request) => {
       // deno-lint-ignore no-explicit-any
       prefs: Object.keys(prefs).filter((k) => /inventory|stock|track|estimate|salesorder|price|discount|tax/i.test(k)).map((k) => `${k}=${JSON.stringify((prefs as any)[k])?.slice(0, 80)}`),
       probe });
+  }
+
+  // Admin test of the 21 Oct rule (sales orders CONFIRMED): a TEST sales order for
+  // the Test Account contact, marked open, status read back, then removed
+  // (delete, else void) — the same calls accept-quote makes.
+  if (body.action === "so_test") {
+    await zohoInit(db);
+    const { data: link } = await db.from("zoho_item").select("zoho_item_id, sku").eq("status", "active").not("part_id", "is", null).limit(1).single();
+    const { data: tc } = await db.from("customer").select("zoho_contact_id").eq("code", "TESTACC").maybeSingle();
+    if (!link || !tc?.zoho_contact_id) return json({ ok: false, error: "no test item/contact" }, 412);
+    const stamp = new Date().toISOString().replace(/[-:T]/g, "").slice(0, 12);
+    const out: Record<string, unknown> = { stamp };
+    const so = (await zoho("POST", "/salesorders", {}, { customer_id: tc.zoho_contact_id, reference_number: `CTP-TEST-SO-${stamp}`,
+      line_items: [{ item_id: link.zoho_item_id, quantity: 1, rate: 1, description: `TEST ${link.sku}` }], notes: "CTP CORE TEST - DELETE ME" })).salesorder;
+    out.created = `${so.salesorder_number} status=${so.status}`;
+    try {
+      await zoho("POST", `/salesorders/${so.salesorder_id}/status/open`);
+      const after = (await zoho("GET", `/salesorders/${so.salesorder_id}`)).salesorder;
+      out.after_confirm = after?.status;
+      const item = (await zoho("GET", `/items/${link.zoho_item_id}`)).item;
+      out.item_committed_stock = item?.committed_stock; out.item_available_for_sale = item?.available_for_sale_stock;
+    } finally {
+      try { await zoho("DELETE", `/salesorders/${so.salesorder_id}`); out.removed = "deleted"; }
+      catch (e) {
+        out.delete_refused = e instanceof Error ? e.message : String(e);
+        try { await zoho("POST", `/salesorders/${so.salesorder_id}/status/void`); out.removed = "voided"; }
+        catch (e2) { out.removed = "FAILED: " + (e2 instanceof Error ? e2.message : String(e2)); }
+      }
+    }
+    return json({ ok: out.after_confirm === "open" && String(out.removed).match(/deleted|voided/) !== null, ...out });
   }
 
   // READ-ONLY: one Zoho document, for verifying a live test

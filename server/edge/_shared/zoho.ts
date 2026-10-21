@@ -206,8 +206,12 @@ export async function salesOrderFor(db: SupabaseClient, cfg: any, orderId: numbe
   if (existing && !["void", "cancelled"].includes(String(existing.status))) {
     await log({ doc_type: "salesorder", ctp_id: orderId, ctp_ref: o.number, action: "found_existing", ok: true,
                 zoho_id: String(existing.salesorder_id), message: `${o.number} → existing Zoho sales order ${existing.salesorder_number}` });
+    let st = String(existing.status ?? "");
+    if (st === "draft") {   // a retry found our own draft: confirm it now (21 Oct rule)
+      try { await zoho("POST", `/salesorders/${existing.salesorder_id}/status/open`); st = "open"; } catch { /* stays draft; shown */ }
+    }
     return { salesorder_id: String(existing.salesorder_id), salesorder_number: String(existing.salesorder_number),
-             status: String(existing.status ?? ""), created: false };
+             status: st, created: false };
   }
   // deno-lint-ignore no-explicit-any
   const lines = ((o.lines ?? []) as any[]).filter((l) => !l.deleted_at);
@@ -228,14 +232,32 @@ export async function salesOrderFor(db: SupabaseClient, cfg: any, orderId: numbe
     notes: `Accepted in CTP Core · order ${o.number}`,
   });
   const so = b.salesorder;
-  const st = String(so.status ?? "");
-  const warning = st && st !== "draft" ? `Zoho created sales order ${so.salesorder_number} as "${st}", not draft.` : undefined;
+  // Ian, 21 Oct: sales orders are CONFIRMED (open) so they commit stock in Zoho.
+  // Invoices and bills stay draft for Michelle. Zoho creates the SO as draft;
+  // marking it open is a second call — if it fails the SO stays draft and the
+  // order says so (it is still a valid order; Michelle can confirm it in Zoho).
+  let st = String(so.status ?? "");
+  let warning: string | undefined;
+  if (st === "draft") {
+    try {
+      await zoho("POST", `/salesorders/${so.salesorder_id}/status/open`);
+      st = String((await zoho("GET", `/salesorders/${so.salesorder_id}`)).salesorder?.status ?? "open");
+    } catch (e) {
+      warning = `Sales order ${so.salesorder_number} could not be confirmed in Zoho and is still a draft: ${e instanceof Error ? e.message : String(e)}`;
+    }
+  }
+  if (!warning && st !== "open") warning = `Zoho shows sales order ${so.salesorder_number} as "${st}", not confirmed.`;
   await log({ doc_type: "salesorder", ctp_id: orderId, ctp_ref: o.number, action: "create", ok: !warning,
               zoho_id: String(so.salesorder_id), message: `${o.number} → Zoho sales order ${so.salesorder_number} (${st})${warning ? " — " + warning : ""}` });
   return { salesorder_id: String(so.salesorder_id), salesorder_number: String(so.salesorder_number), status: st, created: true, warning };
 }
 
-export async function deleteSalesOrder(id: string) { await zoho("DELETE", `/salesorders/${id}`); }
+export async function deleteSalesOrder(id: string) {
+  try { await zoho("DELETE", `/salesorders/${id}`); }
+  catch (e) {   // a confirmed SO Zoho will not delete is voided instead
+    await zoho("POST", `/salesorders/${id}/status/void`).catch(() => { throw e; });
+  }
+}
 
 /** Invoice lines linked to the sales order they come from: each CTP line takes
  *  the first unused sales-order line with the same Zoho item, so Zoho records

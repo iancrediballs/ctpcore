@@ -307,6 +307,9 @@ async function liveTest(db: SupabaseClient, cfg: any, log: Logger) {
       date: today, is_inclusive_tax: false, line_items: [soLine], notes: "CTP CORE TEST - DELETE ME" })).salesorder;
     note("salesorder", String(so.salesorder_id), `${so.salesorder_number} status=${so.status}`);
     out.salesorder_default_status = so.status;
+    // 21 Oct: sales orders are confirmed (open) — prove Zoho accepts it
+    await zoho("POST", `/salesorders/${so.salesorder_id}/status/open`);
+    out.salesorder_confirmed_status = (await zoho("GET", `/salesorders/${so.salesorder_id}`)).salesorder?.status;
     out.salesorder_found_by_reference = !!(await findByReference("salesorders", `CTP-TEST-SO-${stamp}`));
     const linked = await linkToSalesOrder(String(so.salesorder_id), [soLine]);
     const soInvBody = { customer_id: linked!.customer_id, reference_number: `CTP-TEST-SOINV-${stamp}`, date: today,
