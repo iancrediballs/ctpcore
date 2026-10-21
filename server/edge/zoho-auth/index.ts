@@ -126,6 +126,51 @@ Deno.serve(async (req: Request) => {
     return json({ ok: out.failed.length === 0, total, offset, limit, next: offset + limit < total ? offset + limit : null, ...out });
   }
 
+  // READ-ONLY assessment for the Zoho-first plan (docs/06): plan, settings,
+  // inventory tracking, and which endpoints the current token can read.
+  if (body.action === "assess") {
+    await zohoInit(db);
+    const tk = await zohoToken();
+    const base = "https://www.zohoapis.com/books/v3";
+    const org = env("ZOHO_ORG_ID");
+    const get = async (path: string) => {
+      const r = await fetch(`${base}${path}${path.includes("?") ? "&" : "?"}organization_id=${org}`, { headers: { Authorization: `Zoho-oauthtoken ${tk}` } });
+      const j = await r.json().catch(() => ({}));
+      return { status: r.status, code: j.code, message: j.message, j, limits: {
+        remaining: r.headers.get("x-rate-limit-remaining"), limit: r.headers.get("x-rate-limit-limit"), reset: r.headers.get("x-rate-limit-reset") } };
+    };
+    const o = await get(`/organizations/${org}`);
+    const oo = o.j.organization ?? {};
+    const items = await get("/items?per_page=200&filter_by=Status.All");
+    // deno-lint-ignore no-explicit-any
+    const it = (items.j.items ?? []) as any[];
+    const one = it[0] ? await get(`/items/${it[0].item_id}`) : null;
+    const probe: Record<string, unknown> = {};
+    for (const p of ["/estimates?per_page=1", "/salesorders?per_page=1", "/invoices?per_page=1", "/creditnotes?per_page=1",
+                     "/customerpayments?per_page=1", "/vendorpayments?per_page=1", "/purchaseorders?per_page=1", "/bills?per_page=1",
+                     "/pricebooks", "/settings/preferences", "/settings/warehouses", "/settings/branches", "/users/me"]) {
+      const x = await get(p);
+      probe[p] = `${x.status}${x.code ? " code " + x.code : ""}${x.code ? " " + (x.message ?? "") : ""}`;
+    }
+    const prefs = (await get("/settings/preferences")).j.preferences ?? {};
+    return json({ ok: true,
+      org: { name: oo.name, plan_type: oo.plan_type, plan_name: oo.plan_name, plan_period: oo.plan_period, country: oo.country,
+             currency: oo.currency_code, is_inventory_enabled: oo.is_inventory_enabled ?? null, version: oo.version,
+             // deno-lint-ignore no-explicit-any
+             keys: Object.keys(oo).filter((k) => /plan|inventory|track|version|edition|warehouse|branch|location/i.test(k)).map((k) => `${k}=${JSON.stringify((oo as any)[k])}`) },
+      rate_limit_headers: o.limits,
+      items: { n: it.length,
+        item_types: [...new Set(it.map((x) => x.item_type))], product_types: [...new Set(it.map((x) => x.product_type))],
+        tracked: it.filter((x) => x.track_inventory === true || x.is_track_inventory === true || x.item_type === "inventory").length,
+        with_stock_field: it.filter((x) => x.stock_on_hand !== undefined).length,
+        stock_total: it.reduce((s, x) => s + (Number(x.stock_on_hand) || 0), 0),
+        // deno-lint-ignore no-explicit-any
+        sample_keys: one ? Object.keys(one.j.item ?? {}).filter((k) => /stock|inventory|track|warehouse|location|reorder|price|rate/i.test(k)).map((k) => `${k}=${JSON.stringify((one.j.item as any)[k])?.slice(0, 80)}`) : [] },
+      // deno-lint-ignore no-explicit-any
+      prefs: Object.keys(prefs).filter((k) => /inventory|stock|track|estimate|salesorder|price|discount|tax/i.test(k)).map((k) => `${k}=${JSON.stringify((prefs as any)[k])?.slice(0, 80)}`),
+      probe });
+  }
+
   // READ-ONLY: one Zoho document, for verifying a live test
   //   { action: "doc", kind: "salesorders" | "invoices" | "contacts", id }
   if (body.action === "doc") {
