@@ -263,21 +263,32 @@ export async function deleteSalesOrder(id: string) {
  *  the first unused sales-order line with the same Zoho item, so Zoho records
  *  the invoice as converted from the order (no standalone duplicate). */
 // deno-lint-ignore no-explicit-any
-export async function linkToSalesOrder(soId: string, lines: any[]): Promise<{ lines: any[]; customer_id: string; status: string; linked: number } | null> {
+export async function linkToSalesOrder(soId: string, lines: any[]): Promise<{ lines: any[]; customer_id: string; status: string; linked: number;
+  invoices: { invoice_id: string; invoice_number: string; status: string }[] } | null> {
   let so;
   try { so = (await zoho("GET", `/salesorders/${soId}`)).salesorder; }
   catch (e) {
     if (/\(404|does not exist|not found/i.test(e instanceof Error ? e.message : String(e))) return null;
     throw e;
   }
+  // 0059: the sales order's own rate, discount and tax win (Michelle may have
+  // corrected them in Zoho); the quantity stays what CTP actually sent out.
   // deno-lint-ignore no-explicit-any
-  const pool = ((so.line_items ?? []) as any[]).map((x) => ({ id: String(x.line_item_id), item: String(x.item_id), used: false }));
+  const pool = ((so.line_items ?? []) as any[]).map((x) => ({ id: String(x.line_item_id), item: String(x.item_id), used: false,
+    rate: x.rate, discount: x.discount, tax_id: x.tax_id }));
   let linked = 0;
   const out = lines.map((l) => {
     const hit = pool.find((p) => !p.used && p.item === String(l.item_id));
     if (!hit) return l;
     hit.used = true; linked++;
-    return { ...l, salesorder_item_id: hit.id };
+    const { discount: _d, ...rest } = l;
+    const disc = hit.discount !== undefined && hit.discount !== null && String(hit.discount) !== "0" && String(hit.discount) !== "" ? { discount: hit.discount } : {};
+    return { ...rest, salesorder_item_id: hit.id, ...(hit.rate !== undefined ? { rate: hit.rate } : {}),
+             ...(hit.tax_id ? { tax_id: hit.tax_id } : {}), ...disc };
   });
-  return { lines: out, customer_id: String(so.customer_id), status: String(so.status ?? ""), linked };
+  // 0059: invoices accounts already raised from this sales order in Zoho
+  // deno-lint-ignore no-explicit-any
+  const invoices = ((so.invoices ?? []) as any[]).filter((i) => !["void"].includes(String(i.status)))
+    .map((i) => ({ invoice_id: String(i.invoice_id), invoice_number: String(i.invoice_number ?? ""), status: String(i.status ?? "") }));
+  return { lines: out, customer_id: String(so.customer_id), status: String(so.status ?? ""), linked, invoices };
 }

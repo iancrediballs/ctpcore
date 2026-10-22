@@ -76,6 +76,9 @@ const customer = new Table({
   code: column.text, name: column.text, contact: column.text, phone: column.text,
   email: column.text, price_tier: column.text, notes: column.text, auth_user_id: column.text,
   rev: column.integer, updated_at: column.text, deleted_at: column.text, origin: column.text,
+  // 0059: account terms read from the Zoho contact (display only; nothing blocks on payment)
+  zoho_terms_days: column.integer, zoho_terms_label: column.text, zoho_outstanding_minor: column.integer,
+  zoho_unused_credit_minor: column.integer, zoho_credit_limit_minor: column.integer, zoho_terms_synced_at: column.text,
 }, { indexes: { auth: ["auth_user_id"] } });
 
 const sales_order = new Table({
@@ -94,6 +97,12 @@ const sales_order = new Table({
   zoho_salesorder_id: column.text, zoho_salesorder_number: column.text, zoho_created_at: column.text,
   // 0054: the sales order's own Zoho status, apart from the invoice's
   zoho_so_status: column.text, zoho_so_status_at: column.text, zoho_so_error: column.text,
+  // 0058: accepted on the customer's behalf by an admin
+  accepted_by: column.text, accepted_note: column.text,
+  // 0059: Michelle's side of the sales order, read back from Zoho; the fulfil gate
+  zoho_so_emailed: column.integer, zoho_so_modified_at: column.text, zoho_so_synced_at: column.text,
+  zoho_so_terms_days: column.integer, zoho_so_terms_label: column.text, zoho_so_readback_issue: column.text,
+  fulfil_override_by: column.text, fulfil_override_note: column.text, fulfil_override_at: column.text,
 }, { indexes: { customer: ["customer_id"], status: ["status"] } });
 
 const sales_line = new Table({

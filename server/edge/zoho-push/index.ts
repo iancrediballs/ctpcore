@@ -22,7 +22,9 @@
 // Calls (POST JSON):
 //   { "action": "push" }                         every queued document
 //   { "action": "push", "doc_type": "invoice", "ctp_id": 42 }   one document
-//   { "action": "status", "force"?: true }      read Zoho status back (draft/sent/paid/void)
+//   { "action": "status", "force"?: true }      read Zoho status back (draft/sent/paid/void);
+//                          sales orders also bring Michelle's edits back (0059)
+//   { "action": "so_sync", "order_id": 43 }     one order's sales order + its customer's terms, now
 //   { "action": "test" }   manager/admin: create a clearly marked TEST draft
 //                          invoice + bill against TEST contacts, read them back,
 //                          then delete all four; returns what was created.
@@ -89,6 +91,21 @@ async function pushInvoice(db: SupabaseClient, cfg: any, id: number, log: Logger
       // (lines carry salesorder_item_id), for the sales order's own contact.
       let customerId: string;
       const so = o.zoho_salesorder_id ? await linkToSalesOrder(o.zoho_salesorder_id, lineItems) : null;
+      // 0059: accounts already invoiced this sales order in Zoho (Michelle, from
+      // the SO) — that invoice IS this order's invoice. Adopt it; never create a
+      // second one.
+      if (so && so.invoices.length) {
+        const mine = so.invoices[0];
+        const { error: e3 } = await db.from("sales_order").update({
+          zoho_invoice_id: mine.invoice_id, zoho_invoice_number: mine.invoice_number, zoho_status: mine.status,
+          zoho_pushed_at: new Date().toISOString(), zoho_status_at: new Date().toISOString(), zoho_error: null,
+        }).eq("id", id);
+        if (e3) throw new Error(`Zoho invoice ${mine.invoice_number} exists for ${o.number} but saving its id failed: ${e3.message}`);
+        await log({ doc_type: "invoice", ctp_id: id, ctp_ref: o.invoice_no, action: "found_existing", ok: true, zoho_id: mine.invoice_id,
+                    message: `${o.number} → Zoho invoice ${mine.invoice_number} (${mine.status}), already raised by accounts from the sales order — not created again` +
+                             (so.invoices.length > 1 ? ` (the SO has ${so.invoices.length} invoices: ${so.invoices.map((i) => i.invoice_number).join(", ")})` : "") });
+        return { ref, zoho_id: mine.invoice_id, number: mine.invoice_number, status: mine.status, already: true, adopted: true };
+      }
       if (so) {
         lineItems = so.lines; customerId = so.customer_id;
         soNote = ` from sales order (${so.linked}/${lineItems.length} lines linked)`;
@@ -251,6 +268,8 @@ async function refreshStatus(db: SupabaseClient, log: Logger, force: boolean) {
         const b = await zoho("GET", `/${k.path}/${r[k.idCol]}`);
         status = String(b[k.key]?.status ?? "unknown");
         number = b[k.key]?.[k.numKey] ?? number;
+        // 0059: the same read carries Michelle's edits — apply them (Zoho wins)
+        if (k.doc === "salesorder") await applySalesOrder(db, r.id, r[k.ref], b.salesorder, log);
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         // Zoho answers a missing record with HTTP 404 or a "does not exist" code.
@@ -271,7 +290,79 @@ async function refreshStatus(db: SupabaseClient, log: Logger, force: boolean) {
       await db.from(k.table).update(patch).eq("id", r.id);
     }
   }
-  return { checked, changed: changes.length, changes };
+  const terms = await refreshTerms(db, log, force ? 10 * 60_000 : 6 * 3600_000);
+  return { checked, changed: changes.length, changes, terms };
+}
+
+// ── 0059: read-back of one sales order (Michelle's edits) ────────────────────
+// deno-lint-ignore no-explicit-any
+async function applySalesOrder(db: SupabaseClient, orderId: number, ref: string, so: any, log: Logger) {
+  if (!so) return null;
+  const { data, error } = await db.rpc("apply_zoho_salesorder", { p_order_id: orderId, p_so: {
+    salesorder_number: so.salesorder_number, status: so.status, is_emailed: so.is_emailed,
+    last_modified_time: so.last_modified_time, payment_terms: so.payment_terms, payment_terms_label: so.payment_terms_label,
+    // deno-lint-ignore no-explicit-any
+    line_items: (so.line_items ?? []).map((l: any) => ({ line_item_id: l.line_item_id, item_id: l.item_id, quantity: l.quantity,
+      rate: l.rate, discount: l.discount, discount_amount: l.discount_amount, sku: l.sku, name: l.name })),
+  } });
+  if (error) {
+    await log({ doc_type: "salesorder", ctp_id: orderId, ctp_ref: ref, action: "readback_error", ok: false, message: error.message });
+    return null;
+  }
+  if ((data?.changes?.length ?? 0) + (data?.warnings?.length ?? 0) > 0) {
+    await log({ doc_type: "salesorder", ctp_id: orderId, ctp_ref: ref, action: "readback", ok: !(data.warnings?.length), zoho_id: String(so.salesorder_id),
+                message: `${ref}: ${[...(data.changes ?? []), ...(data.warnings ?? [])].join("; ")}`.slice(0, 2000) });
+  }
+  return data;
+}
+
+// Account terms from the Zoho contact, for customers with live orders. One GET
+// per customer, at most every `maxAge` (6 h on the schedule).
+async function refreshTerms(db: SupabaseClient, log: Logger, maxAge: number, only?: number) {
+  let q = db.from("sales_order").select("customer_id").is("deleted_at", null).in("status", ["quote", "confirmed", "fulfilled"]);
+  if (only) q = q.eq("customer_id", only);
+  const { data: live } = await q;
+  const ids = [...new Set((live ?? []).map((r) => r.customer_id))];
+  if (!ids.length) return 0;
+  const { data: custs } = await db.from("customer").select("id, code, zoho_contact_id, zoho_terms_synced_at").in("id", ids).not("zoho_contact_id", "is", null);
+  let n = 0;
+  for (const c of custs ?? []) {
+    if (c.zoho_terms_synced_at && Date.now() - new Date(c.zoho_terms_synced_at).getTime() < maxAge) continue;
+    try {
+      const b = await zoho("GET", `/contacts/${c.zoho_contact_id}`);
+      const k = b.contact ?? {};
+      await db.rpc("apply_zoho_contact_terms", { p_customer_id: c.id, p_c: {
+        payment_terms: k.payment_terms, payment_terms_label: k.payment_terms_label, credit_limit: k.credit_limit,
+        outstanding_receivable_amount: k.outstanding_receivable_amount, unused_credits_receivable_amount: k.unused_credits_receivable_amount } });
+      n++;
+    } catch (e) {
+      await log({ doc_type: "contact", ctp_id: c.id, ctp_ref: c.code, action: "status_error", ok: false, message: e instanceof Error ? e.message : String(e) });
+    }
+  }
+  return n;
+}
+
+// One order, on demand (the desk opens it). Throttled to once per 30 s per order.
+async function syncOne(db: SupabaseClient, log: Logger, orderId: number, force: boolean) {
+  const { data: o } = await db.from("sales_order").select("id, number, customer_id, zoho_salesorder_id, zoho_so_synced_at, zoho_so_status")
+    .eq("id", orderId).is("deleted_at", null).maybeSingle();
+  if (!o) return { skipped: "no such order" };
+  if (!o.zoho_salesorder_id) return { skipped: "no Zoho sales order" };
+  if (!force && o.zoho_so_synced_at && Date.now() - new Date(o.zoho_so_synced_at).getTime() < 30_000) return { skipped: "read less than 30 s ago" };
+  let so;
+  try { so = (await zoho("GET", `/salesorders/${o.zoho_salesorder_id}`)).salesorder; }
+  catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (/\(404|does not exist|not found/i.test(msg)) {
+      await db.from("sales_order").update({ zoho_so_status: "deleted", zoho_so_status_at: new Date().toISOString(),
+        zoho_so_error: "This document was DELETED in Zoho. It will not be re-sent automatically — ask the accountant." }).eq("id", orderId);
+      return { status: "deleted" };
+    }
+    throw e;
+  }
+  const r = await applySalesOrder(db, orderId, o.number, so, log);
+  const terms = await refreshTerms(db, log, 60 * 60_000, o.customer_id);
+  return { status: so?.status, emailed: so?.is_emailed, changes: r?.changes ?? [], warnings: r?.warnings ?? [], terms };
 }
 
 // ── the clearly-marked live test ─────────────────────────────────────────────
@@ -376,7 +467,7 @@ Deno.serve(async (req: Request) => {
   // invoice issued before go-live does not report a failure that isn't one.
   // (Status read-back is allowed while sending is off: documents already in
   // Zoho still change status there.)
-  if (body.action !== "test" && body.action !== "status" && (!cfg?.push_enabled || !cfg?.push_from)) {
+  if (body.action !== "test" && body.action !== "status" && body.action !== "so_sync" && (!cfg?.push_enabled || !cfg?.push_from)) {
     return json({ ok: true, skipped: "Sending to Zoho is off (Settings → Zoho). Nothing was sent." });
   }
   await zohoInit(db);
@@ -386,6 +477,11 @@ Deno.serve(async (req: Request) => {
   try {
     if (body.action === "status") {
       return json({ ok: true, ...(await refreshStatus(db, log, body.force === true)) });
+    }
+    if (body.action === "so_sync") {
+      const id = Number(body.order_id);
+      if (!Number.isInteger(id) || id <= 0) return json({ error: "order_id is required" }, 400);
+      return json({ ok: true, ...(await syncOne(db, log, id, body.force === true)) });
     }
     if (body.action === "test") {
       if (!who.manager && who.actor) return json({ error: "Only a manager or admin can run the Zoho test" }, 403);

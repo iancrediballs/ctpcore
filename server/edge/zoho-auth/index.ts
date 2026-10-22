@@ -224,6 +224,11 @@ Deno.serve(async (req: Request) => {
       // deno-lint-ignore no-explicit-any
       salesorders: (d.salesorders ?? []).map((s: any) => s.salesorder_number), invoices: (d.invoices ?? []).map((i: any) => `${i.invoice_number}:${i.status}`),
       invoiced_status: d.invoiced_status, order_status: d.order_status,
+      // 22 Oct: what "Michelle's side is done" can be read from
+      is_emailed: d.is_emailed, current_sub_status: d.current_sub_status, last_modified_time: d.last_modified_time,
+      payment_terms: d.payment_terms, payment_terms_label: d.payment_terms_label,
+      // deno-lint-ignore no-explicit-any
+      state_keys: Object.keys(d).filter((k) => /email|sent|status|modified|approv|submit|terms|credit|outstanding|receivable|unused/i.test(k)).map((k) => `${k}=${JSON.stringify((d as any)[k])?.slice(0, 120)}`),
       // deno-lint-ignore no-explicit-any
       contact_keys: body.kind === "contacts" ? Object.keys(d).filter((k) => /tax|vat|gst|billing|address|person|email|phone|type|company|portal|place/i.test(k)).map((k) => `${k}=${JSON.stringify((d as any)[k])?.slice(0, 160)}`) : undefined,
     } });

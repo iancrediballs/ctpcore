@@ -12,13 +12,16 @@ export async function pushToZoho(docType: "invoice" | "bill", ctpId: number): Pr
     const { data, error } = await supabase.functions.invoke("zoho-push",
       { body: { action: "push", doc_type: docType, ctp_id: ctpId } });
     let res = data as { ok?: boolean; skipped?: string; error?: string;
-                        results?: { ok: boolean; number?: string; status?: string; error?: string; warning?: string }[] } | null;
+                        results?: { ok: boolean; number?: string; status?: string; error?: string; warning?: string; adopted?: boolean }[] } | null;
     if (error) {
       try { res = await (error as { context?: Response }).context?.json(); } catch { /* keep error */ }
       if (!res) return { ok: false, message: `NOT sent to Zoho: ${error.message}` };
     }
     if (res?.skipped) return { ok: true, message: res.skipped };
     const r = res?.results?.[0];
+    if (r?.ok && r.adopted) {   // 0059: accounts had already invoiced the sales order in Zoho
+      return { ok: true, message: `Already invoiced by accounts in Zoho: ${r.number ?? ""} (${r.status ?? ""}) — linked, not created again` };
+    }
     if (r?.ok) {
       return { ok: !r.warning, message: `Sent to Zoho as ${r.status ?? "draft"} ${r.number ?? ""}`.trim() + (r.warning ?? "") };
     }
@@ -39,6 +42,45 @@ export async function refreshZohoStatus(force = false): Promise<{ ok: boolean; c
   } catch (e) {
     return { ok: false, changed: 0, message: e instanceof Error ? e.message : String(e) };
   }
+}
+
+/** 0059: read one order's Zoho sales order back now (Michelle's edits, sent
+ *  state) and its customer's account terms. Throttled server-side to 30 s per
+ *  order; the change arrives through sync. Never throws. */
+export async function syncSalesOrder(orderId: number, force = false): Promise<{ ok: boolean; changes: string[]; message?: string }> {
+  try {
+    const { data, error } = await supabase.functions.invoke("zoho-push", { body: { action: "so_sync", order_id: orderId, force } });
+    if (error) return { ok: false, changes: [], message: error.message };
+    const d = data as { ok?: boolean; changes?: string[]; warnings?: string[]; error?: string; skipped?: string };
+    return { ok: d?.ok !== false, changes: [...(d?.changes ?? []), ...(d?.warnings ?? [])], message: d?.error ?? d?.skipped };
+  } catch (e) {
+    return { ok: false, changes: [], message: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+/** 0059: admin releases an order for fulfilment before accounts have sent the
+ *  Zoho sales order. The note is required and goes on the order. */
+export async function overrideFulfilGate(orderId: number, note: string): Promise<void> {
+  const { error } = await supabase.rpc("override_fulfil_gate", { p_order_id: orderId, p_note: note });
+  if (error) throw new Error(error.message);
+}
+
+/** 0059: why "Fulfil" is not allowed yet — the same rules as the database's
+ *  fulfil_block_reason(), from the synced columns, so the button can say why
+ *  before anyone presses it. The database still has the final word. */
+export function fulfilBlockReason(o: {
+  zoho_salesorder_id?: string | null; zoho_salesorder_number?: string | null; zoho_so_status?: string | null;
+  zoho_so_emailed?: boolean | null; zoho_so_synced_at?: string | null; zoho_so_readback_issue?: string | null;
+  fulfil_override_at?: string | null;
+}): string | null {
+  if (!o.zoho_salesorder_id || o.fulfil_override_at) return null;
+  const st = o.zoho_so_status ?? "draft";
+  if (st === "deleted" || st === "void") return `The Zoho sales order ${o.zoho_salesorder_number ?? ""} was ${st} in Zoho — ask accounts before taking stock out.`;
+  if (!["open", "partially_invoiced", "invoiced", "closed"].includes(st)) return "Waiting for accounts (Zoho) to approve and send the sales order.";
+  if (!o.zoho_so_synced_at) return "Waiting for the sales order to be read back from Zoho — press Refresh.";
+  if (!o.zoho_so_emailed) return "Waiting for accounts (Zoho) to approve and send the sales order.";
+  if (o.zoho_so_readback_issue) return `The Zoho sales order has a line CTP cannot match: ${o.zoho_so_readback_issue}`;
+  return null;
 }
 
 /** How a Zoho status reads to staff. Zoho's own word is kept in the data;

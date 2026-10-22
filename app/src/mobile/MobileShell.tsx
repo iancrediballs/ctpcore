@@ -16,7 +16,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useStatus } from "@powersync/react";
 import * as api from "../data/api";
-import { refreshZohoStatus, zohoStatusLabel } from "../data/zoho";
+import { refreshZohoStatus, zohoStatusLabel, syncSalesOrder, overrideFulfilGate, fulfilBlockReason } from "../data/zoho";
 import AddCustomer from "../admin/AddCustomer";
 import { assetUrl, photoWebUrl } from "../assets";
 import { DiagramCanvas, Marker, loadMarkerScale, saveMarkerScale, markerRadius, MARKER_SCALE_MIN, MARKER_SCALE_MAX, type CanvasApi, type Frame, type Pt } from "./DiagramCanvas";
@@ -98,6 +98,12 @@ type StaffOrder = {
   // 0047/0054: the Zoho Books sales order raised when the customer accepted, and its own status
   zoho_salesorder_number?: string | null; zoho_so_status?: string | null; zoho_so_error?: string | null;
   client_response: string | null; client_responded_at: string | null;
+  // 0059: Michelle's side of the sales order (read back from Zoho), the fulfil gate, account terms
+  zoho_salesorder_id?: string | null; zoho_so_emailed?: boolean; zoho_so_synced_at?: string | null;
+  zoho_so_terms_label?: string | null; zoho_so_terms_days?: number | null; zoho_so_readback_issue?: string | null;
+  fulfil_override_at?: string | null; fulfil_override_note?: string | null; accepted_note?: string | null;
+  cust_terms_label?: string | null; cust_terms_days?: number | null; cust_outstanding_minor?: number | null;
+  cust_credit_limit_minor?: number | null; cust_unused_credit_minor?: number | null;
   unpriced: number; total_minor: number;
   stage: "to_price" | "with_customer" | "to_pick" | "fulfilled" | string;
   lines: StaffLine[];
@@ -815,8 +821,13 @@ const parseRand = (s: string): number => {
    *  as the customer's accept (confirmed Zoho sales order + stock hold); the
    *  admin and the note are recorded on the order. */
   const acceptOnBehalf = useCallback(async (o: StaffOrder) => {
-    const note = window.prompt(`Accept ${o.number} for ${o.customer_name}? This raises the confirmed sales order in Zoho and holds the stock.\nHow did they confirm?`, "Confirmed by  via phone");
+    const note = window.prompt(`Accept ${o.number} for ${o.customer_name}? This raises the confirmed sales order in Zoho and holds the stock.\nWho confirmed it, and how? e.g. "Confirmed by Denver via phone"`, "");
     if (note == null) return;
+    // the old prefill ("Confirmed by  via phone") was saved once with no name in it
+    if (!/\w{2,}/.test(note.replace(/\b(confirmed|by|via|phone|email|e-mail)\b/gi, ""))) {
+      showToast({ text: "Say who confirmed it, e.g. \"Confirmed by Denver via phone\".", err: true });
+      return;
+    }
     setSavingOrder(true);
     try {
       const r = await api.acceptQuoteOnBehalf(o.id, note);
@@ -826,6 +837,32 @@ const parseRand = (s: string): number => {
       loadOrders();
     } catch (e) { showToast({ text: e instanceof Error ? e.message.replace(/^\[CTP web\] could not accept: /, "") : "Could not accept.", err: true }); }
     finally { setSavingOrder(false); }
+  }, [showToast, loadOrders]);
+
+  /** 0059: admin lets an order go out before accounts have sent the Zoho SO. */
+  const releaseForFulfil = useCallback(async (o: StaffOrder) => {
+    const note = window.prompt(`Release ${o.number} for fulfilment before accounts have sent the Zoho sales order?\nWhy? e.g. "Michelle confirmed by phone, customer collecting"`, "");
+    if (note == null) return;
+    setSavingOrder(true);
+    try {
+      await overrideFulfilGate(o.id, note);
+      showToast({ text: `${o.number} released for fulfilment — recorded on the order.` });
+      loadOrders();
+    } catch (e) { showToast({ text: e instanceof Error ? e.message : "Could not release it.", err: true }); }
+    finally { setSavingOrder(false); }
+  }, [showToast, loadOrders]);
+
+  /** 0059: opening an accepted order reads its Zoho sales order back first, so
+   *  Michelle's prices and "sent" show before anyone fulfils. */
+  const [syncingSo, setSyncingSo] = useState<number | null>(null);
+  const syncOrderFromZoho = useCallback(async (o: StaffOrder, force = false) => {
+    if (!o.zoho_salesorder_id || !["to_pick", "fulfilled"].includes(o.stage)) return;
+    setSyncingSo(o.id);
+    const r = await syncSalesOrder(o.id, force);
+    setSyncingSo(null);
+    if (r.changes.length) showToast({ text: `${o.number}: Zoho changes applied — ${r.changes.join("; ")}` });
+    else if (force && !r.ok) showToast({ text: `Could not read Zoho: ${r.message ?? "unknown error"}`, err: true });
+    loadOrders();
   }, [showToast, loadOrders]);
 
   const fulfilOrder = useCallback(async (o: StaffOrder) => {
@@ -1474,7 +1511,7 @@ const parseRand = (s: string): number => {
                 return (
                   <div className="mb-rows" key={o.id} style={{ marginBottom: 12 }}>
                     <button className="mb-row" style={{ width: "100%", background: "none", border: 0, textAlign: "left" }}
-                      onClick={() => { setOpenOrder(open ? null : o.id); setDraftPrices({}); }}>
+                      onClick={() => { setOpenOrder(open ? null : o.id); setDraftPrices({}); if (!open) void syncOrderFromZoho(o); }}>
                       <span style={{ flex: 1, minWidth: 0 }}>
                         <div className="mb-cname">{o.customer_name}</div>
                         <div className="mb-csku mb-mono">{o.number} · {o.lines.length} line{o.lines.length === 1 ? "" : "s"}</div>
@@ -1564,12 +1601,64 @@ const parseRand = (s: string): number => {
                                   : <> · <span style={{ color: "var(--amber)" }}>no Zoho sales order (accepted while Zoho sending was off) — the invoice goes to Zoho on its own</span></>}
                               </span>
                             </div>
-                            <div className="mb-row">
-                              <button className="mb-btn p" style={{ height: 46 }} disabled={savingOrder}
-                                onClick={() => setPendingAct({ order: o, kind: "fulfil" })}>
-                                Fulfil — take stock out
-                              </button>
-                            </div>
+                            {o.zoho_salesorder_id && (
+                              <div className="mb-row">
+                                <span className="mb-rk">Accounts</span>
+                                <span className="mb-rv">
+                                  {o.zoho_salesorder_number} {zohoStatusLabel(o.zoho_so_status ?? "draft", "salesorder").text}
+                                  {" · "}{o.zoho_so_emailed
+                                    ? <span style={{ color: "var(--green)" }}>sent to the customer</span>
+                                    : <span style={{ color: "var(--amber)" }}>not sent yet</span>}
+                                  {o.zoho_so_terms_label ? <> · terms {o.zoho_so_terms_label}</> : null}
+                                  {o.zoho_so_synced_at ? <> · read {timeAgo(o.zoho_so_synced_at)}</> : null}
+                                  {" · "}<button className="mb-chip" disabled={syncingSo === o.id}
+                                    onClick={() => { void syncOrderFromZoho(o, true); }}>{syncingSo === o.id ? "Reading Zoho…" : "Refresh"}</button>
+                                </span>
+                              </div>
+                            )}
+                            {(o.cust_terms_label || o.cust_outstanding_minor != null) && (
+                              <div className="mb-row">
+                                <span className="mb-rk">Account</span>
+                                <span className="mb-rv">
+                                  {(o.zoho_so_terms_days ?? o.cust_terms_days ?? 0) > 0
+                                    ? <>on account ({o.zoho_so_terms_label ?? o.cust_terms_label}) — no payment needed before goods out</>
+                                    : <>{o.cust_terms_label ?? "terms not set"} in Zoho</>}
+                                  {o.cust_outstanding_minor != null ? <> · outstanding {fmtR(o.cust_outstanding_minor)}</> : null}
+                                  {o.cust_credit_limit_minor != null ? <> · credit limit {fmtR(o.cust_credit_limit_minor)}</> : null}
+                                  {o.cust_unused_credit_minor ? <> · credit {fmtR(o.cust_unused_credit_minor)}</> : null}
+                                </span>
+                              </div>
+                            )}
+                            {(() => {
+                              const why = fulfilBlockReason(o);
+                              return (
+                                <>
+                                  <div className="mb-row">
+                                    <button className="mb-btn p" style={{ height: 46 }} disabled={savingOrder || !!why}
+                                      title={why ?? undefined}
+                                      onClick={() => setPendingAct({ order: o, kind: "fulfil" })}>
+                                      Fulfil — take stock out
+                                    </button>
+                                  </div>
+                                  {why && (
+                                    <div className="mb-row">
+                                      <span className="mb-rk">Not yet</span>
+                                      <span className="mb-rv" style={{ color: "var(--amber)" }}>
+                                        {why}
+                                        {role === "admin" && <> · <button className="mb-chip" disabled={savingOrder}
+                                          onClick={() => { void releaseForFulfil(o); }}>Release anyway (admin)…</button></>}
+                                      </span>
+                                    </div>
+                                  )}
+                                  {o.fulfil_override_at && (
+                                    <div className="mb-row">
+                                      <span className="mb-rk">Released</span>
+                                      <span className="mb-rv">before accounts finished — {o.fulfil_override_note}</span>
+                                    </div>
+                                  )}
+                                </>
+                              );
+                            })()}
                           </>
                         )}
                         {o.stage === "fulfilled" && (
@@ -1618,7 +1707,7 @@ const parseRand = (s: string): number => {
                 return (
                   <div className="mb-rows" key={o.id} style={{ marginBottom: 12 }}>
                     <button className="mb-row" style={{ width: "100%", background: "none", border: 0, textAlign: "left" }}
-                      onClick={() => { setOpenOrder(open ? null : o.id); setDraftPrices({}); }}>
+                      onClick={() => { setOpenOrder(open ? null : o.id); setDraftPrices({}); if (!open) void syncOrderFromZoho(o); }}>
                       <span style={{ flex: 1, minWidth: 0 }}>
                         <div className="mb-cname">{o.customer_name}</div>
                         <div className="mb-csku mb-mono">

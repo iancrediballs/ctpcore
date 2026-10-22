@@ -129,3 +129,47 @@ created in Zoho by it for test orders now deleted in CTP — check Zoho.
   cancel unless part of a real order.
 - RQ-261020-44: actually Test Account (Ian), fulfilled, Zoho SO-00009 deleted,
   still live in CTP — to soft-delete. Both await Ian's go-ahead.
+
+## 22 Oct (evening) — fulfil waits for accounts; Michelle's SO edits read back (0059, 0060, live)
+Ian: Michelle corrected the price on the Hermans SO in Zoho and emailed it; that
+must flow back, and "Fulfil" must wait until her side is done.
+- The live order: **RQ-261020-43** (Hermans) = Zoho **SO-00011**. Michelle changed
+  3732015-1063-C00 R1,195.94 → R1,156.00, emailed it (`is_emailed`), terms Net 30,
+  and then INVOICED it herself in Zoho: **INV-000005 (sent)**. CTP now has her
+  price; the order is still `confirmed` in CTP (goods not out yet).
+- **Fulfil gate** (trigger `sales_order_fulfil_gate`, `fulfil_block_reason()`):
+  an order with a Zoho SO cannot be fulfilled until the SO is open/invoiced/closed
+  AND emailed AND read back with no unmatched lines. No Zoho SO → not gated.
+  Admin **Release anyway** with a required note (`override_fulfil_gate`), recorded.
+  fulfil_order() itself unchanged. NOTE: the desktop (Tauri) fulfils locally — an
+  upload of a gated fulfil would be refused by the trigger; use the phone.
+- **Read-back** (`apply_zoho_salesorder`, server only): Zoho wins — price,
+  discount; qty/added/removed lines while `confirmed` (holds re-taken); after
+  goods out only prices follow and qty differences are flagged. Every change goes
+  into the order notes (old → new). Idempotent on Zoho `last_modified_time`.
+  Runs on: opening the order on the phone (`zoho-push {action:"so_sync"}`, 30 s
+  throttle), the order's Refresh chip, Settings → Refresh status, and **pg_cron
+  every 10 min** (`zoho-readback`, 0060 → zoho-push `status` via pg_net; Vault
+  `zoho_sync_token` + `ctp_anon_key`, edge secret ZOHO_SYNC_TOKEN). Uses the
+  cached token; 1 GET per open document. Sales orders stop being read once
+  Zoho says invoiced/closed.
+- **No duplicate invoices**: if accounts already invoiced the SO in Zoho, "Issue
+  tax invoice" ADOPTS that invoice (links its id/number) instead of creating one
+  — this is what RQ-261020-43 will do (INV-000005). Toast: "Already invoiced by
+  accounts in Zoho …".
+- **Invoice from the SO** takes the SO line's rate, discount and tax (Michelle's),
+  quantity = what CTP sent out.
+- **Account terms** (`apply_zoho_contact_terms`): Zoho contact payment terms,
+  outstanding receivables, unused credits, credit limit → customer row; shown on
+  the order. Nothing blocks on payment. Hermans' CONTACT says "Due on Receipt"
+  (only the SO says Net 30); outstanding ≈ R1.70m; no credit limit set — Michelle
+  should set Net 30 (and a limit, if wanted) on the contact.
+- Open question for Ian: block CASH customers (terms Due on Receipt) until paid?
+  Not built; today nothing blocks on payment.
+- The on-behalf prompt no longer pre-fills "Confirmed by  via phone" (saved once
+  with no name on RQ-261020-43) and refuses a note without a name.
+- Not in the repo: live has 0044 (rebate columns on sales_line); tests add them.
+- Tests: tests_0059_local.js 26/26, 0058 13/13, 0057 10/10; tsc + build clean.
+  Live: 0059 + 0060 applied, zoho-push + zoho-auth deployed, PWA SW v22.
+- Migration numbers: 0058 accept-on-behalf, 0059 read-back, 0060 schedule;
+  Phase 2 estimates → 0061 (docs/07 updated).
