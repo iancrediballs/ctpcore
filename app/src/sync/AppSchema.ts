@@ -79,6 +79,8 @@ const customer = new Table({
   // 0059: account terms read from the Zoho contact (display only; nothing blocks on payment)
   zoho_terms_days: column.integer, zoho_terms_label: column.text, zoho_outstanding_minor: column.integer,
   zoho_unused_credit_minor: column.integer, zoho_credit_limit_minor: column.integer, zoho_terms_synced_at: column.text,
+  // 0061: account (fulfil after invoice) or cash (fulfil after payment), set by an admin
+  on_account: column.integer,
 }, { indexes: { auth: ["auth_user_id"] } });
 
 const sales_order = new Table({
@@ -103,6 +105,9 @@ const sales_order = new Table({
   zoho_so_emailed: column.integer, zoho_so_modified_at: column.text, zoho_so_synced_at: column.text,
   zoho_so_terms_days: column.integer, zoho_so_terms_label: column.text, zoho_so_readback_issue: column.text,
   fulfil_override_by: column.text, fulfil_override_note: column.text, fulfil_override_at: column.text,
+  // 0061: accounts' invoice raised from the SO in Zoho, and its payments
+  zoho_invoice_total_minor: column.integer, zoho_invoice_balance_minor: column.integer, zoho_invoice_paid_minor: column.integer,
+  zoho_invoice_payments: column.text, zoho_invoice_count: column.integer, zoho_invoice_linked_at: column.text,
 }, { indexes: { customer: ["customer_id"], status: ["status"] } });
 
 const sales_line = new Table({

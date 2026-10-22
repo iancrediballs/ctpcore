@@ -172,4 +172,39 @@ must flow back, and "Fulfil" must wait until her side is done.
 - Tests: tests_0059_local.js 26/26, 0058 13/13, 0057 10/10; tsc + build clean.
   Live: 0059 + 0060 applied, zoho-push + zoho-auth deployed, PWA SW v22.
 - Migration numbers: 0058 accept-on-behalf, 0059 read-back, 0060 schedule;
-  Phase 2 estimates → 0061 (docs/07 updated).
+  Phase 2 estimates → 0062 (docs/07 updated).
+
+## 22 Oct (late) — fulfil only after accounts INVOICE the SO (0061, live) — supersedes 0059's gate
+Ian: "the fulfill stock button should only become available once michelle
+converts a sales order into tax invoice"; "michelle has a button in zoho 'i have
+received payment' and she converts to tax invoice".
+- **Gate (all customers):** an order with a Zoho SO can be fulfilled only once
+  Zoho shows an invoice raised FROM that SO, read back and linked onto the order.
+  **Cash** customers: that invoice must also be **paid**. Reason text names the
+  missing step ("Waiting for accounts to invoice this sales order in Zoho." /
+  "Waiting for payment: INV-… is sent, R… due (cash customer …)"). The 0059
+  "emailed" requirement is dropped (still shown). Admin release-with-note stays.
+- **Account vs cash = `customer.on_account`** (CTP flag, admin: "Make account… /
+  Make cash…" on the order card, `set_customer_on_account`). NOT Zoho terms: on
+  22 Oct Hermans' contact said Due on Receipt, SO-00011 Net 30, INV-000005
+  "Custom (39 days)". Default cash; **Hermans = account**.
+- **Read-back:** once the SO has invoice(s), CTP lines follow the INVOICE lines
+  (summed per item) — fulfil takes exactly what was invoiced; before that, the SO
+  lines. `apply_zoho_invoice_link` stores invoice id/number/status/total/balance/
+  paid/payments (+ notes "raised by accounts — linked", "sent → paid (paid R…)").
+  Invoice status/payments keep refreshing (10-min cron, Refresh, opening the order).
+- **No double invoicing:** for an order with a Zoho SO, CTP NEVER creates a Zoho
+  invoice — zoho-push adopts the SO's invoice or refuses (Blocked); the DB trigger
+  refuses CTP's own "invoiced" status until a Zoho invoice is linked. The phone
+  button becomes **"Close order — invoiced in Zoho as INV-…"** (records it, links,
+  creates nothing); with no Zoho invoice it is hidden ("Waiting for accounts …").
+  Orders without a Zoho SO keep "Issue tax invoice" as before.
+- **"I have received payment"** (on Zoho's convert-to-invoice screen) records a
+  customer payment against the new invoice → invoice paid + payment; it is not a
+  sales receipt. Not used on INV-000005 (sent, balance R1,329.40, no payments);
+  Hermans has no customer payments and no sales receipts in Zoho. Sales receipts
+  have no SO link, so they cannot satisfy the gate.
+- **Live RQ-261020-43:** linked to INV-000005 (R1,329.40, sent, unpaid); Hermans
+  on account → Fulfil is available. Next on the phone: Fulfil → "Close order".
+- Tests: tests_0061_local.js 19/19 (+0057 10, 0058 13, 0059 26). Live: 0061
+  applied, zoho-push + zoho-auth deployed, PWA SW v23.

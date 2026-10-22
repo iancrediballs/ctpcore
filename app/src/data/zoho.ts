@@ -70,17 +70,27 @@ export async function overrideFulfilGate(orderId: number, note: string): Promise
  *  before anyone presses it. The database still has the final word. */
 export function fulfilBlockReason(o: {
   zoho_salesorder_id?: string | null; zoho_salesorder_number?: string | null; zoho_so_status?: string | null;
-  zoho_so_emailed?: boolean | null; zoho_so_synced_at?: string | null; zoho_so_readback_issue?: string | null;
-  fulfil_override_at?: string | null;
+  zoho_so_readback_issue?: string | null; fulfil_override_at?: string | null;
+  // 0061: accounts' invoice (read back from Zoho) and whether the customer is on account
+  zoho_invoice_id?: string | null; zoho_invoice_number?: string | null; zoho_status?: string | null;
+  zoho_invoice_balance_minor?: number | null; cust_on_account?: boolean;
 }): string | null {
   if (!o.zoho_salesorder_id || o.fulfil_override_at) return null;
   const st = o.zoho_so_status ?? "draft";
   if (st === "deleted" || st === "void") return `The Zoho sales order ${o.zoho_salesorder_number ?? ""} was ${st} in Zoho — ask accounts before taking stock out.`;
-  if (!["open", "partially_invoiced", "invoiced", "closed"].includes(st)) return "Waiting for accounts (Zoho) to approve and send the sales order.";
-  if (!o.zoho_so_synced_at) return "Waiting for the sales order to be read back from Zoho — press Refresh.";
-  if (!o.zoho_so_emailed) return "Waiting for accounts (Zoho) to approve and send the sales order.";
-  if (o.zoho_so_readback_issue) return `The Zoho sales order has a line CTP cannot match: ${o.zoho_so_readback_issue}`;
+  if (!o.zoho_invoice_id || ["void", "deleted"].includes(o.zoho_status ?? "")) return "Waiting for accounts to invoice this sales order in Zoho.";
+  if (o.zoho_so_readback_issue) return `The Zoho invoice has a line CTP cannot match: ${o.zoho_so_readback_issue}`;
+  if (!o.cust_on_account && o.zoho_status !== "paid") {
+    const due = (o.zoho_invoice_balance_minor ?? 0) > 0 ? `, R${((o.zoho_invoice_balance_minor ?? 0) / 100).toLocaleString("en-ZA", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} due` : "";
+    return `Waiting for payment: ${o.zoho_invoice_number ?? "the invoice"} is ${(o.zoho_status ?? "unpaid").replace(/_/g, " ")}${due} (cash customer — accounts record the payment in Zoho).`;
+  }
   return null;
+}
+
+/** 0061: admin sets a customer to account (fulfil after invoice) or cash (after payment). */
+export async function setCustomerOnAccount(customerId: number, onAccount: boolean): Promise<void> {
+  const { error } = await supabase.rpc("set_customer_on_account", { p_customer_id: customerId, p_on_account: onAccount });
+  if (error) throw new Error(error.message);
 }
 
 /** How a Zoho status reads to staff. Zoho's own word is kept in the data;

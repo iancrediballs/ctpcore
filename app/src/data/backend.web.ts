@@ -804,7 +804,9 @@ async function staffOrders(): Promise<unknown[]> {
             so.fulfil_override_at, so.fulfil_override_note, so.accepted_note,
             c.zoho_terms_days AS cust_terms_days, c.zoho_terms_label AS cust_terms_label,
             c.zoho_outstanding_minor AS cust_outstanding_minor, c.zoho_credit_limit_minor AS cust_credit_limit_minor,
-            c.zoho_unused_credit_minor AS cust_unused_credit_minor,
+            c.zoho_unused_credit_minor AS cust_unused_credit_minor, c.on_account AS cust_on_account, so.customer_id,
+            so.zoho_invoice_id, so.zoho_invoice_total_minor, so.zoho_invoice_balance_minor, so.zoho_invoice_paid_minor,
+            so.zoho_invoice_payments, so.zoho_invoice_count,
             c.name AS customer_name, c.contact AS customer_contact,
             c.phone AS customer_phone, c.email AS customer_email,
             (SELECT l.code FROM location l WHERE l.id = so.location_id) AS location_code
@@ -871,6 +873,15 @@ async function staffOrders(): Promise<unknown[]> {
       cust_outstanding_minor: o["cust_outstanding_minor"] == null ? null : Number(o["cust_outstanding_minor"]),
       cust_credit_limit_minor: o["cust_credit_limit_minor"] == null ? null : Number(o["cust_credit_limit_minor"]),
       cust_unused_credit_minor: o["cust_unused_credit_minor"] == null ? null : Number(o["cust_unused_credit_minor"]),
+      // 0061: accounts' Zoho invoice for this order, its payments, and account vs cash
+      customer_id: o["customer_id"] == null ? null : Number(o["customer_id"]),
+      cust_on_account: o["cust_on_account"] === 1 || o["cust_on_account"] === "1" || o["cust_on_account"] === true || o["cust_on_account"] === "true",
+      zoho_invoice_id: nstr(o["zoho_invoice_id"]),
+      zoho_invoice_total_minor: o["zoho_invoice_total_minor"] == null ? null : Number(o["zoho_invoice_total_minor"]),
+      zoho_invoice_balance_minor: o["zoho_invoice_balance_minor"] == null ? null : Number(o["zoho_invoice_balance_minor"]),
+      zoho_invoice_paid_minor: o["zoho_invoice_paid_minor"] == null ? null : Number(o["zoho_invoice_paid_minor"]),
+      zoho_invoice_payments: nstr(o["zoho_invoice_payments"]),
+      zoho_invoice_count: o["zoho_invoice_count"] == null ? null : Number(o["zoho_invoice_count"]),
       unpriced,
       total_minor: mapped.reduce((t, l) => t + l.unit_price_minor * l.qty, 0),
       // The queue this order sits in. Derived here so every surface agrees.

@@ -91,9 +91,11 @@ async function pushInvoice(db: SupabaseClient, cfg: any, id: number, log: Logger
       // (lines carry salesorder_item_id), for the sales order's own contact.
       let customerId: string;
       const so = o.zoho_salesorder_id ? await linkToSalesOrder(o.zoho_salesorder_id, lineItems) : null;
-      // 0059: accounts already invoiced this sales order in Zoho (Michelle, from
-      // the SO) — that invoice IS this order's invoice. Adopt it; never create a
-      // second one.
+      // 0061: an order with a Zoho sales order is invoiced BY ACCOUNTS in Zoho
+      // (Michelle converts the SO). CTP adopts that invoice and never creates one.
+      if (o.zoho_salesorder_id && !(so && so.invoices.length)) {
+        throw new Blocked(`${o.number}: accounts raise the invoice for ${o.zoho_salesorder_id ? "its sales order" : "it"} in Zoho — none yet, so nothing was created. CTP links it once it exists.`);
+      }
       if (so && so.invoices.length) {
         const mine = so.invoices[0];
         const { error: e3 } = await db.from("sales_order").update({
@@ -254,14 +256,16 @@ async function refreshStatus(db: SupabaseClient, log: Logger, force: boolean) {
   const changes: { doc: string; ref: string; from: string | null; to: string }[] = [];
   let checked = 0;
   for (const k of kinds) {
+    const extra = k.table === "sales_order" ? ", number, zoho_salesorder_id, zoho_invoice_id, deleted_at" : "";
     const { data: rows, error } = await db.from(k.table)
-      .select(`id, ${k.ref}, ${k.idCol}, ${k.numCol}, ${k.stCol}`)
+      .select(`id, ${k.ref}, ${k.idCol}, ${k.numCol}, ${k.stCol}${extra}`)
       .not(k.idCol, "is", null).limit(200);
     if (error) throw new Error(`${k.table}: ${error.message}`);
     // deno-lint-ignore no-explicit-any
     for (const r of (rows ?? []) as any[]) {
       const was: string | null = r[k.stCol];
-      if (FINAL.includes(was ?? "")) continue;
+      // 0061: an invoiced SO is still read until accounts' invoice is linked onto the order
+      if (FINAL.includes(was ?? "") && !(k.doc === "salesorder" && !r.zoho_invoice_id && !r.deleted_at && was === "invoiced")) continue;
       checked++;
       let status: string, number: string | null = r[k.numCol];
       try {
@@ -269,7 +273,9 @@ async function refreshStatus(db: SupabaseClient, log: Logger, force: boolean) {
         status = String(b[k.key]?.status ?? "unknown");
         number = b[k.key]?.[k.numKey] ?? number;
         // 0059: the same read carries Michelle's edits — apply them (Zoho wins)
-        if (k.doc === "salesorder") await applySalesOrder(db, r.id, r[k.ref], b.salesorder, log);
+        if (k.doc === "salesorder" && !r.deleted_at) await applySalesOrder(db, r.id, r.number, b.salesorder, log);
+        // 0061: accounts' invoice for an SO-backed order — status, balance, payments
+        if (k.doc === "invoice" && r.zoho_salesorder_id && !r.deleted_at) await linkInvoices(db, r.id, r.number, [b.invoice], log);
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         // Zoho answers a missing record with HTTP 404 or a "does not exist" code.
@@ -294,17 +300,48 @@ async function refreshStatus(db: SupabaseClient, log: Logger, force: boolean) {
   return { checked, changed: changes.length, changes, terms };
 }
 
-// ── 0059: read-back of one sales order (Michelle's edits) ────────────────────
+// ── 0059/0061: read-back of one sales order (Michelle's edits, her invoice) ──
+// Before accounts invoice it, CTP's lines follow the SALES ORDER. Once the SO
+// has invoice(s) in Zoho (Michelle converts it — 0061), the lines follow the
+// INVOICE(S), summed per item, so goods out = what was invoiced; the invoice,
+// its status, balance and payments are linked onto the order.
+// deno-lint-ignore no-explicit-any
+const payLine = (p: any) => `${p.payment_number ?? p.payment_id ?? ""} ${p.date ?? ""} R${p.amount ?? ""} ${p.payment_mode ?? ""}`.replace(/\s+/g, " ").trim();
 // deno-lint-ignore no-explicit-any
 async function applySalesOrder(db: SupabaseClient, orderId: number, ref: string, so: any, log: Logger) {
   if (!so) return null;
+  // deno-lint-ignore no-explicit-any
+  const live = ((so.invoices ?? []) as any[]).filter((i) => !["void", "deleted"].includes(String(i.status)));
+  // deno-lint-ignore no-explicit-any
+  let items: any[] = so.line_items ?? [];
+  let mod = String(so.last_modified_time ?? "");
+  // deno-lint-ignore no-explicit-any
+  const invs: any[] = [];
+  for (const i of live) {
+    try { invs.push((await zoho("GET", `/invoices/${i.invoice_id}`)).invoice); }
+    catch (e) { await log({ doc_type: "invoice", ctp_id: orderId, ctp_ref: ref, action: "status_error", ok: false, message: e instanceof Error ? e.message : String(e) }); return null; }
+  }
+  if (invs.length) {
+    // deno-lint-ignore no-explicit-any
+    const byItem = new Map<string, any>();
+    for (const inv of invs) {
+      if (String(inv.last_modified_time ?? "") > mod) mod = String(inv.last_modified_time);
+      for (const l of inv.line_items ?? []) {
+        const k = String(l.item_id);
+        const prev = byItem.get(k);
+        byItem.set(k, prev ? { ...prev, quantity: Number(prev.quantity) + Number(l.quantity) } : { ...l });
+      }
+    }
+    items = [...byItem.values()];
+  }
   const { data, error } = await db.rpc("apply_zoho_salesorder", { p_order_id: orderId, p_so: {
     salesorder_number: so.salesorder_number, status: so.status, is_emailed: so.is_emailed,
-    last_modified_time: so.last_modified_time, payment_terms: so.payment_terms, payment_terms_label: so.payment_terms_label,
+    last_modified_time: mod, payment_terms: so.payment_terms, payment_terms_label: so.payment_terms_label,
     // deno-lint-ignore no-explicit-any
-    line_items: (so.line_items ?? []).map((l: any) => ({ line_item_id: l.line_item_id, item_id: l.item_id, quantity: l.quantity,
+    line_items: items.map((l: any) => ({ line_item_id: l.line_item_id, item_id: l.item_id, quantity: l.quantity,
       rate: l.rate, discount: l.discount, discount_amount: l.discount_amount, sku: l.sku, name: l.name })),
   } });
+  if (!error && invs.length) await linkInvoices(db, orderId, ref, invs, log);
   if (error) {
     await log({ doc_type: "salesorder", ctp_id: orderId, ctp_ref: ref, action: "readback_error", ok: false, message: error.message });
     return null;
@@ -314,6 +351,23 @@ async function applySalesOrder(db: SupabaseClient, orderId: number, ref: string,
                 message: `${ref}: ${[...(data.changes ?? []), ...(data.warnings ?? [])].join("; ")}`.slice(0, 2000) });
   }
   return data;
+}
+
+// The SO's invoice(s) → the order: first invoice's id/number, totals summed,
+// status = paid only when every invoice is paid.
+// deno-lint-ignore no-explicit-any
+async function linkInvoices(db: SupabaseClient, orderId: number, ref: string, invs: any[], log: Logger) {
+  const sum = (k: string) => invs.reduce((t, i) => t + Number(i[k] ?? 0), 0);
+  const st = invs.every((i) => i.status === "paid") ? "paid" : String((invs.find((i) => i.status !== "paid") ?? invs[0]).status ?? "");
+  const { data, error } = await db.rpc("apply_zoho_invoice_link", { p_order_id: orderId, p_inv: {
+    invoice_id: String(invs[0].invoice_id), invoice_number: invs.map((i) => i.invoice_number).join(" + "), status: st,
+    total: sum("total"), balance: sum("balance"), payment_made: sum("payment_made"), count: invs.length,
+    // deno-lint-ignore no-explicit-any
+    payments: invs.flatMap((i) => (i.payments ?? []).map((p: any) => payLine(p))),
+  } });
+  if (error) await log({ doc_type: "invoice", ctp_id: orderId, ctp_ref: ref, action: "readback_error", ok: false, message: error.message });
+  else if (data?.note) await log({ doc_type: "invoice", ctp_id: orderId, ctp_ref: ref, action: data.linked ? "found_existing" : "status", ok: true,
+                                   zoho_id: String(invs[0].invoice_id), message: `${ref}: ${data.note}` });
 }
 
 // Account terms from the Zoho contact, for customers with live orders. One GET

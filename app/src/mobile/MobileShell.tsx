@@ -16,7 +16,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useStatus } from "@powersync/react";
 import * as api from "../data/api";
-import { refreshZohoStatus, zohoStatusLabel, syncSalesOrder, overrideFulfilGate, fulfilBlockReason } from "../data/zoho";
+import { refreshZohoStatus, zohoStatusLabel, syncSalesOrder, overrideFulfilGate, fulfilBlockReason, setCustomerOnAccount } from "../data/zoho";
 import AddCustomer from "../admin/AddCustomer";
 import { assetUrl, photoWebUrl } from "../assets";
 import { DiagramCanvas, Marker, loadMarkerScale, saveMarkerScale, markerRadius, MARKER_SCALE_MIN, MARKER_SCALE_MAX, type CanvasApi, type Frame, type Pt } from "./DiagramCanvas";
@@ -104,6 +104,10 @@ type StaffOrder = {
   fulfil_override_at?: string | null; fulfil_override_note?: string | null; accepted_note?: string | null;
   cust_terms_label?: string | null; cust_terms_days?: number | null; cust_outstanding_minor?: number | null;
   cust_credit_limit_minor?: number | null; cust_unused_credit_minor?: number | null;
+  // 0061: accounts' Zoho invoice for this order, its payments; account vs cash
+  customer_id?: number | null; cust_on_account?: boolean; zoho_invoice_id?: string | null;
+  zoho_invoice_total_minor?: number | null; zoho_invoice_balance_minor?: number | null; zoho_invoice_paid_minor?: number | null;
+  zoho_invoice_payments?: string | null; zoho_invoice_count?: number | null;
   unpriced: number; total_minor: number;
   stage: "to_price" | "with_customer" | "to_pick" | "fulfilled" | string;
   lines: StaffLine[];
@@ -865,6 +869,57 @@ const parseRand = (s: string): number => {
     loadOrders();
   }, [showToast, loadOrders]);
 
+  /** 0061: admin flips a customer between account (fulfil after invoice) and cash (after payment). */
+  const toggleAccount = useCallback(async (o: StaffOrder) => {
+    if (!o.customer_id) return;
+    const to = !o.cust_on_account;
+    if (!window.confirm(`${o.customer_name}: set to ${to ? "ACCOUNT — goods can go out once accounts invoice in Zoho" : "CASH — goods go out only once the Zoho invoice is paid"}?`)) return;
+    setSavingOrder(true);
+    try { await setCustomerOnAccount(o.customer_id, to); showToast({ text: `${o.customer_name} is now ${to ? "an account" : "a cash"} customer.` }); loadOrders(); }
+    catch (e) { showToast({ text: e instanceof Error ? e.message : "Could not change it.", err: true }); }
+    finally { setSavingOrder(false); }
+  }, [showToast, loadOrders]);
+
+  /** 0059/0061: what accounts have done in Zoho — sales order, invoice, payment —
+   *  and the customer's terms. Shown before and after goods out. */
+  const zohoAccountsRows = (o: StaffOrder) => (
+    <>
+      {o.zoho_salesorder_id && (
+        <div className="mb-row">
+          <span className="mb-rk">Accounts</span>
+          <span className="mb-rv">
+            {o.zoho_salesorder_number} {zohoStatusLabel(o.zoho_so_status ?? "draft", "salesorder").text}
+            {o.zoho_so_emailed ? <> · <span style={{ color: "var(--green)" }}>sent to the customer</span></> : null}
+            {" · "}{o.zoho_invoice_id
+              ? <>invoice <b className="mb-mono">{o.zoho_invoice_number}</b> {zohoStatusLabel(o.zoho_status ?? "draft", "invoice").text}
+                  {o.zoho_invoice_total_minor != null ? <> · {fmtR(o.zoho_invoice_total_minor)}</> : null}
+                  {(o.zoho_invoice_paid_minor ?? 0) > 0 ? <> · paid {fmtR(o.zoho_invoice_paid_minor ?? 0)}</> : null}
+                  {o.zoho_invoice_balance_minor != null ? <> · balance {fmtR(o.zoho_invoice_balance_minor)}</> : null}
+                  {o.zoho_invoice_payments ? <> · payments: {o.zoho_invoice_payments}</> : null}</>
+              : <span style={{ color: "var(--amber)" }}>not invoiced yet</span>}
+            {o.zoho_so_synced_at ? <> · read {timeAgo(o.zoho_so_synced_at)}</> : null}
+            {" · "}<button className="mb-chip" disabled={syncingSo === o.id}
+              onClick={() => { void syncOrderFromZoho(o, true); }}>{syncingSo === o.id ? "Reading Zoho…" : "Refresh"}</button>
+          </span>
+        </div>
+      )}
+      <div className="mb-row">
+        <span className="mb-rk">Customer</span>
+        <span className="mb-rv">
+          {o.cust_on_account
+            ? <>on account — goods out once accounts invoice in Zoho</>
+            : <>cash — goods out once the Zoho invoice is paid</>}
+          {o.cust_terms_label ? <> · Zoho terms {o.cust_terms_label}</> : null}
+          {o.cust_outstanding_minor != null ? <> · outstanding {fmtR(o.cust_outstanding_minor)}</> : null}
+          {o.cust_credit_limit_minor != null ? <> · credit limit {fmtR(o.cust_credit_limit_minor)}</> : null}
+          {o.cust_unused_credit_minor ? <> · credit {fmtR(o.cust_unused_credit_minor)}</> : null}
+          {role === "admin" && o.customer_id ? <> · <button className="mb-chip" disabled={savingOrder}
+            onClick={() => { void toggleAccount(o); }}>{o.cust_on_account ? "Make cash…" : "Make account…"}</button></> : null}
+        </span>
+      </div>
+    </>
+  );
+
   const fulfilOrder = useCallback(async (o: StaffOrder) => {
     setSavingOrder(true);
     try {
@@ -1597,38 +1652,11 @@ const parseRand = (s: string): number => {
                               <span className="mb-rv" style={{ color: "var(--green)" }}>
                                 {o.client_responded_at ? timeAgo(o.client_responded_at) : "by the customer"}
                                 {o.zoho_salesorder_number
-                                  ? <> · sales order <b className="mb-mono">{o.zoho_salesorder_number}</b> in Zoho Books ({zohoStatusLabel(o.zoho_so_status ?? "draft", "salesorder").text}) — the invoice is made from it</>
+                                  ? <> · sales order <b className="mb-mono">{o.zoho_salesorder_number}</b> in Zoho Books — accounts invoice it there</>
                                   : <> · <span style={{ color: "var(--amber)" }}>no Zoho sales order (accepted while Zoho sending was off) — the invoice goes to Zoho on its own</span></>}
                               </span>
                             </div>
-                            {o.zoho_salesorder_id && (
-                              <div className="mb-row">
-                                <span className="mb-rk">Accounts</span>
-                                <span className="mb-rv">
-                                  {o.zoho_salesorder_number} {zohoStatusLabel(o.zoho_so_status ?? "draft", "salesorder").text}
-                                  {" · "}{o.zoho_so_emailed
-                                    ? <span style={{ color: "var(--green)" }}>sent to the customer</span>
-                                    : <span style={{ color: "var(--amber)" }}>not sent yet</span>}
-                                  {o.zoho_so_terms_label ? <> · terms {o.zoho_so_terms_label}</> : null}
-                                  {o.zoho_so_synced_at ? <> · read {timeAgo(o.zoho_so_synced_at)}</> : null}
-                                  {" · "}<button className="mb-chip" disabled={syncingSo === o.id}
-                                    onClick={() => { void syncOrderFromZoho(o, true); }}>{syncingSo === o.id ? "Reading Zoho…" : "Refresh"}</button>
-                                </span>
-                              </div>
-                            )}
-                            {(o.cust_terms_label || o.cust_outstanding_minor != null) && (
-                              <div className="mb-row">
-                                <span className="mb-rk">Account</span>
-                                <span className="mb-rv">
-                                  {(o.zoho_so_terms_days ?? o.cust_terms_days ?? 0) > 0
-                                    ? <>on account ({o.zoho_so_terms_label ?? o.cust_terms_label}) — no payment needed before goods out</>
-                                    : <>{o.cust_terms_label ?? "terms not set"} in Zoho</>}
-                                  {o.cust_outstanding_minor != null ? <> · outstanding {fmtR(o.cust_outstanding_minor)}</> : null}
-                                  {o.cust_credit_limit_minor != null ? <> · credit limit {fmtR(o.cust_credit_limit_minor)}</> : null}
-                                  {o.cust_unused_credit_minor ? <> · credit {fmtR(o.cust_unused_credit_minor)}</> : null}
-                                </span>
-                              </div>
-                            )}
+                            {zohoAccountsRows(o)}
                             {(() => {
                               const why = fulfilBlockReason(o);
                               return (
@@ -1667,12 +1695,29 @@ const parseRand = (s: string): number => {
                               <span className="mb-rk">Goods out</span>
                               <span className="mb-rv">{o.fulfilled_at ? timeAgo(o.fulfilled_at) : "—"}</span>
                             </div>
-                            <div className="mb-row">
-                              <button className="mb-btn p" style={{ height: 46 }} disabled={savingOrder}
-                                onClick={() => setPendingAct({ order: o, kind: "invoice" })}>
-                                Issue tax invoice
-                              </button>
-                            </div>
+                            {zohoAccountsRows(o)}
+                            {/* 0061: with a Zoho sales order, accounts raise the invoice in Zoho;
+                                CTP only records it (links that invoice — never creates a second). */}
+                            {!o.zoho_salesorder_id ? (
+                              <div className="mb-row">
+                                <button className="mb-btn p" style={{ height: 46 }} disabled={savingOrder}
+                                  onClick={() => setPendingAct({ order: o, kind: "invoice" })}>
+                                  Issue tax invoice
+                                </button>
+                              </div>
+                            ) : o.zoho_invoice_id ? (
+                              <div className="mb-row">
+                                <button className="mb-btn p" style={{ height: 46 }} disabled={savingOrder}
+                                  onClick={() => setPendingAct({ order: o, kind: "invoice" })}>
+                                  Close order — invoiced in Zoho as {o.zoho_invoice_number}
+                                </button>
+                              </div>
+                            ) : (
+                              <div className="mb-row">
+                                <span className="mb-rk">Invoice</span>
+                                <span className="mb-rv" style={{ color: "var(--amber)" }}>Waiting for accounts to invoice this sales order in Zoho — CTP links it automatically.</span>
+                              </div>
+                            )}
                           </>
                         )}
                       </>
@@ -2318,7 +2363,9 @@ const parseRand = (s: string): number => {
           <span>
             {pendingAct.kind === "fulfil"
               ? `Take ${pendingAct.order.lines.reduce((t, l) => t + l.qty, 0)} item(s) out of stock for ${pendingAct.order.number}? This writes to the stock ledger and is not undone from here.`
-              : `Issue a tax invoice for ${pendingAct.order.number} (${fmtR(pendingAct.order.total_minor + Math.floor((pendingAct.order.total_minor * pendingAct.order.tax_rate_bps + 5000) / 10000))} incl. VAT)? The next invoice number is allocated now and cannot be reused.`}
+              : pendingAct.order.zoho_salesorder_id
+                ? `Close ${pendingAct.order.number}? It is invoiced in Zoho as ${pendingAct.order.zoho_invoice_number ?? "—"}${pendingAct.order.zoho_invoice_total_minor != null ? ` (${fmtR(pendingAct.order.zoho_invoice_total_minor)})` : ""} by accounts. CTP records it and links that invoice — nothing new is created in Zoho.`
+                : `Issue a tax invoice for ${pendingAct.order.number} (${fmtR(pendingAct.order.total_minor + Math.floor((pendingAct.order.total_minor * pendingAct.order.tax_rate_bps + 5000) / 10000))} incl. VAT)? The next invoice number is allocated now and cannot be reused.`}
           </span>
           <div style={{ display: "flex", gap: 8 }}>
             <button className="mb-chip" style={{ flex: 1 }} onClick={() => setPendingAct(null)}>
@@ -2329,7 +2376,7 @@ const parseRand = (s: string): number => {
                 const a = pendingAct; setPendingAct(null);
                 void (a.kind === "fulfil" ? fulfilOrder(a.order) : invoiceOrder(a.order));
               }}>
-              {pendingAct.kind === "fulfil" ? "Fulfil" : "Issue invoice"}
+              {pendingAct.kind === "fulfil" ? "Fulfil" : pendingAct.order.zoho_salesorder_id ? "Close order" : "Issue invoice"}
             </button>
           </div>
         </div>

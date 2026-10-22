@@ -204,6 +204,23 @@ Deno.serve(async (req: Request) => {
   // READ-ONLY: one Zoho document, for verifying a live test
   //   { action: "doc", kind: "salesorders" | "invoices" | "contacts", id }
   if (body.action === "doc") {
+    // 22 Oct: payments made against a customer, and the sales-receipt probe (read-only)
+    if (body.kind === "customer_payments") {
+      await zohoInit(db);
+      const tk = await zohoToken();
+      const get = async (p: string) => {
+        const r = await fetch(`https://www.zohoapis.com/books/v3${p}${p.includes("?") ? "&" : "?"}organization_id=${env("ZOHO_ORG_ID")}`, { headers: { Authorization: `Zoho-oauthtoken ${tk}` } });
+        return { status: r.status, j: await r.json().catch(() => ({})) };
+      };
+      const cid = String(body.id ?? "");
+      const pays = await get(`/customerpayments?customer_id=${cid}&per_page=10`);
+      const recs = await get(`/salesreceipts?customer_id=${cid}&per_page=10`);
+      return json({ ok: true,
+        // deno-lint-ignore no-explicit-any
+        payments: { status: pays.status, msg: pays.j.message, rows: (pays.j.customerpayments ?? []).map((p: any) => `${p.payment_number} ${p.date} ${p.amount} ${p.payment_mode} inv:${p.invoice_numbers ?? ""} unused:${p.unused_amount}`) },
+        // deno-lint-ignore no-explicit-any
+        salesreceipts: { status: recs.status, msg: recs.j.message, rows: (recs.j.sales_receipts ?? recs.j.salesreceipts ?? []).map((s: any) => `${s.receipt_number ?? s.sales_receipt_number} ${s.date} ${s.total}`) } });
+    }
     if (!["salesorders", "invoices", "contacts"].includes(body.kind) || !/^\d+$/.test(String(body.id ?? ""))) {
       return json({ ok: false, error: "kind/id" }, 400);
     }
@@ -222,7 +239,10 @@ Deno.serve(async (req: Request) => {
       lines: (d.line_items ?? []).map((l: any) => ({ sku: l.sku, name: l.name, qty: l.quantity, rate: l.rate, discount: l.discount,
         tax: `${l.tax_name ?? ""} ${l.tax_percentage ?? ""}%`, total: l.item_total, so_item: l.salesorder_item_id ?? null })),
       // deno-lint-ignore no-explicit-any
-      salesorders: (d.salesorders ?? []).map((s: any) => s.salesorder_number), invoices: (d.invoices ?? []).map((i: any) => `${i.invoice_number}:${i.status}`),
+      salesorders: (d.salesorders ?? []).map((s: any) => s.salesorder_number), invoices: (d.invoices ?? []).map((i: any) => `${i.invoice_number}:${i.status}:${i.invoice_id}`),
+      balance: d.balance, payment_made: d.payment_made, credits_applied: d.credits_applied,
+      // deno-lint-ignore no-explicit-any
+      payments: (d.payments ?? []).map((p: any) => `${p.payment_number ?? p.payment_id} ${p.date} ${p.amount} ${p.payment_mode ?? ""}`),
       invoiced_status: d.invoiced_status, order_status: d.order_status,
       // 22 Oct: what "Michelle's side is done" can be read from
       is_emailed: d.is_emailed, current_sub_status: d.current_sub_status, last_modified_time: d.last_modified_time,

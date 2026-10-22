@@ -16,7 +16,7 @@ draft; Zoho numbering; Michelle sends customer documents from Zoho).
 
 ## Data (Supabase keeps links only)
 
-- `sales_order.zoho_estimate_id`, `zoho_estimate_number`, `zoho_estimate_status`, `zoho_estimate_error` (migration 0061; 0058–0060 are taken).
+- `sales_order.zoho_estimate_id`, `zoho_estimate_number`, `zoho_estimate_status`, `zoho_estimate_error` (migration 0062; 0058–0061 are taken).
 - Status read-back gains a third kind (estimates): draft → sent → accepted/declined/expired/invoiced.
 
 ## Guardrails
@@ -28,7 +28,7 @@ draft; Zoho numbering; Michelle sends customer documents from Zoho).
 
 ## Tests
 
-- PGlite: 0061 columns + accept path with/without estimate.
+- PGlite: 0062 columns + accept path with/without estimate.
 - Live (admin `zoho-auth` test like `so_test`): create TEST estimate → accept →
   convert to SO → confirm → delete both; read statuses back.
 
