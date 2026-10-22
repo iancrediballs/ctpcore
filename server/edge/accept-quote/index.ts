@@ -1,5 +1,9 @@
 // CTP Core — a customer accepts a quote.
 //
+// 2026-10-22 (0058): { order_id, on_behalf_note } lets an ADMIN accept for the
+// customer (confirmed by phone/email). Same Zoho SO + stock hold; the admin and
+// the note are recorded on the order by accept_quote_on_behalf().
+//
 // 2026-10-20 (Ian: "sales order as before"): rewired onto the 19 Oct Zoho link —
 // the refresh token in Vault, the DC in zoho_config, lines by SKU through
 // zoho_item, Standard Rate VAT, contact matched or created, the sales order
@@ -60,10 +64,19 @@ Deno.serve(async (req: Request) => {
   if (callerErr || !caller?.user) return json({ error: "Not signed in" }, 401);
   const uid = caller.user.id;
 
-  let body: { order_id?: unknown };
+  let body: { order_id?: unknown; on_behalf_note?: unknown };
   try { body = await req.json(); } catch { return json({ error: "Bad request" }, 400); }
   const orderId = Number(body.order_id);
   if (!Number.isInteger(orderId) || orderId <= 0) return json({ error: "order_id is required" }, 400);
+  // 0058: an admin accepts on the customer's behalf (confirmed by phone/email).
+  // Same steps below; only the ownership check and the final RPC differ.
+  const onBehalf = body.on_behalf_note !== undefined;
+  const note = String(body.on_behalf_note ?? "").trim();
+  if (onBehalf) {
+    const { data: me } = await db.from("app_user").select("role").eq("id", uid).maybeSingle();
+    if (me?.role !== "admin") return json({ error: "Only an admin can accept a quote on the customer's behalf." }, 403);
+    if (note.length < 3) return json({ error: "Say how the customer confirmed it, e.g. \"Confirmed by Denver via phone\"." }, 400);
+  }
 
   // ── 1. the order, and that it is theirs ──────────────────────────────────
   const { data: o, error: oErr } = await db
@@ -73,9 +86,11 @@ Deno.serve(async (req: Request) => {
   if (oErr) return json({ error: oErr.message }, 500);
   if (!o) return json({ error: "No such order" }, 404);
   const cust = (Array.isArray(o.customer) ? o.customer[0] : o.customer) as { id: number; name: string; auth_user_id: string | null; zoho_contact_id: string | null } | null;
-  // 0057: a login belongs to a company directly (customer.auth_user_id) or as one of its people
-  const { data: mine } = await db.rpc("login_company", { p_auth_user: uid });
-  if (!cust || Number(mine) !== Number(o.customer_id)) return json({ error: "That order belongs to a different customer" }, 403);
+  if (!onBehalf) {
+    // 0057: a login belongs to a company directly (customer.auth_user_id) or as one of its people
+    const { data: mine } = await db.rpc("login_company", { p_auth_user: uid });
+    if (!cust || Number(mine) !== Number(o.customer_id)) return json({ error: "That order belongs to a different customer" }, 403);
+  } else if (!cust) return json({ error: "That order has no customer" }, 409);
 
   // already done (a retry after the response was lost)
   if (o.status === "confirmed") {
@@ -117,10 +132,15 @@ Deno.serve(async (req: Request) => {
   }
 
   // ── 4. the one transaction ───────────────────────────────────────────────
-  const { data: acc, error: accErr } = await db.rpc("accept_quote", {
-    order_id: orderId, p_auth_user: uid,
-    p_zoho_salesorder_id: so?.salesorder_id ?? null, p_zoho_salesorder_number: so?.salesorder_number ?? null,
-  });
+  const { data: acc, error: accErr } = onBehalf
+    ? await db.rpc("accept_quote_on_behalf", {
+        order_id: orderId, p_staff: uid, p_note: note,
+        p_zoho_salesorder_id: so?.salesorder_id ?? null, p_zoho_salesorder_number: so?.salesorder_number ?? null,
+      })
+    : await db.rpc("accept_quote", {
+        order_id: orderId, p_auth_user: uid,
+        p_zoho_salesorder_id: so?.salesorder_id ?? null, p_zoho_salesorder_number: so?.salesorder_number ?? null,
+      });
   if (accErr) {
     // ── 5. compensate: a sales order we just created is removed again ──
     if (so?.created) {

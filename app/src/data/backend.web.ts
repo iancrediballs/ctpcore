@@ -951,7 +951,10 @@ async function quoteAcceptCheck(a: Record<string, unknown>): Promise<unknown> {
  *  the customer and is shown as-is. */
 async function acceptQuote(a: Record<string, unknown>): Promise<unknown> {
   const orderId = numId(a["orderId"], "orderId");
-  const { data, error } = await supabase.functions.invoke("accept-quote", { body: { order_id: orderId } });
+  // 0058: an admin accepting for the customer passes the note (who confirmed, how)
+  const note = a["onBehalfNote"];
+  const body = typeof note === "string" ? { order_id: orderId, on_behalf_note: note } : { order_id: orderId };
+  const { data, error } = await supabase.functions.invoke("accept-quote", { body });
   if (error) {
     // the function's own JSON body carries the reason; the SDK wraps non-2xx as an error
     let detail = "";

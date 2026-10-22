@@ -166,6 +166,10 @@ export const quoteAcceptCheck = (orderId: number) =>
  *  both or neither (the accept-quote edge function, 0047). */
 export type AcceptResult = { ok: true; already: boolean; number: string; zoho_salesorder_number: string; reserved_lines: number };
 export const acceptQuote = (orderId: number) => call<AcceptResult>("accept_quote", { orderId });
+/** 0058: an admin accepts for the customer (confirmed by phone/email). Same
+ *  Zoho sales order + stock hold; the admin and the note go on the order. */
+export const acceptQuoteOnBehalf = (orderId: number, note: string) =>
+  call<AcceptResult & { zoho?: string }>("accept_quote", { orderId, onBehalfNote: note });
 
 // ─── sales ───────────────────────────────────────────────────────────────
 export const listCustomers = <T>() => call<T>("list_customers");

@@ -82,3 +82,50 @@ created in Zoho by it for test orders now deleted in CTP — check Zoho.
 - Tests: tests_0054_local.js 15/15; all suites pass.
 - TOKEN SCOPE: current token lacks ZohoBooks.salesorders (401). New code needed with
   the scope list in docs/05.
+
+## 22 Oct — work moved to the LAPTOP; the desktop session is STALE
+- From 22 Oct work runs on Ian's laptop (`C:\Users\iancr\Projects\ctpcore`). The
+  home PC (DESKTOP-NEII4G1) session is stale: **`git pull` before doing anything
+  there**, and don't deploy from it until it's up to date with main.
+- Laptop setup: `npx.cmd supabase` (PowerShell blocks plain `npx`), logged in and
+  linked to `hkzmydowyiajkbakxfkj`; Vercel CLI logged in (`npx.cmd vercel deploy
+  --prod --scope ian-33be3d61` from the repo root).
+- docs/07 (Phase 2 estimates design, 21 Oct) had not been pushed; it is now.
+
+## 22 Oct — new Zoho token, all scopes
+- New grant code exchanged via `zoho-auth` (refresh token in Vault, DC com, org
+  939422621 found). Scopes = the docs/06 §1 string: adds estimates.ALL,
+  creditnotes.ALL, customerpayments.READ, vendorpayments.READ.
+- Read-only `assess` probe: estimates, creditnotes, customerpayments,
+  vendorpayments, salesorders, invoices, bills, purchaseorders, pricebooks all
+  200. `/settings/warehouses` 401 (expected without Zoho Inventory).
+- `check`: 162 items, 19 invoices, 0 sales orders. Sending ON since 20 Oct
+  (`push_from` 2026-10-20 12:13 UTC), invoices/bills draft, Zoho numbering.
+
+## 22 Oct — admin "Accept on customer's behalf" (0058, live)
+- For quotes a customer confirms by phone/email (Ian, Hermans demo). Phone order
+  desk → quote "with customer" → **Accept on customer's behalf** (admin only) →
+  prompt for the note, e.g. "Confirmed by Denver via phone" (required).
+- Same path as the customer accept: `accept-quote` edge fn with
+  `{order_id, on_behalf_note}` → confirmed Zoho SO (`salesOrderFor`) → new
+  `accept_quote_on_behalf()` (service_role only) does status + Zoho refs +
+  `reserve_order` in one transaction; Zoho SO deleted again if it fails.
+  `accept_quote()` is unchanged.
+- Recorded: `sales_order.accepted_by` (admin uid), `accepted_note`, and a line
+  in `notes` ("[time] Accepted on the customer's behalf by <admin>: <note>").
+- Live: 0058 applied, accept-quote redeployed (live source matched repo first),
+  PWA SW v21. No orders touched. Tests: `tests_0058_local.js` 13/13,
+  `tests_0057_local.js` 10/10, tsc + build clean.
+- Desktop (Tauri) has no button for this; phone/web only.
+
+## Hermans (checked 22 Oct, nothing changed)
+- Customer HERMANS (id 6), Zoho contact 1429405000000131019 linked, trade tier
+  (list prices), rebate 0. Only login: denver@hermans.co.za (company + primary
+  person). Admins now accept for him with the button above.
+- FLAG for Michelle: Zoho contact has NO VAT no. and tax_treatment
+  `vat_not_registered` (Ian has 4170252953); contact email is
+  michelle@supalift.co.za; Denver's contact person has no email.
+- RQ-261020-43: Hermans, quote, 1 line unpriced (Front Fog Lamp L/H) — to
+  cancel unless part of a real order.
+- RQ-261020-44: actually Test Account (Ian), fulfilled, Zoho SO-00009 deleted,
+  still live in CTP — to soft-delete. Both await Ian's go-ahead.

@@ -811,6 +811,23 @@ const parseRand = (s: string): number => {
     finally { setSavingOrder(false); }
   }, [showToast, loadOrders]);
 
+  /** 0058: admin accepts for a customer who confirmed by phone/email. Same path
+   *  as the customer's accept (confirmed Zoho sales order + stock hold); the
+   *  admin and the note are recorded on the order. */
+  const acceptOnBehalf = useCallback(async (o: StaffOrder) => {
+    const note = window.prompt(`Accept ${o.number} for ${o.customer_name}? This raises the confirmed sales order in Zoho and holds the stock.\nHow did they confirm?`, "Confirmed by  via phone");
+    if (note == null) return;
+    setSavingOrder(true);
+    try {
+      const r = await api.acceptQuoteOnBehalf(o.id, note);
+      showToast({ text: r?.already
+        ? `${o.number} was already accepted — nothing changed.`
+        : `${o.number} accepted for ${o.customer_name}${r?.zoho_salesorder_number ? ` · Zoho sales order ${r.zoho_salesorder_number}` : ""} · ${r?.reserved_lines ?? 0} line${(r?.reserved_lines ?? 0) === 1 ? "" : "s"} held.` });
+      loadOrders();
+    } catch (e) { showToast({ text: e instanceof Error ? e.message.replace(/^\[CTP web\] could not accept: /, "") : "Could not accept.", err: true }); }
+    finally { setSavingOrder(false); }
+  }, [showToast, loadOrders]);
+
   const fulfilOrder = useCallback(async (o: StaffOrder) => {
     setSavingOrder(true);
     try {
@@ -1513,6 +1530,14 @@ const parseRand = (s: string): number => {
                           <div className="mb-row">
                             <span className="mb-rk">Waiting</span>
                             <span className="mb-rv">sent {timeAgo(o.created_at)} · they see it on their phone</span>
+                          </div>
+                        )}
+                        {o.stage === "with_customer" && role === "admin" && (
+                          <div className="mb-row">
+                            <button className="mb-btn s" style={{ height: 46 }} disabled={savingOrder}
+                              onClick={() => { void acceptOnBehalf(o); }}>
+                              Accept on customer's behalf
+                            </button>
                           </div>
                         )}
                         {o.stage !== "to_price" && (
