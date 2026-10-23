@@ -196,6 +196,82 @@ Deno.serve(async (req: Request) => {
     return json({ ok: false, error: "op = so | invoice_from_so | po | get | delete" }, 400);
   }
 
+  // 23 Oct: create/list/delete CTP's OWN webhooks + workflow rules through the Books settings API
+  // (undocumented; the same one Zoho's screens use). Only objects named "CTP Core …" are touched.
+  //   { op: "list" } | { op: "create", kind: "webhooks"|"workflows", payload } | { op: "delete", kind, id }
+  if (body.action === "webhook_admin") {
+    await zohoInit(db);
+    const kind = String(body.kind ?? "");
+    if (body.op === "placeholders") {   // READ-ONLY: each entity's id placeholder in Zoho Inventory's webhook form
+      const tk = await zohoToken();
+      const out: Record<string, string[]> = {};
+      for (const e of ["item", "salesorder", "invoice", "package", "shipment_order", "bill", "purchase_receive", "inventory_adjustment"]) {
+        const r = await fetch(`https://www.zohoapis.com/inventory/v1/settings/webhooks/editpage?entity=${e}&organization_id=${env("ZOHO_ORG_ID")}`,
+          { headers: { Authorization: `Zoho-oauthtoken ${tk}` } });
+        const j = await r.json().catch(() => ({}));
+        // deno-lint-ignore no-explicit-any
+        out[e] = ((j.entity_fields ?? []) as any[]).filter((f) => f.webhook_field && /_id$/.test(String(f.field_name)) && !f.is_custom_field)
+          .slice(0, 4).map((f) => `${f.field_name_formatted} = ${f.field_placeholder}`);
+      }
+      return json({ ok: true, placeholders: out });
+    }
+    if (body.op === "list") {
+      const w = await zoho("GET", "/settings/webhooks"), f = await zoho("GET", "/settings/workflows");
+      return json({ ok: true, webhooks: w.webhooks ?? [], workflows: f.workflows ?? [] });
+    }
+    if (!["webhooks", "workflows"].includes(kind)) return json({ ok: false, error: "kind" }, 400);
+    if (body.op === "create") {
+      const pl = body.payload ?? {};
+      const nm = String(pl.webhook_name ?? pl.workflow_name ?? pl.name ?? "");
+      if (!nm.startsWith("CTP Core")) return json({ ok: false, error: "name must start with 'CTP Core'" }, 400);
+      try { return json({ ok: true, result: await zoho("POST", `/settings/${kind}`, {}, pl) }); }
+      catch (e) { return json({ ok: false, error: e instanceof Error ? e.message : String(e) }, 200); }
+    }
+    if (body.op === "get" || body.op === "delete") {
+      const id = String(body.id ?? "");
+      if (!/^\d+$/.test(id)) return json({ ok: false, error: "id" }, 400);
+      const one = await zoho("GET", `/settings/${kind}/${id}`).catch((e) => ({ error: String(e) }));
+      if (body.op === "get") return json({ ok: true, doc: one });
+      // deno-lint-ignore no-explicit-any
+      const d: any = (one as any).webhook ?? (one as any).workflow ?? {};
+      if (!String(d.webhook_name ?? d.workflow_name ?? "").startsWith("CTP Core")) return json({ ok: false, error: "not a CTP Core object" }, 403);
+      try { await zoho("DELETE", `/settings/${kind}/${id}`); return json({ ok: true, deleted: id }); }
+      catch (e) { return json({ ok: false, error: e instanceof Error ? e.message : String(e) }, 200); }
+    }
+    return json({ ok: false, error: "op" }, 400);
+  }
+
+  // 23 Oct: can webhooks / workflow rules be managed by API? READ-ONLY GET probes, both products.
+  if (body.action === "webhook_probe") {
+    await zohoInit(db);
+    const tk = await zohoToken();
+    const org = env("ZOHO_ORG_ID");
+    const out: Record<string, string> = {};
+    for (const base of ["https://www.zohoapis.com/books/v3", "https://www.zohoapis.com/inventory/v1"]) {
+      for (const path of ["/settings/webhooks", "/settings/workflows", "/settings/workflowrules", "/settings/workflow", "/webhooks",
+                          "/workflows", "/settings/automation/webhooks", "/settings/automation/workflowrules", "/settings/customfunctions"]) {
+        const r = await fetch(`${base}${path}?organization_id=${org}`, { headers: { Authorization: `Zoho-oauthtoken ${tk}` } });
+        const j = await r.json().catch(() => ({}));
+        out[(base.includes("books") ? "books" : "inventory") + path] = `${r.status} ${j.code ?? ""} ${String(j.message ?? "").slice(0, 70)}`;
+      }
+    }
+    if (body.full === true) {
+      const bodies: Record<string, unknown> = {};
+      for (const base of ["https://www.zohoapis.com/books/v3", "https://www.zohoapis.com/inventory/v1"]) {
+        for (const path of ["/settings/webhooks", "/settings/workflows", "/settings/webhooks/editpage", "/settings/workflows/editpage",
+                            "/settings/webhooks/editpage?entity=item", "/settings/workflows/editpage?entity=item"]) {
+          const r = await fetch(`${base}${path}${path.includes("?") ? "&" : "?"}organization_id=${org}`, { headers: { Authorization: `Zoho-oauthtoken ${tk}` } });
+          const j = await r.json().catch(() => ({}));
+          bodies[(base.includes("books") ? "books" : "inventory") + path] = { status: r.status, body: JSON.stringify(j).slice(0, 3000),
+            // deno-lint-ignore no-explicit-any
+            entities: (j.entities ?? []).map((e: any) => `${e.entity}${e.supported_actions ? "[" + e.supported_actions.join("/") + "]" : ""}`) };
+        }
+      }
+      return json({ ok: true, probe: out, bodies });
+    }
+    return json({ ok: true, probe: out });
+  }
+
   // Phase 3 development: READ-ONLY GET against Zoho Inventory, whitelisted paths only.
   //   { action: "inv_get", path: "/locations" | "/users" | "/settings/preferences" | "/items/<id>" | ... }
   if (body.action === "inv_get") {

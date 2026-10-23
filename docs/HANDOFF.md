@@ -498,3 +498,17 @@ Ian's screenshot: "Hermans Panel Beaters" and "R 1 329,40" near-black on the dar
 6. Cache shows physical stock; customers' `in_stock` is unchanged (still CTP) until cut-over.
 7. Phone "Count" (CTP ledger) stays as-is in ctp mode; in zoho mode the Zoho count is offered on
    the part sheet.
+
+## 23 Oct (late) — webhooks: Books plan has none; Inventory ones are manual; keyless zoho-hook live
+- API check: Books/Inventory both have an undocumented settings API for webhooks/workflows.
+  Books CREATE refused: "Webhook has been disabled for your account. Please upgrade your plan"
+  (code 13116) → no Books webhooks; quotes/estimates stay on polling. Nothing was created.
+  Inventory: webhooks offered (item, SO, invoice, package, shipment, bill, purchase receive,
+  adjustment) but our token has `ZohoInventory.settings.READ` only → manual setup in Zoho
+  Inventory (docs/10), or a later grant with `ZohoInventory.settings.CREATE`.
+- New edge function **`zoho-hook`** (verify_jwt OFF; `supabase/config.toml`): Zoho calls it with
+  just a URL + `{"module","id"}` — no key, no secret. It forwards to zoho-push `hook`
+  (refetch-only, 10 s throttle). Tested keyless (JSON body and query string). Deploy with
+  `--no-verify-jwt`.
+- zoho-auth: `webhook_probe` (read-only), `webhook_admin` (list / placeholders read-only;
+  create/delete only objects named "CTP Core …"). Placeholders read from Zoho are in docs/10.

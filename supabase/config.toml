@@ -4,3 +4,6 @@ project_id = "hkzmydowyiajkbakxfkj"
 
 [functions.accept-quote]
 verify_jwt = true
+
+[functions.zoho-hook]
+verify_jwt = false
