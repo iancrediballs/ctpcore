@@ -1,7 +1,7 @@
 /* CTP Core — mobile shell. Scoped under .mb-root; never loaded on desktop. */
 .mb-root{
   --bg:#0B0D10;--surf:#151A20;--surf2:#1D242C;--line:#2B343F;
-  --txt:#F4F7FA;--dim:#93A0AE;--dimmer:#6B7887;
+  --txt:#F4F7FA;--dim:#93A0AE;--dimmer:#7D8A99;
   --amber:#FF8A1F;--green:#31D07C;--warn:#FFC24B;--red:#E23A20;
   --r:14px;--tab:64px;--safe-b:env(safe-area-inset-bottom,0px);--safe-t:env(safe-area-inset-top,0px);
   position:fixed;inset:0;background:var(--bg);color:var(--txt);display:flex;flex-direction:column;
@@ -10,6 +10,13 @@
   -webkit-font-smoothing:antialiased;
 }
 .mb-root *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+/* 23 Oct 2026 (Ian, dark-mode bug): a <button> does not inherit color — the UA
+   gives it ButtonText (black). Row-buttons (order cards) showed the customer
+   name and amount black on the dark card. :where() keeps this at zero
+   specificity, so every class that sets its own color still wins. */
+:where(.mb-root) :where(button, input, select, textarea){color:inherit;font-family:inherit}
+.mb-root{color-scheme:dark}
+.mb-root.light{color-scheme:light}
 .mb-mono{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-variant-ligatures:none}
 .mb-view{display:flex;flex-direction:column;flex:1;min-height:0}
 .mb-top{padding:calc(var(--safe-t) + 12px) 16px 12px;flex:0 0 auto}
@@ -71,7 +78,7 @@
 .mb-thumb{width:72px;height:72px;flex:0 0 auto;border-radius:10px;background:#fff;object-fit:contain;padding:4px}
 .mb-thumb.ph{display:grid;place-items:center;background:var(--surf2)}
 .mb-cbody{flex:1;min-width:0}
-.mb-cname{font-size:16px;font-weight:750;line-height:1.25;margin-bottom:5px;
+.mb-cname{font-size:16px;font-weight:750;line-height:1.25;margin-bottom:5px;color:var(--txt);
   display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .mb-csku{font-size:12.5px;font-weight:700;color:var(--dim);letter-spacing:.3px}
 .mb-cmeta{display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap}
@@ -142,7 +149,7 @@
 .mb-row{display:flex;align-items:center;gap:12px;padding:13px 15px;border-bottom:1px solid var(--line)}
 .mb-row:last-child{border-bottom:0}
 .mb-rk{font-size:12.5px;font-weight:800;color:var(--dim);text-transform:uppercase;letter-spacing:.7px;flex:0 0 108px}
-.mb-rv{font-size:15px;font-weight:750;margin-left:auto;text-align:right;word-break:break-all}
+.mb-rv{font-size:15px;font-weight:750;margin-left:auto;text-align:right;word-break:break-all;color:var(--txt)}
 .mb-actions{position:absolute;left:0;right:0;bottom:0;padding:12px 16px calc(12px + var(--safe-b));
   background:linear-gradient(to top,var(--bg) 72%,transparent);display:flex;gap:10px;z-index:41}
 .mb-btn{flex:1;height:56px;border:0;border-radius:var(--r);font-size:16px;font-weight:850;cursor:pointer;
@@ -220,7 +227,7 @@
    editor panel, 18 Sep — "can't see the part it's attached to"). */
 .mb-lb{position:fixed;inset:0;z-index:70;background:#05070a;display:flex;flex-direction:column;
   --bg:#0B0D10;--surf:#151A20;--surf2:#1D242C;--line:#2B343F;
-  --txt:#F4F7FA;--dim:#93A0AE;--dimmer:#6B7887;
+  --txt:#F4F7FA;--dim:#93A0AE;--dimmer:#7D8A99;
   --amber:#FF8A1F;--green:#31D07C;--warn:#FFC24B;--red:#E23A20;
   color:var(--txt)}
 /* Three fixed layers, bottom to top: drawing (.mb-lb, 70) → part sheet
@@ -314,8 +321,8 @@
    stays dark in both themes — photos belong on a dark stage. */
 .mb-root.light{
   --bg:#EEF1F5;--surf:#FFFFFF;--surf2:#E7EBF1;--line:#D2D9E2;
-  --txt:#151A20;--dim:#57636F;--dimmer:#8C98A6;
-  --amber:#D96B00;--green:#178A54;--warn:#8A6400;--red:#C43214;
+  --txt:#151A20;--dim:#57636F;--dimmer:#5F6B78;
+  --amber:#A85600;--green:#12703F;--warn:#8A6400;--red:#C43214;
 }
 .mb-root.light .mb-tabs{background:rgba(255,255,255,.93)}
 .mb-root.light .mb-brand{background:#12161A;border-radius:8px;box-shadow:0 0 0 5px #12161A}
@@ -324,7 +331,8 @@
 .mb-root.light .mb-secimg.ph{background:var(--surf2)}
 .mb-root.light .mb-toast{box-shadow:0 10px 30px rgba(30,40,50,.22)}
 .mb-root.light .mb-chip.on,.mb-root.light .mb-btn.p,.mb-root.light .mb-segbtn.on,
-.mb-root.light .mb-itembdg,.mb-root.light .mb-tabbadge{color:#fff}
+.mb-root.light .mb-itembdg,.mb-root.light .mb-tabbadge,
+.mb-root.light .mb-cartbdg,.mb-root.light .mb-of-chip b{color:#fff}
 /* …but not inside the always-dark lightbox, where the token set is the dark
    one and white-on-light-amber measured 3.5:1 (the "Open part" chip). */
 .mb-root.light .mb-lb .mb-chip.on,.mb-root.light .mb-lb .mb-btn.p{color:#12161A;background:var(--amber);border-color:var(--amber)}
@@ -340,8 +348,8 @@
   border-radius:var(--r);background:var(--surf2);color:var(--txt);cursor:pointer;text-align:left}
 .mb-settings-cta:active{transform:scale(.99)}
 .mb-settings-cta b{display:block;font-size:16px;font-weight:850}
-.mb-settings-cta small{display:block;margin-top:3px;font-size:12.5px;color:var(--dimmer);line-height:1.35}
-.mb-chev{font-size:24px;color:var(--dimmer);line-height:1}
+.mb-settings-cta small{display:block;margin-top:3px;font-size:12.5px;color:var(--dim);line-height:1.35}
+.mb-chev{font-size:24px;color:var(--dim);line-height:1}
 
 .st-wrap{display:flex;flex-direction:column;height:100%;background:var(--bg)}
 .st-head{display:flex;align-items:center;gap:6px;padding:calc(env(safe-area-inset-top) + 10px) 14px 10px;
@@ -747,3 +755,4 @@ textarea.st-in{resize:vertical;line-height:1.45;font-size:15px}
 .mb-of-chip b{width:20px;height:20px;border-radius:50%;display:grid;place-items:center;background:var(--amber);color:#12161A;font-size:11px}
 .mb-of-clear{height:30px;padding:0 10px;border:0;background:none;color:var(--dim);font:inherit;font-size:12.5px;font-weight:700;text-decoration:underline}
 .mb-of-n{font-size:12px;font-weight:800;color:var(--dim);margin-left:auto}
+.mb-root.light .mb-lb .mb-cartbdg{color:#12161A}

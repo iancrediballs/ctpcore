@@ -183,7 +183,7 @@ export default function AddCustomer({ onDone, onCancel, isAdmin }: {
         </>
       )}
 
-      {msg && <div className="mb-csku" style={{ color: msg.ok ? "var(--green, #2f855a)" : "var(--bad, #c0392b)" }}>{msg.text}</div>}
+      {msg && <div className="mb-csku" style={{ color: msg.ok ? "var(--green)" : "var(--red)" }}>{msg.text}</div>}
       <button className="mb-btn" onClick={onCancel}>Cancel</button>
     </div>
   );

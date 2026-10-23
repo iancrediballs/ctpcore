@@ -339,3 +339,22 @@ RQ-261020-44.
   refused on upload by the lock — price on the phone/Zoho). Customer Decline marks the
   estimate declined on the next read-back. Quotes priced before the switch with no
   estimate: staff tap "Create estimate in Zoho" (none were open at switch-on).
+
+## 23 Oct — dark-mode bug: order card name/amount black on dark (PWA v27, live)
+Ian's screenshot: "Hermans Panel Beaters" and "R 1 329,40" near-black on the dark card.
+- Root cause: the order-list cards are `<button className="mb-row">`; a button does
+  not inherit `color` (the UA gives it ButtonText = black), and `.mb-cname`/`.mb-rv`
+  set none. Fix: `:where(.mb-root) :where(button,input,select,textarea){color:inherit;
+  font-family:inherit}` (zero specificity, so every class colour still wins), plus
+  explicit `color:var(--txt)` on `.mb-cname`/`.mb-rv`; `color-scheme` dark/light on the
+  root so native selects and date pickers follow the theme.
+- AA sweep (measured in the shell harness, every visible text element against its real
+  background, both themes: Home, Orders with all cards open + filter panel + chips +
+  counter basket, part sheet + header cart, Info): all ≥ 4.5:1 now. Token changes:
+  dark `--dimmer` #6B7887→#7D8A99 (root + lightbox); light `--dimmer` #8C98A6→#5F6B78,
+  `--amber` #D96B00→#A85600 (white button text was 3.5:1), `--green` #178A54→#12703F;
+  cart/filter-chip badges white text in light (dark text inside the always-dark lightbox);
+  Settings CTA subtitle/chevron use `--dim`. Undefined tokens `--bad`/`--ok` (which fell
+  back to #c0392b/#2f855a, ~3:1 on dark) replaced by `--red`/`--green` (Zoho status lines,
+  Add customer messages).
+- Not swept: the Settings screen (st-*) and the Tauri desktop app.

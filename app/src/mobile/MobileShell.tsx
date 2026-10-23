@@ -2053,7 +2053,7 @@ const parseRand = (s: string): number => {
                           const z = zohoStatusLabel(o.zoho_error && !o.zoho_invoice_number ? "error" : o.zoho_status);
                           return (
                             <div className="mb-csku" style={{ fontWeight: 700,
-                                 color: z.tone === "bad" ? "var(--bad, #c0392b)" : z.tone === "wait" ? "var(--warn, #b7791f)" : "var(--ok, #2f855a)" }}>
+                                 color: z.tone === "bad" ? "var(--red)" : z.tone === "wait" ? "var(--warn)" : "var(--green)" }}>
                               {z.text}{o.zoho_invoice_number ? ` · ${o.zoho_invoice_number}` : ""}
                             </div>
                           );
@@ -2069,12 +2069,12 @@ const parseRand = (s: string): number => {
                     {open && (
                       <>
                         {o.zoho_error && (
-                          <div className="mb-csku" style={{ color: "var(--bad, #c0392b)", padding: "6px 0" }}>
+                          <div className="mb-csku" style={{ color: "var(--red)", padding: "6px 0" }}>
                             ✕ Zoho: {o.zoho_error}
                           </div>
                         )}
                         {o.zoho_so_error && (
-                          <div className="mb-csku" style={{ color: "var(--bad, #c0392b)", padding: "6px 0" }}>
+                          <div className="mb-csku" style={{ color: "var(--red)", padding: "6px 0" }}>
                             ✕ Zoho sales order: {o.zoho_so_error}
                           </div>
                         )}
