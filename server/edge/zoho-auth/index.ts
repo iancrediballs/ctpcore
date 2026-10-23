@@ -128,6 +128,43 @@ Deno.serve(async (req: Request) => {
 
   // READ-ONLY assessment for the Zoho-first plan (docs/06): plan, settings,
   // inventory tracking, and which endpoints the current token can read.
+  // 23 Oct: Zoho items have an empty Unit, which blocks saving edits in Zoho's UI. Sets ONLY
+  // `unit` on ACTIVE items whose unit is empty, then re-reads each item and checks the other
+  // fields are unchanged. { unit: "pcs", dry?: true, limit?: n, ids?: [...] }
+  if (body.action === "set_unit") {
+    await zohoInit(db);
+    const unit = String(body.unit ?? "");
+    if (!/^[A-Za-z]{1,10}$/.test(unit)) return json({ ok: false, error: "unit" }, 400);
+    const nap = () => new Promise((r) => setTimeout(r, 750));
+    // deno-lint-ignore no-explicit-any
+    const items: any[] = [];
+    for (let page = 1; page <= 5; page++) {
+      const b = await zohoInv("GET", "/items", { page: String(page), per_page: "200", filter_by: "Status.Active" });
+      items.push(...(b.items ?? []));
+      if (!b.page_context?.has_more_page) break;
+    }
+    const want = items.filter((i) => String(i.status) === "active" && !String(i.unit ?? "").trim()
+      && (!Array.isArray(body.ids) || body.ids.map(String).includes(String(i.item_id))));
+    if (body.dry === true) return json({ ok: true, active: items.length, empty_unit: want.length, sample: want.slice(0, 3).map((i) => i.sku) });
+    const KEYS = ["name", "sku", "rate", "purchase_rate", "description", "tax_id", "account_id", "purchase_account_id", "item_type", "status", "track_inventory", "reorder_level"];
+    // deno-lint-ignore no-explicit-any
+    const done: any[] = [];
+    for (const i of want.slice(0, Math.min(Number(body.limit ?? 60), 60))) {
+      // deno-lint-ignore no-explicit-any
+      const before: any = (await zohoInv("GET", `/items/${i.item_id}`)).item; await nap();
+      try {
+        await zohoInv("PUT", `/items/${i.item_id}`, {}, { unit });
+        await nap();
+        // deno-lint-ignore no-explicit-any
+        const after: any = (await zohoInv("GET", `/items/${i.item_id}`)).item;
+        const changed = KEYS.filter((k) => JSON.stringify(before[k] ?? null) !== JSON.stringify(after[k] ?? null));
+        done.push({ sku: i.sku, unit: after.unit, other_fields_changed: changed });
+      } catch (e) { done.push({ sku: i.sku, error: e instanceof Error ? e.message : String(e) }); }
+      await nap();
+    }
+    return json({ ok: !done.some((d) => d.error || (d.other_fields_changed ?? []).length), remaining: Math.max(want.length - done.length, 0), done });
+  }
+
   // Phase 3 live-test FIXTURES (23 Oct). Creates and deletes only clearly marked TEST documents:
   // every document it creates carries reference "RQ-TEST-…"/"CTP-TEST-…", and it refuses to
   // delete or change anything whose reference does not start with one of those.

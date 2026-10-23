@@ -1,5 +1,12 @@
 # Zoho → CTP Core webhooks — what the API allows, and the manual steps (23 Oct 2026)
 
+> **LIVE since 23 Oct 2026.** 8 webhooks plus 8 active workflow rules in Zoho Inventory (items, sales
+> orders, invoices, packages, shipments, bills, purchase receives, inventory adjustments) post to
+> `zoho-hook`, set up in the browser. Verified: Zoho's test call for item 1429405000000099011 was
+> received and processed — that item alone was re-read at 13:45:32, between the 13:40 and 13:50
+> cron runs, with no hook errors. Quotes/estimates (Books) stay on polling (no Books webhooks on
+> this plan).
+
 ## What was checked (by API, 23 Oct)
 - Zoho Books and Inventory both expose webhooks and workflow rules on an undocumented settings
   API (`/settings/webhooks`, `/settings/workflows`, `…/editpage`), the same one Zoho's screens use.

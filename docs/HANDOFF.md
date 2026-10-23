@@ -528,3 +528,14 @@ Ian's screenshot: "Hermans Panel Beaters" and "R 1 329,40" near-black on the dar
 - Docs: `docs/11_SYSTEM_MAP.md` (current masters + hosting); notes added to
   CTP_Internal_Naming_Convention.md, ARCHITECTURE.md §7, docs/06; docs/09 wording.
   Tests: tests_0066_local.js 10/10.
+
+## 23 Oct (night) — Zoho Inventory webhooks LIVE; item Unit set to "pcs"
+- Webhooks set up in Zoho Inventory via the browser: 8 webhooks + 8 active workflow rules →
+  `zoho-hook`. Verified: Zoho's test for item 1429405000000099011 was processed — that item alone
+  re-read at 13:45:32 (between crons at 13:40 and 13:50); 0 hook errors. docs/10 updated.
+  Estimates (Books) stay on polling.
+- Zoho items had an empty Unit, which blocked saving edits in Zoho's UI. zoho-auth `set_unit`
+  (sets ONLY `unit` on ACTIVE items with an empty unit; re-reads and checks 12 other fields) →
+  all **155 active items now unit = "pcs"**. Verified against the morning snapshot
+  (docs/stock/raw_2026-10-23): 162 items / 155 details, 0 differences in name, SKU, status, type,
+  rate, purchase rate; 0 empty units left. The 7 inactive items were not touched.
