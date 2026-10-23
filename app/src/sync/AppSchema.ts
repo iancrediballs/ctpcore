@@ -16,6 +16,8 @@ const brand = new Table({
 });
 
 const part = new Table({
+  // 0065: the Zoho Inventory stock cache (physical on hand, available for sale). Staff stream only.
+  zoho_stock_on_hand: column.real, zoho_available_for_sale: column.real, zoho_committed: column.real, zoho_stock_at: column.text,
   sku: column.text, mpn: column.text, brand_id: column.text, category_id: column.text,
   name: column.text, description: column.text, uom: column.text, weight_g: column.integer,
   status: column.text, superseded_by: column.text, make: column.text, model: column.text,

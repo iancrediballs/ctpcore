@@ -432,3 +432,69 @@ Ian's screenshot: "Hermans Panel Beaters" and "R 1 329,40" near-black on the dar
   series to reset. Inventory documents unreadable until the new grant code — re-run then.
 - docs/09 updated. Nothing destructive has run; it needs Ian's "go" on the day.
 - Waiting for the new grant code to start Phase 3 on Inventory.
+
+## 23 Oct (evening) — new grant code (Books + Inventory); Phase 3 BUILT on Inventory, behind the rehearsal switch (0065, PWA v29)
+- **Grant exchanged** via zoho-auth: all 24 scopes granted (12 Books + 12 Inventory, incl.
+  packages, shipmentorders, purchasereceives, inventoryadjustments, transferorders). The exchange
+  writes the new access token into the Vault cache, so Inventory worked at once.
+- **Plan, read via API:** Inventory answers with its own allowance, **7,500 calls/day** (Books stays
+  5,000/day); 100/min. One location "Head Office" (`1429405000000095060`, stored in
+  `zoho_config.zoho_location_id`); 3 active admin users (Premium lists 2 — check licences, not
+  urgent); inventory start date 1 Mar 2026. The plan name is not exposed by the API.
+  `/settings/warehouses` is 401 (deprecated) — `/locations` works.
+- **Zoho keeps two stocks (live test):** `stock_on_hand` = ACCOUNTING stock (moves when invoices/
+  bills are approved — Michelle keeps them draft); `actual_available_stock` = PHYSICAL (moves on
+  shipments and purchase receives). CTP's cache shows PHYSICAL as "on the shelf" plus Zoho's
+  available-for-sale; the accounting figure is kept in `zoho_item.actual_available`.
+- **0065** (live): `zoho_config.stock_master` 'ctp'|'zoho' (default **ctp** = rehearsal),
+  `set_zoho_stock_master` (admin), `ctp_ledger_frozen` (off; for cut-over), Zoho stock cache on
+  `part.zoho_*` (staff stream SELECT * — no sync-rule change) and `zoho_item`; `apply_zoho_stock`;
+  `record_goods_out` (fulfilled + package/shipment refs + hold released, NO CTP sale; the fulfil
+  gate trigger still applies); trigger `stock_movement_zoho_guard` (CTP sale refused in zoho mode;
+  everything refused when frozen except origin 'cutover'); logs `zoho_stock_adjustment`,
+  `zoho_purchase_receive`.
+- **zoho-push** new actions:
+  - `stock_sync` (also every 15 min with the 10-min status read-back);
+  - `ship` (package + shipment, marked delivered, then `record_goods_out`; idempotent);
+  - `adjust` (count → Inventory adjustment of counted − Zoho physical);
+  - `receive_list` / `receive` (purchase receive against a Zoho PO);
+  - `hook` (Zoho webhooks with the public anon key; trusts only the id and re-reads Zoho; 10 s
+    throttle per record).
+  
+  Ship / adjust / receive act only when `stock_master = 'zoho'`, or as an explicit rehearsal test
+  (admin / server token + `rehearsal_test: true`).
+- **Phone (v29):**
+  - part sheet shows "Zoho: N on the shelf · M available";
+  - in zoho mode: "Post count to Zoho", Fulfil becomes "Ship in Zoho — package + shipment",
+    Info → **Receive goods** (open Zoho POs, quantities, receive);
+  - Settings → Zoho → **Stock master** switch (admin) + "Refresh Zoho stock".
+- **Live rehearsal test** (TEST docs only, all deleted, stock back to start), on part 1001:
+  - stock cache 155 items;
+  - ship refused before invoice; after INV linked → PKG-00005 / SHP-00005 delivered; CTP
+    fulfilled; no CTP sale; repeat = already; anon key cannot ship; webhook ok;
+  - count 12 vs Zoho 11 → adjustment +1, cache 12;
+  - receive PR-PO-00002-2 against TEST PO-00002;
+  - physical stock moved 11→10 on ship and 11→12 on receive.
+
+  Gaps left by tests: SO-00016/17, INV-000007/8, PKG-00004/5, SHP-00004/5, PO-00001/2, adjustment
+  CTP-COUNT-2.
+- Found: **PKG-00001–003 / shipments for Hermans SO-00011 and SO-00012** were created in Zoho on 23 Oct
+  (delivered) — apparently by accounts. Consistent with CTP (both orders already out).
+  Re-run dry run: 33 Books docs + 3 packages + 3 shipments to delete at cut-over.
+- `inv_fixture` (zoho-auth): creates/deletes ONLY TEST-marked docs for live tests; `inv_get`:
+  whitelisted read-only Inventory GETs. Tests: tests_0065_local.js 20/20 (+0064 15, 0063 24,
+  0061 19, 0059 26); deno check at baseline (71).
+- **Webhooks:** `docs/10_ZOHO_WEBHOOKS.md` — workflow rules can only be created in Zoho's UI
+  (Ian/Michelle, ~15 min). Polling covers until then.
+
+**Defaults taken (Ian: urgent questions only):**
+1. The rehearsal switch stays on CTP; an admin flips it in Settings → Zoho to rehearse; back any time.
+2. A shipment is marked delivered immediately (counter collection); delivery method "Collection",
+   tracking no. = the RQ number.
+3. Counts post straight to Zoho (no draft); reason "Stock count"; description says who and what Zoho had.
+4. Receives: Zoho's auto-numbering for purchase receives is OFF in this org → CTP numbers them
+   `PR-<PO>-<n>` (Michelle can switch auto-numbering on; then Zoho's numbers are used).
+5. Webhooks authenticate with the public anon key + refetch-only (no secret to share).
+6. Cache shows physical stock; customers' `in_stock` is unchanged (still CTP) until cut-over.
+7. Phone "Count" (CTP ledger) stays as-is in ctp mode; in zoho mode the Zoho count is offered on
+   the part sheet.

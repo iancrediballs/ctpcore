@@ -14,7 +14,7 @@
 // POST { "action": "status" } says whether a token is stored, nothing more.
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient, type SupabaseClient } from "jsr:@supabase/supabase-js@2";
-import { zohoInit, zohoToken, zoho, findByReference } from "../_shared/zoho.ts";
+import { zohoInit, zohoToken, zoho, zohoInv, findByReference } from "../_shared/zoho.ts";
 
 const env = (k: string) => Deno.env.get(k) ?? "";
 const json = (b: unknown, status = 200) =>
@@ -128,6 +128,88 @@ Deno.serve(async (req: Request) => {
 
   // READ-ONLY assessment for the Zoho-first plan (docs/06): plan, settings,
   // inventory tracking, and which endpoints the current token can read.
+  // Phase 3 live-test FIXTURES (23 Oct). Creates and deletes only clearly marked TEST documents:
+  // every document it creates carries reference "RQ-TEST-…"/"CTP-TEST-…", and it refuses to
+  // delete or change anything whose reference does not start with one of those.
+  //   op: so (TEST sales order for the Test Account contact, confirmed) | invoice_from_so | po (TEST vendor + PO, issued)
+  //       | delete (kind, id) | get (kind, id)
+  if (body.action === "inv_fixture") {
+    await zohoInit(db);
+    const op = String(body.op ?? ""), ref = String(body.reference ?? "");
+    const isTest = (r: unknown) => /^(RQ-TEST-|CTP-TEST-)/.test(String(r ?? ""));
+    if (op === "so") {
+      if (!isTest(ref)) return json({ ok: false, error: "reference must start RQ-TEST-" }, 400);
+      const { data: tc } = await db.from("customer").select("zoho_contact_id").eq("code", "TESTACC").maybeSingle();
+      const so = (await zoho("POST", "/salesorders", {}, { customer_id: tc?.zoho_contact_id, reference_number: ref, is_inclusive_tax: false,
+        line_items: [{ item_id: String(body.item_id), quantity: Number(body.qty ?? 1), rate: 1, description: "TEST" }], notes: "CTP CORE TEST - DELETE ME" })).salesorder;
+      await zoho("POST", `/salesorders/${so.salesorder_id}/status/open`);
+      return json({ ok: true, id: String(so.salesorder_id), number: so.salesorder_number });
+    }
+    if (op === "invoice_from_so") {
+      const so = (await zoho("GET", `/salesorders/${body.id}`)).salesorder;
+      if (!isTest(so.reference_number)) return json({ ok: false, error: "not a TEST sales order" }, 403);
+      const inv = (await zoho("POST", "/invoices", {}, { customer_id: so.customer_id, reference_number: so.reference_number, is_inclusive_tax: false,
+        // deno-lint-ignore no-explicit-any
+        line_items: (so.line_items ?? []).map((l: any) => ({ item_id: l.item_id, quantity: l.quantity, rate: l.rate, salesorder_item_id: l.line_item_id })),
+        notes: "CTP CORE TEST - DELETE ME" })).invoice;
+      return json({ ok: true, id: String(inv.invoice_id), number: inv.invoice_number, status: inv.status });
+    }
+    if (op === "po") {
+      if (!isTest(ref)) return json({ ok: false, error: "reference must start CTP-TEST-" }, 400);
+      const vend = (await zoho("POST", "/contacts", {}, { contact_name: `ZZ CTP CORE TEST VENDOR ${ref} - DELETE ME`, contact_type: "vendor",
+        notes: "Created by a CTP Core live test. Deleted automatically." })).contact;
+      const po = (await zohoInv("POST", "/purchaseorders", {}, { vendor_id: vend.contact_id, reference_number: ref,
+        line_items: [{ item_id: String(body.item_id), quantity: Number(body.qty ?? 1), rate: 1 }], notes: "CTP CORE TEST - DELETE ME" })).purchaseorder;
+      try { await zohoInv("POST", `/purchaseorders/${po.purchaseorder_id}/status/issued`); } catch { /* may already be open */ }
+      const now = (await zohoInv("GET", `/purchaseorders/${po.purchaseorder_id}`)).purchaseorder;
+      return json({ ok: true, id: String(po.purchaseorder_id), number: po.purchaseorder_number, status: now.status, vendor_id: String(vend.contact_id) });
+    }
+    if (op === "get" || op === "delete") {
+      const k = String(body.kind ?? ""), id = String(body.id ?? "");
+      const map: Record<string, [string, string, boolean]> = {   // kind → [path, key, inventory api]
+        salesorder: ["salesorders", "salesorder", false], invoice: ["invoices", "invoice", false], contact: ["contacts", "contact", false],
+        package: ["packages", "package", true], shipment: ["shipmentorders", "shipmentorder", true], purchaseorder: ["purchaseorders", "purchaseorder", true],
+        purchasereceive: ["purchasereceives", "purchasereceive", true], adjustment: ["inventoryadjustments", "inventory_adjustment", true],
+        item: ["items", "item", true] };
+      const m = map[k];
+      if (!m || !/^\d+$/.test(id)) return json({ ok: false, error: "kind/id" }, 400);
+      const call = m[2] ? zohoInv : zoho;
+      // deno-lint-ignore no-explicit-any
+      let d: any;
+      try { d = (await call("GET", `/${m[0]}/${id}`))[m[1]]; } catch (e) { return json({ ok: true, gone: true, note: e instanceof Error ? e.message : String(e) }); }
+      if (op === "get") return json({ ok: true, doc: d });
+      // deletes: only TEST documents (by reference / name), and items never
+      const tag = d.reference_number ?? d.contact_name ?? d.description ?? d.notes ?? "";
+      const notes = String(d.notes ?? ""), refn = d.reference_number;
+      const okDel = ({
+        salesorder: isTest(refn), invoice: isTest(refn), purchaseorder: isTest(refn),
+        contact: /CTP CORE TEST/.test(String(d.contact_name ?? "")),
+        package: /· RQ-TEST-/.test(notes) || isTest(refn), shipment: /· RQ-TEST-/.test(notes) || isTest(refn),
+        purchasereceive: /CTP-TEST-/.test(notes), adjustment: /CTP-TEST/.test(String(d.reason ?? "")),
+      } as Record<string, boolean>)[k] === true;
+      if (!okDel) return json({ ok: false, error: `refused: ${k} ${id} is not a TEST document (${String(tag).slice(0, 60)})` }, 403);
+      if (k === "shipment") { try { await zohoInv("POST", `/shipmentorders/${id}/status/undelivered`); } catch { /* fine */ } }
+      if (k === "purchaseorder") { try { await zohoInv("POST", `/purchaseorders/${id}/status/cancelled`); } catch { /* fine */ } }
+      try { await call("DELETE", `/${m[0]}/${id}`); return json({ ok: true, deleted: `${k} ${id}` }); }
+      catch (e) { return json({ ok: false, error: e instanceof Error ? e.message : String(e) }, 502); }
+    }
+    return json({ ok: false, error: "op = so | invoice_from_so | po | get | delete" }, 400);
+  }
+
+  // Phase 3 development: READ-ONLY GET against Zoho Inventory, whitelisted paths only.
+  //   { action: "inv_get", path: "/locations" | "/users" | "/settings/preferences" | "/items/<id>" | ... }
+  if (body.action === "inv_get") {
+    await zohoInit(db);
+    const path = String(body.path ?? "");
+    const ok = /^\/(locations|users|settings\/preferences|items(\/\d+)?|salesorders(\/\d+)?|packages(\/\d+)?|shipmentorders(\/\d+)?|purchaseorders(\/\d+)?|purchasereceives(\/\d+)?|inventoryadjustments(\/\d+)?|organizations(\/\d+)?)(\?[\w=&.-]*)?$/.test(path);
+    if (!ok) return json({ ok: false, error: "path not allowed" }, 400);
+    const tk = await zohoToken();
+    const r = await fetch(`https://www.zohoapis.com/inventory/v1${path}${path.includes("?") ? "&" : "?"}organization_id=${env("ZOHO_ORG_ID")}`,
+      { headers: { Authorization: `Zoho-oauthtoken ${tk}` } });
+    const j = await r.json().catch(() => ({}));
+    return json({ ok: r.status === 200, status: r.status, limit: r.headers.get("x-rate-limit-limit"), remaining: r.headers.get("x-rate-limit-remaining"), body: j });
+  }
+
   // Cut-over DRY RUN (docs/09). READ-ONLY: list endpoints only, nothing is written.
   // Every transaction the zero-Zoho step would delete, with what the delete order and
   // the itemised opening invoices / open bills need (number, date, due date, total,

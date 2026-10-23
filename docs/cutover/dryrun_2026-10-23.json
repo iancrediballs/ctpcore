@@ -1,5 +1,5 @@
 {
- "read_at": "2026-10-23T10:35:58.918Z",
+ "read_at": "2026-10-23T11:14:45.763Z",
  "checks": {
   "documents_to_delete": 33,
   "by_kind": {
@@ -18,11 +18,11 @@
   "opening_bills": 7,
   "unapplied_credit_notes": [],
   "inventory_documents": {
-   "packages": "not readable (401 You are not authorized to perform this operation)",
-   "shipmentorders": "not readable (401 You are not authorized to perform this operation)",
-   "purchasereceives": "not readable (401 You are not authorized to perform this operation)",
-   "inventoryadjustments": "not readable (401 You are not authorized to perform this operation)",
-   "transferorders": "not readable (401 You are not authorized to perform this operation)"
+   "packages": "3 found",
+   "shipmentorders": "3 found",
+   "purchasereceives": "0 found",
+   "inventoryadjustments": "0 found",
+   "transferorders": "0 found"
   },
   "unreadable": {},
   "rule": "after the wipe + re-import: customer balances and supplier balances must equal these totals to the cent"

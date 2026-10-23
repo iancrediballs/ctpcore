@@ -31,6 +31,17 @@
 //                          deleted/voided in Zoho → confirm that in Zoho, retire the link, new draft from
 //                          the current CTP lines. Links a live estimate with the same reference instead
 //                          of making a second one.
+//   Phase 3 on Zoho Inventory (0065) — act only when zoho_config.stock_master = 'zoho', or as an
+//   explicit rehearsal test (admin / server token, "rehearsal_test": true):
+//   { "action": "stock_sync", "force"?: true }   Inventory items → the stock cache (also every 15 min
+//                          with the status read-back)
+//   { "action": "ship", "order_id": 43 }        Fulfil: package + shipment from the confirmed SO (delivered),
+//                          then record_goods_out() — no CTP sale movement
+//   { "action": "adjust", "part_id": 1001, "counted": 5, "reason"?: "…" }   count → Inventory adjustment
+//   { "action": "receive_list" }                open Zoho POs with lines
+//   { "action": "receive", "purchaseorder_id": "…", "lines": [{ "line_item_id", "quantity" }] }
+//   { "action": "hook", "module": "item|salesorder|invoice|estimate|package|shipment|bill|purchasereceive|adjustment", "id": "…" }
+//                          Zoho workflow-rule webhook (anon key): trusts nothing but the id; re-reads Zoho
 //   { "action": "test" }   manager/admin: create a clearly marked TEST draft
 //                          invoice + bill against TEST contacts, read them back,
 //                          then delete all four; returns what was created.
@@ -43,7 +54,7 @@ import { createClient, type SupabaseClient } from "jsr:@supabase/supabase-js@2";
 
 import { env, zohoInit, zohoMissing, Blocked, zoho, rands, jhbDate, findByReference, resolveContact, itemIds, taxIdFor,
          rebateDiscount, linkToSalesOrder, salesOrderFor, deleteSalesOrder, estimateFor, estimatePayload, findLiveEstimate,
-         type Logger } from "../_shared/zoho.ts";
+         zohoInv, type Logger } from "../_shared/zoho.ts";
 
 
 const CORS = {
@@ -540,6 +551,236 @@ async function liveTest(db: SupabaseClient, cfg: any, log: Logger) {
   return out;
 }
 
+// ── Phase 3: Zoho Inventory holds the stock (0065) ───────────────────────────
+const jhbToday = () => jhbDate(new Date().toISOString());
+// Zoho Inventory keeps TWO stocks (live test 23 Oct): stock_on_hand is ACCOUNTING stock — it moves
+// only when invoices/bills are approved (Michelle keeps them draft) — while actual_available_stock is
+// PHYSICAL stock, moved by shipments and purchase receives. The shelf is what CTP shows, so the
+// cache's "on hand" is the physical figure; the accounting one is kept in zoho_item.actual_available.
+// deno-lint-ignore no-explicit-any
+const invItemRow = (i: any) => ({ item_id: String(i.item_id),
+  stock_on_hand: i.actual_available_stock ?? i.stock_on_hand,          // physical (shelf)
+  available_stock: i.available_stock,
+  available_for_sale: i.available_for_sale ?? i.available_for_sale_stock ?? null,
+  actual_available_stock: i.stock_on_hand ?? null });                  // accounting (stored in actual_available)
+
+/** The stock cache: every Inventory item (1 call per 200), at most every 15 min unless forced. */
+async function stockSync(db: SupabaseClient, log: Logger, force: boolean) {
+  const { data: cfg } = await db.from("zoho_config").select("stock_synced_at").eq("id", 1).maybeSingle();
+  const last = cfg?.stock_synced_at ? new Date(cfg.stock_synced_at).getTime() : 0;
+  if (!force && Date.now() - last < 15 * 60_000) return { skipped: "stock read less than 15 minutes ago" };
+  // deno-lint-ignore no-explicit-any
+  const rows: any[] = [];
+  for (let page = 1; page <= 10; page++) {
+    const b = await zohoInv("GET", "/items", { page: String(page), per_page: "200" });
+    rows.push(...(b.items ?? []).filter((i: { track_inventory?: boolean }) => i.track_inventory !== false).map(invItemRow));
+    if (!b.page_context?.has_more_page) break;
+  }
+  const { data, error } = await db.rpc("apply_zoho_stock", { p_items: rows });
+  if (error) { await log({ doc_type: "item", action: "readback_error", ok: false, message: error.message }); throw new Error(error.message); }
+  return { items_read: rows.length, ...data };
+}
+/** One item's stock now (after a ship / adjust / receive touched it). */
+async function stockOne(db: SupabaseClient, itemIds: string[]) {
+  // deno-lint-ignore no-explicit-any
+  const rows: any[] = [];
+  for (const id of [...new Set(itemIds)].slice(0, 20)) {
+    try { rows.push(invItemRow((await zohoInv("GET", `/items/${id}`)).item)); } catch { /* the next sync catches it */ }
+  }
+  if (rows.length) await db.rpc("apply_zoho_stock", { p_items: rows });
+  return rows;
+}
+
+// deno-lint-ignore no-explicit-any
+async function inventoryMayAct(db: SupabaseClient, who: any, body: any): Promise<string | null> {
+  const { data: c } = await db.from("zoho_config").select("stock_master").eq("id", 1).maybeSingle();
+  if (c?.stock_master === "zoho") return null;
+  if (body.rehearsal_test === true && (!who.actor || who.admin)) return null;
+  return "Zoho Inventory does not hold the stock yet (rehearsal switch: CTP). An admin can switch it in Settings → Zoho.";
+}
+
+/** Fulfil through Zoho Inventory: package + shipment (delivered) from the confirmed SO. Idempotent:
+ *  an order with a shipment is just recorded; an unshipped package on the SO is reused. */
+// deno-lint-ignore no-explicit-any
+async function shipOrder(db: SupabaseClient, log: Logger, who: any, orderId: number, body: any) {
+  const { data: o } = await db.from("sales_order").select("id, number, status, zoho_salesorder_id, zoho_package_id, zoho_package_number, zoho_shipment_id, zoho_shipment_number")
+    .eq("id", orderId).is("deleted_at", null).maybeSingle();
+  if (!o) throw new Blocked("No such order");
+  if (!o.zoho_salesorder_id) throw new Blocked(`${o.number} has no Zoho sales order — nothing to ship in Zoho.`);
+  if (o.status === "confirmed") {
+    const { data: why } = await db.rpc("fulfil_block_reason", { p_order_id: orderId });
+    if (why) throw new Blocked(String(why));
+  } else if (!["fulfilled", "invoiced"].includes(o.status)) throw new Blocked(`${o.number} is ${o.status}, not accepted.`);
+  const so = (await zohoInv("GET", `/salesorders/${o.zoho_salesorder_id}`)).salesorder;
+  // deno-lint-ignore no-explicit-any
+  const pkgs = (so.packages ?? []) as any[];
+  // deno-lint-ignore no-explicit-any
+  let pkg: any = pkgs.find((p) => String(p.package_id) === String(o.zoho_package_id)) ?? pkgs.find((p) => !["shipped", "delivered"].includes(String(p.status)));
+  // deno-lint-ignore no-explicit-any
+  const shippedPkg: any = pkgs.find((p) => ["shipped", "delivered"].includes(String(p.status)));
+  let shipment: { id: string; number: string; status: string } | null = null;
+  if (shippedPkg && (!pkg || ["shipped", "delivered"].includes(String(pkg.status)))) {
+    pkg = shippedPkg;
+    const full = (await zohoInv("GET", `/packages/${pkg.package_id}`)).package;
+    const so2 = full?.shipment_order ?? {};
+    shipment = { id: String(so2.shipment_id ?? o.zoho_shipment_id ?? ""), number: String(so2.shipment_number ?? o.zoho_shipment_number ?? ""),
+                 status: String(full?.status ?? pkg.status) };
+  }
+  if (!pkg) {
+    // deno-lint-ignore no-explicit-any
+    const lines = ((so.line_items ?? []) as any[]).map((l) => ({ so_line_item_id: l.line_item_id,
+      quantity: Number(l.quantity) - Number(l.quantity_packed ?? 0) })).filter((l) => l.quantity > 0);
+    if (!lines.length) throw new Blocked(`Everything on ${so.salesorder_number} is already packed in Zoho.`);
+    pkg = (await zohoInv("POST", "/packages", { salesorder_id: String(o.zoho_salesorder_id) },
+      { date: jhbToday(), line_items: lines, notes: `CTP Core goods out · ${o.number}` })).package;
+    await log({ doc_type: "package", ctp_id: orderId, ctp_ref: o.number, action: "create", ok: true, zoho_id: String(pkg.package_id),
+                message: `${o.number} → Zoho package ${pkg.package_number} (${lines.length} line(s))` });
+  }
+  if (!shipment) {
+    const ship = { date: jhbToday(), delivery_method: String(body.delivery_method ?? "Collection"),
+      tracking_number: String(body.tracking_number ?? o.number), reference_number: o.number, notes: `CTP Core goods out · ${o.number}` };
+    // deno-lint-ignore no-explicit-any
+    let sh: any;
+    const q = { package_ids: String(pkg.package_id), salesorder_id: String(o.zoho_salesorder_id) };
+    try { sh = (await zohoInv("POST", "/shipmentorders", q, ship)).shipmentorder; }
+    catch (e) {
+      if (!/shipment.?number/i.test(e instanceof Error ? e.message : String(e))) throw e;
+      sh = (await zohoInv("POST", "/shipmentorders", q, { ...ship, shipment_number: `SH-${o.number}` })).shipmentorder;
+    }
+    let st = String(sh.status ?? "shipped");
+    try { await zohoInv("POST", `/shipmentorders/${sh.shipment_id}/status/delivered`); st = "delivered"; } catch { /* stays shipped; shown */ }
+    shipment = { id: String(sh.shipment_id), number: String(sh.shipment_number), status: st };
+    await log({ doc_type: "shipment", ctp_id: orderId, ctp_ref: o.number, action: "create", ok: true, zoho_id: shipment.id,
+                message: `${o.number} → Zoho shipment ${shipment.number} (${st}) for package ${pkg.package_number}` });
+  }
+  const { data: rec, error } = await db.rpc("record_goods_out", { p_order_id: orderId, p_actor: who.actor ?? null, p_ship: {
+    package_id: String(pkg.package_id), package_number: pkg.package_number, shipment_id: shipment.id, shipment_number: shipment.number,
+    shipment_status: shipment.status } });
+  if (error) throw new Error(`Shipped in Zoho (${shipment.number}), but recording goods out in CTP failed: ${error.message}`);
+  // deno-lint-ignore no-explicit-any
+  const stock = await stockOne(db, ((so.line_items ?? []) as any[]).map((l) => String(l.item_id)));
+  return { package_number: pkg.package_number, shipment_number: shipment.number, shipment_status: shipment.status, ...rec, stock };
+}
+
+/** A count from the phone → an Inventory quantity adjustment (counted − Zoho on hand). */
+// deno-lint-ignore no-explicit-any
+async function adjustFromCount(db: SupabaseClient, log: Logger, who: any, body: any) {
+  const partId = Number(body.part_id), counted = Number(body.counted);
+  if (!Number.isInteger(partId) || !Number.isFinite(counted) || counted < 0) throw new Blocked("part_id and a counted quantity (0 or more) are required");
+  const { data: z } = await db.from("zoho_item").select("zoho_item_id, sku").eq("part_id", partId).eq("status", "active").maybeSingle();
+  if (!z) throw new Blocked("This part is not linked to an active Zoho item.");
+  const item = (await zohoInv("GET", `/items/${z.zoho_item_id}`)).item;
+  const before = Number(item.stock_on_hand ?? 0), delta = counted - before;
+  const { data: me } = who.actor ? await db.from("app_user").select("display_name").eq("id", who.actor).maybeSingle() : { data: null };
+  const reason = String(body.reason ?? "Stock count").slice(0, 100);
+  const { data: row } = await db.from("zoho_stock_adjustment").insert({ part_id: partId, zoho_item_id: z.zoho_item_id, sku: z.sku,
+    counted, zoho_before: before, delta, reason, actor: who.actor ?? null, status: delta === 0 ? "no_change" : "pending" }).select("id").single();
+  if (delta === 0) { await stockOne(db, [z.zoho_item_id]); return { sku: z.sku, counted, zoho_before: before, delta: 0, note: "matches Zoho — nothing adjusted" }; }
+  const ref = `CTP-COUNT-${row?.id}`;
+  try {
+    const adj = (await zohoInv("POST", "/inventoryadjustments", {}, { date: jhbToday(), reason, adjustment_type: "quantity",
+      reference_number: ref, description: `Counted ${counted} on the CTP phone${me?.display_name ? " by " + me.display_name : ""}; Zoho had ${before}.`,
+      line_items: [{ item_id: z.zoho_item_id, quantity_adjusted: delta }] })).inventory_adjustment;
+    await db.from("zoho_stock_adjustment").update({ status: "posted", zoho_adjustment_id: String(adj.inventory_adjustment_id), zoho_reference: ref }).eq("id", row?.id);
+    await log({ doc_type: "adjustment", ctp_id: partId, ctp_ref: z.sku, action: "create", ok: true, zoho_id: String(adj.inventory_adjustment_id),
+                message: `${z.sku}: counted ${counted}, Zoho had ${before} → adjusted ${delta > 0 ? "+" : ""}${delta} (${ref})` });
+    await stockOne(db, [z.zoho_item_id]);
+    return { sku: z.sku, counted, zoho_before: before, delta, adjustment_id: String(adj.inventory_adjustment_id), reference: ref };
+  } catch (e) {
+    await db.from("zoho_stock_adjustment").update({ status: "error", error: e instanceof Error ? e.message : String(e) }).eq("id", row?.id);
+    throw e;
+  }
+}
+
+/** Open Zoho POs with their lines, for the phone's Receive screen. */
+async function receiveList() {
+  // deno-lint-ignore no-explicit-any
+  const list = ((await zohoInv("GET", "/purchaseorders", { per_page: "200" })).purchaseorders ?? []) as any[];
+  const open = list.filter((p) => ["open", "issued", "partially_received"].includes(String(p.status))).slice(0, 25);
+  // deno-lint-ignore no-explicit-any
+  const out: any[] = [];
+  for (const p of open) {
+    const full = (await zohoInv("GET", `/purchaseorders/${p.purchaseorder_id}`)).purchaseorder;
+    out.push({ purchaseorder_id: String(full.purchaseorder_id), number: full.purchaseorder_number, vendor: full.vendor_name, date: full.date,
+      status: full.status, reference: full.reference_number ?? null,
+      // deno-lint-ignore no-explicit-any
+      lines: (full.line_items ?? []).map((l: any) => ({ line_item_id: String(l.line_item_id), item_id: String(l.item_id), sku: l.sku, name: l.name,
+        ordered: Number(l.quantity), received: Number(l.quantity_received ?? 0) })) });
+  }
+  return out;
+}
+
+/** Goods arrived against a Zoho PO → an Inventory purchase receive (stock in now). */
+// deno-lint-ignore no-explicit-any
+async function receiveGoods(db: SupabaseClient, log: Logger, who: any, body: any) {
+  const poId = String(body.purchaseorder_id ?? "");
+  if (!/^\d+$/.test(poId)) throw new Blocked("purchaseorder_id is required");
+  // deno-lint-ignore no-explicit-any
+  const lines = ((Array.isArray(body.lines) ? body.lines : []) as any[])
+    .map((l) => ({ line_item_id: String(l.line_item_id), quantity: Number(l.quantity) })).filter((l) => l.quantity > 0);
+  if (!lines.length) throw new Blocked("Nothing to receive — enter a quantity on at least one line.");
+  const po = (await zohoInv("GET", `/purchaseorders/${poId}`)).purchaseorder;
+  const { data: row } = await db.from("zoho_purchase_receive").insert({ zoho_purchaseorder_id: poId, purchaseorder_number: po.purchaseorder_number,
+    lines, notes: body.notes ?? null, actor: who.actor ?? null }).select("id").single();
+  try {
+    const prBody = { date: jhbToday(), line_items: lines, notes: String(body.notes ?? `Received on the CTP phone (CTP-RCV-${row?.id})`) };
+    // deno-lint-ignore no-explicit-any
+    let pr: any;
+    try { pr = (await zohoInv("POST", "/purchasereceives", { purchaseorder_id: poId }, prBody)).purchasereceive; }
+    catch (e) {
+      // auto-numbering for receives is off in this org: give it a number
+      if (!/receive number/i.test(e instanceof Error ? e.message : String(e))) throw e;
+      pr = (await zohoInv("POST", "/purchasereceives", { purchaseorder_id: poId, ignore_auto_number_generation: "true" },
+        { ...prBody, receive_number: `PR-${po.purchaseorder_number}-${row?.id}` })).purchasereceive;
+    }
+    await db.from("zoho_purchase_receive").update({ status: "posted", zoho_receive_id: String(pr.purchasereceive_id ?? pr.receive_id), receive_number: pr.receive_number }).eq("id", row?.id);
+    await log({ doc_type: "purchasereceive", ctp_ref: po.purchaseorder_number, action: "create", ok: true, zoho_id: String(pr.purchasereceive_id ?? pr.receive_id),
+                message: `${po.purchaseorder_number} → Zoho purchase receive ${pr.receive_number} (${lines.reduce((t, l) => t + l.quantity, 0)} unit(s))` });
+    // deno-lint-ignore no-explicit-any
+    const items = ((po.line_items ?? []) as any[]).filter((l) => lines.some((x) => x.line_item_id === String(l.line_item_id))).map((l) => String(l.item_id));
+    await stockOne(db, items);
+    return { receive_number: pr.receive_number, receive_id: String(pr.purchasereceive_id ?? pr.receive_id), purchaseorder: po.purchaseorder_number };
+  } catch (e) {
+    await db.from("zoho_purchase_receive").update({ status: "error", error: e instanceof Error ? e.message : String(e) }).eq("id", row?.id);
+    throw e;
+  }
+}
+
+/** Zoho workflow-rule webhook. Trusts nothing in the payload except the record id, and only
+ *  re-reads that record from Zoho with CTP's own token; throttled per record. */
+const hookSeen = new Map<string, number>();
+// deno-lint-ignore no-explicit-any
+async function hook(db: SupabaseClient, log: Logger, body: any) {
+  const m = String(body.module ?? "").toLowerCase(), id = String(body.id ?? "");
+  if (!/^\d{6,25}$/.test(id)) return { skipped: "no record id" };
+  const key = `${m}:${id}`;
+  if (Date.now() - (hookSeen.get(key) ?? 0) < 10_000) return { skipped: "seen in the last 10 s" };
+  hookSeen.set(key, Date.now());
+  const orderBy = async (col: string, val: string) =>
+    (await db.from("sales_order").select("id").eq(col, val).is("deleted_at", null).maybeSingle()).data?.id as number | undefined;
+  switch (m) {
+    case "item": return { item: await stockOne(db, [id]) };
+    case "salesorder": { const o = await orderBy("zoho_salesorder_id", id); return o ? await syncOne(db, log, o, true) : { skipped: "not a CTP order" }; }
+    case "estimate": { const o = await orderBy("zoho_estimate_id", id); return o ? await syncOne(db, log, o, true) : { skipped: "not a CTP quote" }; }
+    case "invoice": {
+      const inv = (await zoho("GET", `/invoices/${id}`)).invoice;
+      // deno-lint-ignore no-explicit-any
+      const soId = String(inv?.salesorder_id ?? (inv?.salesorders ?? [])[0]?.salesorder_id ?? "");
+      const o = (soId && await orderBy("zoho_salesorder_id", soId)) || await orderBy("zoho_invoice_id", id);
+      return o ? await syncOne(db, log, o, true) : { skipped: "not a CTP order" };
+    }
+    case "package": case "shipment": {
+      const d = m === "package" ? (await zohoInv("GET", `/packages/${id}`)).package : (await zohoInv("GET", `/shipmentorders/${id}`)).shipmentorder;
+      // deno-lint-ignore no-explicit-any
+      await stockOne(db, ((d?.line_items ?? []) as any[]).map((l) => String(l.item_id)));
+      const o = d?.salesorder_id ? await orderBy("zoho_salesorder_id", String(d.salesorder_id)) : undefined;
+      return o ? await syncOne(db, log, o, true) : { stock: "refreshed" };
+    }
+    case "bill": case "purchasereceive": case "adjustment": return await stockSync(db, log, true);
+    default: return { skipped: `module ${m} not handled` };
+  }
+}
+
 // ── entry ────────────────────────────────────────────────────────────────────
 async function authorise(req: Request, db: SupabaseClient) {
   const syncToken = env("ZOHO_SYNC_TOKEN");
@@ -556,18 +797,20 @@ Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS });
   if (req.method !== "POST") return json({ error: "POST only" }, 405);
   const db = createClient(env("SUPABASE_URL"), env("SUPABASE_SERVICE_ROLE_KEY"), { auth: { persistSession: false } });
-  const who = await authorise(req, db);
+  const body = await req.json().catch(() => ({}));
+  // 0065: Zoho's workflow-rule webhooks carry only the public anon key. "hook" trusts nothing
+  // but the record id and re-reads it from Zoho, so it is the one action open to that caller.
+  const who = body.action === "hook" ? { ok: true, actor: null as string | null, manager: false, admin: false } : await authorise(req, db);
   if (!who.ok) return json({ error: "Staff only" }, who.actor ? 403 : 401);
 
   const log: Logger = async (r) => { await db.from("zoho_push_log").insert({ ...r, actor: who.actor }); };
-  const body = await req.json().catch(() => ({}));
   const { data: cfg } = await db.from("zoho_config").select("*").eq("id", 1).maybeSingle();
 
   // Switched off is an answer, not an error — checked before the secrets so an
   // invoice issued before go-live does not report a failure that isn't one.
   // (Status read-back is allowed while sending is off: documents already in
   // Zoho still change status there.)
-  if (!["test", "status", "so_sync"].includes(body.action) && (!cfg?.push_enabled || !cfg?.push_from)) {
+  if (!["test", "status", "so_sync", "hook", "stock_sync", "receive_list"].includes(body.action) && (!cfg?.push_enabled || !cfg?.push_from)) {
     return json({ ok: true, skipped: "Sending to Zoho is off (Settings → Zoho). Nothing was sent." });
   }
   await zohoInit(db);
@@ -576,7 +819,41 @@ Deno.serve(async (req: Request) => {
 
   try {
     if (body.action === "status") {
-      return json({ ok: true, ...(await refreshStatus(db, log, body.force === true)) });
+      const st = await refreshStatus(db, log, body.force === true);
+      // 0065: the Zoho stock cache rides on the same 10-min schedule (itself throttled to 15 min)
+      let stock: unknown = null;
+      try { stock = await stockSync(db, log, false); } catch (e) { stock = { error: e instanceof Error ? e.message : String(e) }; }
+      return json({ ok: true, ...st, stock });
+    }
+    if (body.action === "hook") {
+      try { return json({ ok: true, module: body.module, ...(await hook(db, log, body)) }); }
+      catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        await log({ doc_type: "hook", action: "error", ok: false, message: `${body.module}:${body.id} ${msg}`.slice(0, 2000) });
+        return json({ ok: false, error: msg }, 200);   // 200: Zoho must not retry-storm a record we cannot read
+      }
+    }
+    if (body.action === "stock_sync") return json({ ok: true, ...(await stockSync(db, log, body.force === true)) });
+    if (["ship", "adjust", "receive", "receive_list"].includes(body.action)) {
+      if (body.action !== "receive_list") {
+        const no = await inventoryMayAct(db, who, body);
+        if (no) return json({ ok: false, error: no }, 409);
+      }
+      try {
+        if (body.action === "ship") {
+          const id = Number(body.order_id);
+          if (!Number.isInteger(id) || id <= 0) return json({ error: "order_id is required" }, 400);
+          return json({ ok: true, ...(await shipOrder(db, log, who, id, body)) });
+        }
+        if (body.action === "adjust") return json({ ok: true, ...(await adjustFromCount(db, log, who, body)) });
+        if (body.action === "receive") return json({ ok: true, ...(await receiveGoods(db, log, who, body)) });
+        return json({ ok: true, purchaseorders: await receiveList() });
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        const kind = body.action === "ship" ? "shipment" : body.action === "adjust" ? "adjustment" : "purchasereceive";
+        await log({ doc_type: kind, ctp_id: Number(body.order_id ?? body.part_id) || null, action: e instanceof Blocked ? "blocked" : "error", ok: false, message: msg });
+        return json({ ok: false, error: msg }, e instanceof Blocked ? 409 : 502);
+      }
     }
     if (body.action === "so_sync") {
       const id = Number(body.order_id);

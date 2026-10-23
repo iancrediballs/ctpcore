@@ -76,6 +76,25 @@ export async function zoho(method: string, path: string, query: Record<string, s
   return b;
 }
 
+/** Zoho Inventory API (Phase 3, 0065): same org, token and error handling as zoho(). */
+// deno-lint-ignore no-explicit-any
+export async function zohoInv(method: string, path: string, query: Record<string, string> = {}, body?: unknown): Promise<any> {
+  const host = DC === "ca" ? "https://www.zohoapis.ca" : `https://www.zohoapis.${DC}`;
+  const u = new URL(`${host}/inventory/v1${path}`);
+  u.searchParams.set("organization_id", ORG);
+  for (const [k, v] of Object.entries(query)) u.searchParams.set(k, v);
+  const r = await fetch(u, {
+    method,
+    headers: { Authorization: `Zoho-oauthtoken ${await zohoToken()}`, ...(body ? { "Content-Type": "application/json" } : {}) },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const b = await r.json().catch(() => ({}));
+  if (!r.ok || (b.code !== undefined && b.code !== 0)) {
+    throw new Error(`Zoho Inventory ${method} ${path} failed (${r.status}, code ${b.code ?? "?"}): ${b.message ?? "no message"}`);
+  }
+  return b;
+}
+
 export const norm = (s: unknown) => String(s ?? "").trim().toLowerCase().replace(/\s+/g, " ");
 export const vatOf = (c: Record<string, unknown>) =>
   norm(c.tax_reg_no ?? c.vat_reg_no ?? c.tax_id ?? c.gst_no ?? "").replace(/[^0-9a-z]/g, "");

@@ -715,7 +715,7 @@ function ZohoPanel({ flash, fail }: PanelProps) {
 // accountant and must never be pushed a second time.
 
 type ZohoConfig = { push_enabled: boolean; push_from: string | null; invoice_as_draft: boolean;
-  bill_as_draft: boolean; tax_id: string | null; estimates_enabled?: boolean };
+  bill_as_draft: boolean; tax_id: string | null; estimates_enabled?: boolean; stock_master?: "ctp" | "zoho"; stock_synced_at?: string | null };
 type QueueRow = { doc_type: string; ctp_id: number; ctp_ref: string; doc_at: string; last_error: string | null };
 type PushLog = { id: number; at: string; doc_type: string; ctp_ref: string | null; action: string;
   ok: boolean; message: string | null };
@@ -733,7 +733,7 @@ function ZohoPushCard({ flash, fail }: PanelProps) {
   const [out, setOut] = useState<string | null>(null);
 
   const load = useCallback(() => {
-    supabase.from("zoho_config").select("push_enabled,push_from,invoice_as_draft,bill_as_draft,tax_id,estimates_enabled").eq("id", 1).maybeSingle()
+    supabase.from("zoho_config").select("push_enabled,push_from,invoice_as_draft,bill_as_draft,tax_id,estimates_enabled,stock_master,stock_synced_at").eq("id", 1).maybeSingle()
       .then(({ data, error }) => {
         if (error) return fail(error);
         const c = data as ZohoConfig | null;
@@ -823,6 +823,26 @@ function ZohoPushCard({ flash, fail }: PanelProps) {
             flash(`Quotes as Zoho estimates: ${cfg.estimates_enabled ? "OFF" : "ON"}.`);
             load();
           }}>{cfg.estimates_enabled ? "Turn off (admin)" : "Turn on (admin)"}</button>
+        </div>
+      </div>
+
+      {/* 0065: who holds the stock (admin). Rehearsal default: CTP. */}
+      <div className="st-card">
+        <div className="st-sub">Stock master: {cfg.stock_master === "zoho" ? "ZOHO INVENTORY" : "CTP (rehearsal)"}</div>
+        <p className="st-note">
+          {cfg.stock_master === "zoho"
+            ? "Zoho Inventory holds the stock: Fulfil = package + shipment in Zoho, counts post Zoho adjustments, Receive goods posts purchase receives. CTP's own stock ledger is no longer written by Fulfil."
+            : "CTP's stock ledger holds the stock (as today). Zoho's figures are shown alongside on each part for comparison. Switch to Zoho to rehearse the full Inventory flow; switch back any time until cut-over."}
+          {cfg.stock_synced_at ? ` Zoho stock read ${new Date(cfg.stock_synced_at).toLocaleString("en-ZA")}.` : ""}
+        </p>
+        <div className="st-row2">
+          <button className="st-save" disabled={busy} onClick={async () => {
+            const { error } = await supabase.rpc("set_zoho_stock_master", { p_master: cfg.stock_master === "zoho" ? "ctp" : "zoho" });
+            if (error) return fail(error);
+            flash(`Stock master: ${cfg.stock_master === "zoho" ? "CTP" : "Zoho Inventory"}.`);
+            load();
+          }}>{cfg.stock_master === "zoho" ? "Back to CTP (admin)" : "Switch to Zoho Inventory (admin)"}</button>
+          <button className="st-save" disabled={busy} onClick={() => call({ action: "stock_sync", force: true }, "Zoho stock refreshed")}>Refresh Zoho stock</button>
         </div>
       </div>
 

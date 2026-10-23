@@ -16,7 +16,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useStatus } from "@powersync/react";
 import * as api from "../data/api";
-import { refreshZohoStatus, zohoStatusLabel, syncSalesOrder, syncEstimate, recreateEstimate, overrideFulfilGate, fulfilBlockReason, setCustomerOnAccount } from "../data/zoho";
+import { refreshZohoStatus, zohoStatusLabel, syncSalesOrder, syncEstimate, recreateEstimate, overrideFulfilGate, fulfilBlockReason, setCustomerOnAccount,
+         shipInZoho, countToZoho, openPurchaseOrders, receiveInZoho, type OpenPO } from "../data/zoho";
 import AddCustomer from "../admin/AddCustomer";
 import { assetUrl, photoWebUrl } from "../assets";
 import { DiagramCanvas, Marker, loadMarkerScale, saveMarkerScale, markerRadius, MARKER_SCALE_MIN, MARKER_SCALE_MAX, type CanvasApi, type Frame, type Pt } from "./DiagramCanvas";
@@ -80,6 +81,8 @@ type Detail = {
   stock: StockLine[]; ledger: LedgerLine[];
   images: { id: number; path: string; is_primary: boolean }[];
   diagram_image: string | null; diagram_item: string | null;
+  // 0065: Zoho Inventory's physical stock for this part (staff; null until synced)
+  zoho_stock?: { on_hand: number; available: number | null; committed: number | null; at: string | null } | null;
 };
 
 type Toast = { text: string; err?: boolean; undo?: () => void };
@@ -776,11 +779,18 @@ export default function MobileShell() {
 
   // 0063: are quotes Zoho estimates? (staff can read zoho_config; customers cannot)
   const [estimatesOn, setEstimatesOn] = useState(false);
+  // 0065: who holds the stock — 'ctp' (rehearsal default) or 'zoho' (Inventory: ship / count / receive in Zoho)
+  const [stockMaster, setStockMaster] = useState<"ctp" | "zoho">("ctp");
   useEffect(() => {
     if (isClient) return;
-    void supabase.from("zoho_config").select("estimates_enabled").eq("id", 1).maybeSingle()
-      .then(({ data }) => setEstimatesOn(!!data?.estimates_enabled));
+    void supabase.from("zoho_config").select("estimates_enabled, stock_master").eq("id", 1).maybeSingle()
+      .then(({ data }) => { setEstimatesOn(!!data?.estimates_enabled); setStockMaster(data?.stock_master === "zoho" ? "zoho" : "ctp"); });
   }, [isClient, lastSynced]);
+  const zohoStock = stockMaster === "zoho";
+  const [countVal, setCountVal] = useState("");
+  const [receiving, setReceiving] = useState<OpenPO[] | null>(null);
+  const [rcvQty, setRcvQty] = useState<Record<string, string>>({});
+  const [rcvBusy, setRcvBusy] = useState(false);
 
   // 0053 — the customer list for counter sales. Staff only, and read from the
   // local mirror, so it costs nothing to refresh whenever sync moves.
@@ -1014,6 +1024,15 @@ const parseRand = (s: string): number => {
 
   const fulfilOrder = useCallback(async (o: StaffOrder) => {
     setSavingOrder(true);
+    if (zohoStock) {   // 0065: package + shipment in Zoho Inventory; CTP records goods out (no CTP sale)
+      const r = await shipInZoho(o.id);
+      setSavingOrder(false);
+      showToast(r.ok ? { text: r.data.already ? `${o.number} was already shipped (${r.data.shipment_number}).`
+                          : `${o.number} shipped in Zoho: package ${r.data.package_number}, shipment ${r.data.shipment_number} (${r.data.shipment_status}).` }
+                     : { text: r.message, err: true });
+      loadOrders();
+      return;
+    }
     try {
       const r = await api.fulfilOrder<{ movements: number; already: boolean }>(o.id);
       showToast({ text: r?.already
@@ -1024,7 +1043,7 @@ const parseRand = (s: string): number => {
       const msg = e instanceof Error ? e.message.replace(/^\[CTP web\] could not fulfil: /, "") : "Could not fulfil.";
       showToast({ text: msg, err: true });
     } finally { setSavingOrder(false); }
-  }, [showToast, loadOrders]);
+  }, [showToast, loadOrders, zohoStock]);
 
   /** Issue the tax invoice: the database allocates the number now. */
   const invoiceOrder = useCallback(async (o: StaffOrder) => {
@@ -1446,6 +1465,51 @@ const parseRand = (s: string): number => {
             </span>
             <span className="mb-chev">›</span>
           </button>
+        )}
+        {!isClient && (
+          <button className="mb-settings-cta" onClick={() => { setReceiving([]); void openPurchaseOrders().then((r) => {
+            if (r.ok) setReceiving(r.data.purchaseorders); else { setReceiving(null); showToast({ text: r.message, err: true }); } }); }}>
+            <span>
+              <b>Receive goods</b>
+              <small>{zohoStock ? "Against an open Zoho purchase order — stock in now (Zoho Inventory)" : "Zoho purchase orders (rehearsal: receiving posts once Zoho holds the stock)"}</small>
+            </span>
+            <span className="mb-chev">›</span>
+          </button>
+        )}
+        {receiving && (
+          <div className="mb-rows" style={{ marginBottom: 14 }}>
+            {receiving.length === 0 && <div className="mb-row"><span className="mb-rv">No open purchase orders in Zoho (or still loading).</span></div>}
+            {receiving.map((po) => (
+              <div key={po.purchaseorder_id}>
+                <div className="mb-row"><span className="mb-rk mb-mono">{po.number}</span><span className="mb-rv">{po.vendor} · {po.status}</span></div>
+                {po.lines.map((l) => (
+                  <div className="mb-row" key={l.line_item_id} style={{ gap: 8 }}>
+                    <span style={{ flex: 1, minWidth: 0 }}>
+                      <div className="mb-cname">{l.name}</div>
+                      <div className="mb-csku mb-mono">{l.sku} · ordered {l.ordered} · received {l.received}</div>
+                    </span>
+                    <input className="mb-price-in" inputMode="numeric" placeholder="0" style={{ flex: "0 0 72px" }}
+                      value={rcvQty[l.line_item_id] ?? ""} onChange={(e) => setRcvQty((q) => ({ ...q, [l.line_item_id]: e.target.value.replace(/[^0-9]/g, "") }))} />
+                  </div>
+                ))}
+                <div className="mb-row">
+                  <button className="mb-btn p" style={{ height: 46 }} disabled={rcvBusy || !zohoStock}
+                    title={zohoStock ? undefined : "Rehearsal: Zoho does not hold the stock yet"}
+                    onClick={() => {
+                      const lines = po.lines.map((l) => ({ line_item_id: l.line_item_id, quantity: Number(rcvQty[l.line_item_id] ?? 0) })).filter((l) => l.quantity > 0);
+                      if (!lines.length) { showToast({ text: "Enter a quantity on at least one line.", err: true }); return; }
+                      setRcvBusy(true);
+                      void receiveInZoho(po.purchaseorder_id, lines).then((r) => {
+                        setRcvBusy(false);
+                        showToast(r.ok ? { text: `Received against ${r.data.purchaseorder}: ${r.data.receive_number} — stock is in Zoho.` } : { text: r.message, err: true });
+                        if (r.ok) { setRcvQty({}); setReceiving(null); }
+                      });
+                    }}>{rcvBusy ? "Receiving…" : `Receive against ${po.number}`}</button>
+                </div>
+              </div>
+            ))}
+            <div className="mb-row"><button className="mb-btn s" style={{ height: 42 }} onClick={() => setReceiving(null)}>Close</button></div>
+          </div>
         )}
         <div className="mb-rows">
           <div className="mb-row"><span className="mb-rk">Signed in</span>
@@ -1963,7 +2027,7 @@ const parseRand = (s: string): number => {
                                     <button className="mb-btn p" style={{ height: 46 }} disabled={savingOrder || !!why}
                                       title={why ?? undefined}
                                       onClick={() => setPendingAct({ order: o, kind: "fulfil" })}>
-                                      Fulfil — take stock out
+                                      {zohoStock ? "Ship in Zoho — package + shipment" : "Fulfil — take stock out"}
                                     </button>
                                   </div>
                                   {why && (
@@ -2564,6 +2628,29 @@ const parseRand = (s: string): number => {
             )}
           </div>
 
+          {!isClient && d.zoho_stock && (
+            <div className="mb-rows" style={{ margin: "0 16px 10px" }}>
+              <div className="mb-row">
+                <span className="mb-rk">Zoho</span>
+                <span className="mb-rv">{d.zoho_stock.on_hand} on the shelf · {d.zoho_stock.available ?? "—"} available
+                  <div className="mb-csku">Zoho Inventory{zohoStock ? " (holds the stock)" : " (rehearsal — CTP holds the stock)"}{d.zoho_stock.at ? ` · ${timeAgo(d.zoho_stock.at)}` : ""}</div>
+                </span>
+              </div>
+              {zohoStock && (
+                <div className="mb-row" style={{ gap: 8 }}>
+                  <input className="mb-price-in" inputMode="numeric" placeholder="counted" value={countVal} style={{ flex: "0 0 96px" }}
+                    onChange={(e) => setCountVal(e.target.value.replace(/[^0-9]/g, ""))} />
+                  <button className="mb-btn s" style={{ height: 42 }} disabled={countVal === ""}
+                    onClick={() => { const n = Number(countVal); void countToZoho(d.id, n).then((r) => {
+                      showToast(r.ok ? { text: r.data.delta === 0 ? `${d.sku}: ${n} matches Zoho — nothing adjusted.`
+                                              : `${d.sku}: counted ${n}, Zoho had ${r.data.zoho_before} → adjusted ${r.data.delta > 0 ? "+" : ""}${r.data.delta} in Zoho.` }
+                                     : { text: r.message, err: true });
+                      if (r.ok) { setCountVal(""); void reloadDetail(d.id); }
+                    }); }}>Post count to Zoho</button>
+                </div>
+              )}
+            </div>
+          )}
           <div className="mb-actions">
             {isClient ? (
               inCart(d.id) > 0 ? (
@@ -2688,7 +2775,9 @@ const parseRand = (s: string): number => {
           style={{ display: "flex", flexDirection: "column", alignItems: "stretch", gap: 10 }}>
           <span>
             {pendingAct.kind === "fulfil"
-              ? `Take ${pendingAct.order.lines.reduce((t, l) => t + l.qty, 0)} item(s) out of stock for ${pendingAct.order.number}? This writes to the stock ledger and is not undone from here.`
+              ? zohoStock
+                ? `Ship ${pendingAct.order.lines.reduce((t, l) => t + l.qty, 0)} item(s) for ${pendingAct.order.number} in Zoho? This creates the package and shipment from ${pendingAct.order.zoho_salesorder_number ?? "the sales order"} and takes the stock out in Zoho Inventory.`
+                : `Take ${pendingAct.order.lines.reduce((t, l) => t + l.qty, 0)} item(s) out of stock for ${pendingAct.order.number}? This writes to the stock ledger and is not undone from here.`
               : pendingAct.order.zoho_salesorder_id
                 ? `Close ${pendingAct.order.number}? It is invoiced in Zoho as ${pendingAct.order.zoho_invoice_number ?? "—"}${pendingAct.order.zoho_invoice_total_minor != null ? ` (${fmtR(pendingAct.order.zoho_invoice_total_minor)})` : ""} by accounts. CTP records it and links that invoice — nothing new is created in Zoho.`
                 : `Issue a tax invoice for ${pendingAct.order.number} (${fmtR(pendingAct.order.total_minor + Math.floor((pendingAct.order.total_minor * pendingAct.order.tax_rate_bps + 5000) / 10000))} incl. VAT)? The next invoice number is allocated now and cannot be reused.`}
@@ -2702,7 +2791,7 @@ const parseRand = (s: string): number => {
                 const a = pendingAct; setPendingAct(null);
                 void (a.kind === "fulfil" ? fulfilOrder(a.order) : invoiceOrder(a.order));
               }}>
-              {pendingAct.kind === "fulfil" ? "Fulfil" : pendingAct.order.zoho_salesorder_id ? "Close order" : "Issue invoice"}
+              {pendingAct.kind === "fulfil" ? (zohoStock ? "Ship in Zoho" : "Fulfil") : pendingAct.order.zoho_salesorder_id ? "Close order" : "Issue invoice"}
             </button>
           </div>
         </div>

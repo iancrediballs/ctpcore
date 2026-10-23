@@ -89,6 +89,34 @@ export async function recreateEstimate(orderId: number): Promise<{ ok: boolean; 
   }
 }
 
+// ── 0065: Zoho Inventory holds the stock (rehearsal switch) ────────────────
+type InvResult<T> = { ok: true; data: T } | { ok: false; message: string };
+async function inv<T>(body: Record<string, unknown>): Promise<InvResult<T>> {
+  try {
+    const { data, error } = await supabase.functions.invoke("zoho-push", { body });
+    let d = data as (T & { ok?: boolean; error?: string }) | null;
+    if (error) {
+      try { d = await (error as { context?: Response }).context?.json(); } catch { /* keep */ }
+      if (!d) return { ok: false, message: error.message };
+    }
+    if (!d || d.ok === false) return { ok: false, message: d?.error ?? "Zoho did not answer." };
+    return { ok: true, data: d };
+  } catch (e) { return { ok: false, message: e instanceof Error ? e.message : String(e) }; }
+}
+export type ShipResult = { package_number: string; shipment_number: string; shipment_status: string; already?: boolean };
+/** Fulfil when Zoho holds the stock: package + shipment (delivered) from the order's Zoho SO. */
+export const shipInZoho = (orderId: number) => inv<ShipResult>({ action: "ship", order_id: orderId });
+export type AdjustResult = { sku: string; counted: number; zoho_before: number; delta: number; reference?: string; note?: string };
+/** A shelf count → Zoho Inventory adjustment (counted − Zoho's physical on hand). */
+export const countToZoho = (partId: number, counted: number, reason = "Stock count") =>
+  inv<AdjustResult>({ action: "adjust", part_id: partId, counted, reason });
+export type OpenPO = { purchaseorder_id: string; number: string; vendor: string; date: string; status: string; reference: string | null;
+  lines: { line_item_id: string; item_id: string; sku: string; name: string; ordered: number; received: number }[] };
+export const openPurchaseOrders = () => inv<{ purchaseorders: OpenPO[] }>({ action: "receive_list" });
+export const receiveInZoho = (purchaseorderId: string, lines: { line_item_id: string; quantity: number }[], notes?: string) =>
+  inv<{ receive_number: string; purchaseorder: string }>({ action: "receive", purchaseorder_id: purchaseorderId, lines, notes });
+export const refreshZohoStock = () => inv<{ items_read?: number; parts_changed?: number; skipped?: string }>({ action: "stock_sync", force: true });
+
 /** 0059: admin releases an order for fulfilment before accounts have sent the
  *  Zoho sales order. The note is required and goes on the order. */
 export async function overrideFulfilGate(orderId: number, note: string): Promise<void> {

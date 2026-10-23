@@ -395,6 +395,9 @@ async function partDetail(partId: number): Promise<unknown> {
     priceCents = nnum(fallback?.["amount_minor"]);
   }
 
+  // 0065: Zoho Inventory's figures for this part (null until the first stock sync / on customer phones)
+  const zs = await one<Row>(`SELECT zoho_stock_on_hand, zoho_available_for_sale, zoho_committed, zoho_stock_at FROM part WHERE id = ?`, [pid])
+    .catch(() => null);
   const stockLines = stock.map((s) => ({
     location_id: numId(s["id"], "location.id"),
     location_code: str(s["code"]),
@@ -408,6 +411,9 @@ async function partDetail(partId: number): Promise<unknown> {
   }));
 
   return {
+    zoho_stock: zs && zs["zoho_stock_on_hand"] != null ? {
+      on_hand: Number(zs["zoho_stock_on_hand"]), available: nnum(zs["zoho_available_for_sale"]),
+      committed: nnum(zs["zoho_committed"]), at: nstr(zs["zoho_stock_at"]) } : null,
     id: numId(d["id"], "part.id"),
     sku: str(d["sku"]),
     locator: nstr(d["locator"]),
