@@ -244,3 +244,46 @@ item, by invoice, by quote etc."
   opens the basket from header and sheet; filters combine, chips clear,
   remembered across reload, Clear all. tsc + build clean. Deployed to
   ctpcore.vercel.app, SW v24. The Tauri desktop app is unchanged.
+
+## 23 Oct — Phase 2 started: quotes as Zoho estimates, built DARK (0062, live, switch OFF)
+docs/07. Nothing changes for anyone until an admin runs `select set_zoho_estimates(true)`
+(no UI switch yet). Today's flow — quote in CTP, accept raises the confirmed SO
+directly — is untouched while it is off.
+- **0062** (live; dry run first): `sales_order.zoho_estimate_id/_number/_status/
+  _status_at/_error/_modified_at`; `zoho_config.estimates_enabled` (default false);
+  `set_zoho_estimates(bool)` admin-only, logged; `apply_zoho_estimate()` server-only
+  (links, status-change note on the order, deleted → flagged + id kept, never
+  re-created); push log doc_type 'estimate'.
+- **_shared/zoho.ts**: `estimateFor()` = draft estimate per quote (reference = RQ
+  no., lines by SKU via zoho_item, Standard Rate VAT, rebate as line discount,
+  unpriced/unlinked lines block); idempotent (stored id, then by reference); updates
+  only while DRAFT — once sent, a difference is a warning for the desk (accounts
+  revise in Zoho). `salesOrderFromEstimate()` = estimate draft→sent→accepted, then
+  the confirmed SO from the ESTIMATE's lines with `estimate_id` (Zoho links it).
+  `reopenEstimate()` = compensation.
+- **zoho-push** `{action:"estimate", order_id}` (staff; skipped while the switch is
+  off or before go-live). Status read-back (10-min cron) now reads estimates too and
+  marks an estimate DECLINED in Zoho when the customer declined / the desk cancelled.
+- **accept-quote**: with the switch on and an estimate on the quote → estimate
+  accepted + SO from it, then the same accept_quote() transaction; failure deletes the
+  new SO and puts the estimate back to sent. No estimate → the 20 Oct path.
+- **Phone**: "Send quote" (fully priced) calls the estimate action (skipped now);
+  the order card shows "Estimate QT-… in Zoho · draft — accounts send it" and any
+  estimate warning; estimate numbers are searchable in the order filters.
+- **Live test** (`zoho-auth {action:"est_test"}`, Test Account contact, 23 Oct 08:31):
+  Zoho numbers estimates **QT-000001** (Zoho calls them quotes); found by reference;
+  PUT while draft OK; **accept from draft is REFUSED (code 4043)** → must be marked
+  sent first (the code does this); SO with `estimate_id` accepted and linked
+  (SO-00013, open); estimate stays "accepted" after the SO. Both deleted after.
+  QT-000001 and SO-00013 are therefore gaps in Zoho's numbering.
+- Tests: `tests_0062_local.js` 17/17 (+0061 19/19); deno check: no new type errors
+  (71 pre-existing, all GenericStringError on string-built selects); tsc + build clean.
+  Deployed: zoho-push v18, zoho-auth v19, accept-quote v20 (verify_jwt on); PWA SW v25.
+- Slip on 23 Oct: one `vercel deploy` ran from `app/` and created a stray Vercel
+  project **"app"** (app-1q7hm1fyd-ian-33be3d61.vercel.app). Production was not
+  affected; the local link was removed. Delete the "app" project in Vercel when
+  convenient. Always deploy from the repo root.
+- **Before switching on** (next): Settings → Zoho toggle for the switch; customer
+  "Decline" path check; decide whether an accepted-in-app quote that Michelle never
+  sent is OK to mark sent automatically (Zoho requires sent before accepted);
+  re-price after sent = warning only. Then Ian + Michelle switch on together.

@@ -35,3 +35,13 @@ draft; Zoho numbering; Michelle sends customer documents from Zoho).
 ## Effort
 
 ~2 days after the code: 0.5 migration + read-back, 1 push/accept/convert, 0.5 tests + deploy.
+
+## Status (23 Oct 2026)
+
+Built dark and live with the switch OFF (0062, zoho-push, accept-quote, zoho-auth
+`est_test`) — see HANDOFF 23 Oct. Live-test facts that change the design above:
+- Zoho numbers estimates `QT-000001…` (Books calls them quotes).
+- An estimate cannot go draft → accepted (code 4043); it must be **sent** first.
+  On customer accept the app marks it sent (no email) then accepted.
+- `POST /salesorders` takes `estimate_id` and Zoho links the SO to the estimate;
+  the estimate stays `accepted` (not `invoiced`) after the SO.

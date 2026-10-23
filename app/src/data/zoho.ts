@@ -58,6 +58,20 @@ export async function syncSalesOrder(orderId: number, force = false): Promise<{ 
   }
 }
 
+/** 0062 (Phase 2): the quote's draft Zoho estimate, created or brought up to
+ *  date after staff price it. The server skips it while quotes are not yet Zoho
+ *  estimates (zoho_config.estimates_enabled off). Never throws. */
+export async function syncEstimate(orderId: number): Promise<{ ok: boolean; skipped?: string; message?: string; number?: string }> {
+  try {
+    const { data, error } = await supabase.functions.invoke("zoho-push", { body: { action: "estimate", order_id: orderId } });
+    if (error) return { ok: false, message: error.message };
+    const d = data as { ok?: boolean; skipped?: string; error?: string; warning?: string; estimate_number?: string };
+    return { ok: d?.ok !== false, skipped: d?.skipped, message: d?.error ?? d?.warning, number: d?.estimate_number };
+  } catch (e) {
+    return { ok: false, message: e instanceof Error ? e.message : String(e) };
+  }
+}
+
 /** 0059: admin releases an order for fulfilment before accounts have sent the
  *  Zoho sales order. The note is required and goes on the order. */
 export async function overrideFulfilGate(orderId: number, note: string): Promise<void> {

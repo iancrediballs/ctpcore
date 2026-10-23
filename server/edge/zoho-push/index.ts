@@ -25,6 +25,8 @@
 //   { "action": "status", "force"?: true }      read Zoho status back (draft/sent/paid/void);
 //                          sales orders also bring Michelle's edits back (0059)
 //   { "action": "so_sync", "order_id": 43 }     one order's sales order + its customer's terms, now
+//   { "action": "estimate", "order_id": 43 }    Phase 2 (0062): the quote's DRAFT Zoho estimate, created
+//                          or brought up to date; skipped unless zoho_config.estimates_enabled
 //   { "action": "test" }   manager/admin: create a clearly marked TEST draft
 //                          invoice + bill against TEST contacts, read them back,
 //                          then delete all four; returns what was created.
@@ -36,7 +38,7 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient, type SupabaseClient } from "jsr:@supabase/supabase-js@2";
 
 import { env, zohoInit, zohoMissing, Blocked, zoho, rands, jhbDate, findByReference, resolveContact, itemIds, taxIdFor,
-         rebateDiscount, linkToSalesOrder, salesOrderFor, deleteSalesOrder, type Logger } from "../_shared/zoho.ts";
+         rebateDiscount, linkToSalesOrder, salesOrderFor, deleteSalesOrder, estimateFor, type Logger } from "../_shared/zoho.ts";
 
 
 const CORS = {
@@ -249,6 +251,10 @@ async function refreshStatus(db: SupabaseClient, log: Logger, force: boolean) {
     { table: "sales_order", idCol: "zoho_salesorder_id", numCol: "zoho_salesorder_number", ref: "number",
       path: "salesorders", key: "salesorder", numKey: "salesorder_number", doc: "salesorder",
       stCol: "zoho_so_status", atCol: "zoho_so_status_at", errCol: "zoho_so_error" },
+    // 0062: the quote's Zoho estimate (Phase 2)
+    { table: "sales_order", idCol: "zoho_estimate_id", numCol: "zoho_estimate_number", ref: "number",
+      path: "estimates", key: "estimate", numKey: "estimate_number", doc: "estimate",
+      stCol: "zoho_estimate_status", atCol: "zoho_estimate_status_at", errCol: "zoho_estimate_error" },
     { table: "goods_receipt", idCol: "zoho_bill_id", numCol: "zoho_bill_number", ref: "number",
       path: "bills", key: "bill", numKey: "bill_number", doc: "bill",
       stCol: "zoho_status", atCol: "zoho_status_at", errCol: "zoho_error" },
@@ -256,7 +262,7 @@ async function refreshStatus(db: SupabaseClient, log: Logger, force: boolean) {
   const changes: { doc: string; ref: string; from: string | null; to: string }[] = [];
   let checked = 0;
   for (const k of kinds) {
-    const extra = k.table === "sales_order" ? ", number, zoho_salesorder_id, zoho_invoice_id, deleted_at" : "";
+    const extra = k.table === "sales_order" ? ", number, status, client_response, zoho_salesorder_id, zoho_invoice_id, deleted_at" : "";
     const { data: rows, error } = await db.from(k.table)
       .select(`id, ${k.ref}, ${k.idCol}, ${k.numCol}, ${k.stCol}${extra}`)
       .not(k.idCol, "is", null).limit(200);
@@ -266,6 +272,7 @@ async function refreshStatus(db: SupabaseClient, log: Logger, force: boolean) {
       const was: string | null = r[k.stCol];
       // 0061: an invoiced SO is still read until accounts' invoice is linked onto the order
       if (FINAL.includes(was ?? "") && !(k.doc === "salesorder" && !r.zoho_invoice_id && !r.deleted_at && was === "invoiced")) continue;
+      if (k.doc === "estimate" && ["accepted", "declined", "expired"].includes(was ?? "")) continue;
       checked++;
       let status: string, number: string | null = r[k.numCol];
       try {
@@ -276,6 +283,12 @@ async function refreshStatus(db: SupabaseClient, log: Logger, force: boolean) {
         if (k.doc === "salesorder" && !r.deleted_at) await applySalesOrder(db, r.id, r.number, b.salesorder, log);
         // 0061: accounts' invoice for an SO-backed order — status, balance, payments
         if (k.doc === "invoice" && r.zoho_salesorder_id && !r.deleted_at) await linkInvoices(db, r.id, r.number, [b.invoice], log);
+        // 0062: the customer declined (or the desk cancelled) a quote whose estimate is still open in Zoho
+        if (k.doc === "estimate" && ["draft", "sent"].includes(status)
+            && (r.client_response === "declined" || r.status === "cancelled" || r.deleted_at)) {
+          await zoho("POST", `/estimates/${r[k.idCol]}/status/declined`);
+          status = "declined";
+        }
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         // Zoho answers a missing record with HTTP 404 or a "does not exist" code.
@@ -536,6 +549,23 @@ Deno.serve(async (req: Request) => {
       const id = Number(body.order_id);
       if (!Number.isInteger(id) || id <= 0) return json({ error: "order_id is required" }, 400);
       return json({ ok: true, ...(await syncOne(db, log, id, body.force === true)) });
+    }
+    if (body.action === "estimate") {
+      const id = Number(body.order_id);
+      if (!Number.isInteger(id) || id <= 0) return json({ error: "order_id is required" }, 400);
+      if (!cfg?.estimates_enabled) return json({ ok: true, skipped: "Quotes are not Zoho estimates yet (0062 switch is off)." });
+      if (new Date(cfg.push_from) > new Date()) return json({ ok: true, skipped: "Before the Zoho go-live date." });
+      try {
+        const est = await estimateFor(db, cfg, id, log);
+        await db.rpc("apply_zoho_estimate", { p_order_id: id, p_est: { estimate_id: est.estimate_id, estimate_number: est.estimate_number,
+          status: est.status, last_modified_time: est.last_modified_time ?? null, error: est.warning ?? "" } });
+        return json({ ok: !est.warning, ...est });
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        await log({ doc_type: "estimate", ctp_id: id, action: e instanceof Blocked ? "blocked" : "error", ok: false, message: msg });
+        await db.from("sales_order").update({ zoho_estimate_error: msg }).eq("id", id);
+        return json({ ok: false, error: msg }, e instanceof Blocked ? 409 : 502);
+      }
     }
     if (body.action === "test") {
       if (!who.manager && who.actor) return json({ error: "Only a manager or admin can run the Zoho test" }, 403);

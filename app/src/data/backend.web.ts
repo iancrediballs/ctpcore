@@ -807,6 +807,7 @@ async function staffOrders(): Promise<unknown[]> {
             c.zoho_unused_credit_minor AS cust_unused_credit_minor, c.on_account AS cust_on_account, so.customer_id,
             so.zoho_invoice_id, so.zoho_invoice_total_minor, so.zoho_invoice_balance_minor, so.zoho_invoice_paid_minor,
             so.zoho_invoice_payments, so.zoho_invoice_count,
+            so.zoho_estimate_id, so.zoho_estimate_number, so.zoho_estimate_status, so.zoho_estimate_error,
             c.name AS customer_name, c.contact AS customer_contact,
             c.phone AS customer_phone, c.email AS customer_email,
             (SELECT l.code FROM location l WHERE l.id = so.location_id) AS location_code
@@ -895,6 +896,11 @@ async function staffOrders(): Promise<unknown[]> {
       zoho_invoice_paid_minor: o["zoho_invoice_paid_minor"] == null ? null : Number(o["zoho_invoice_paid_minor"]),
       zoho_invoice_payments: nstr(o["zoho_invoice_payments"]),
       zoho_invoice_count: o["zoho_invoice_count"] == null ? null : Number(o["zoho_invoice_count"]),
+      // 0062: the quote's Zoho estimate
+      zoho_estimate_id: nstr(o["zoho_estimate_id"]),
+      zoho_estimate_number: nstr(o["zoho_estimate_number"]),
+      zoho_estimate_status: nstr(o["zoho_estimate_status"]),
+      zoho_estimate_error: nstr(o["zoho_estimate_error"]),
       unpriced,
       total_minor: mapped.reduce((t, l) => t + l.unit_price_minor * l.qty, 0),
       // The queue this order sits in. Derived here so every surface agrees.

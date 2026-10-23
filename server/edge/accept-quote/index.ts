@@ -1,5 +1,11 @@
 // CTP Core — a customer accepts a quote.
 //
+// 2026-10-23 (0062, Phase 2): when quotes are Zoho estimates (zoho_config.
+// estimates_enabled) and this quote has one, accepting marks the ESTIMATE
+// accepted and raises the confirmed sales order from the estimate's lines
+// (salesOrderFromEstimate). Without an estimate: the 20 Oct path, unchanged.
+// A failed acceptance deletes the new SO and puts the estimate back to sent.
+//
 // 2026-10-22 (0058): { order_id, on_behalf_note } lets an ADMIN accept for the
 // customer (confirmed by phone/email). Same Zoho SO + stock hold; the admin and
 // the note are recorded on the order by accept_quote_on_behalf().
@@ -37,7 +43,7 @@
 // a hold without a document would be a real one.
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
-import { zohoInit, zohoMissing, salesOrderFor, deleteSalesOrder, Blocked, type Logger } from "../_shared/zoho.ts";
+import { zohoInit, zohoMissing, salesOrderFor, salesOrderFromEstimate, reopenEstimate, deleteSalesOrder, Blocked, type Logger } from "../_shared/zoho.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -81,7 +87,7 @@ Deno.serve(async (req: Request) => {
   // ── 1. the order, and that it is theirs ──────────────────────────────────
   const { data: o, error: oErr } = await db
     .from("sales_order")
-    .select("id, number, status, customer_id, zoho_salesorder_id, zoho_salesorder_number, customer:customer_id(id, name, auth_user_id, zoho_contact_id)")
+    .select("id, number, status, customer_id, zoho_salesorder_id, zoho_salesorder_number, zoho_estimate_id, zoho_estimate_status, customer:customer_id(id, name, auth_user_id, zoho_contact_id)")
     .eq("id", orderId).is("deleted_at", null).maybeSingle();
   if (oErr) return json({ error: oErr.message }, 500);
   if (!o) return json({ error: "No such order" }, 404);
@@ -113,6 +119,9 @@ Deno.serve(async (req: Request) => {
   const log: Logger = async (r) => { await db.from("zoho_push_log").insert({ ...r, actor: uid }); };
 
   let so: { salesorder_id: string; salesorder_number: string; status: string; created: boolean; warning?: string } | null = null;
+  // 0062: accept through the quote's Zoho estimate when there is one
+  const viaEstimate = !!(cfg?.estimates_enabled && o.zoho_estimate_id && o.zoho_estimate_status !== "deleted");
+  let est: { status: string; number: string } | null = null;
   if (live) {
     await zohoInit(db);
     const missing = zohoMissing();
@@ -122,10 +131,14 @@ Deno.serve(async (req: Request) => {
       return json({ error: "Ordering is not connected to the accounts system on this server yet — please tell us and we will accept it by hand." }, 503);
     }
     try {
-      so = await salesOrderFor(db, cfg, orderId, log);
+      if (viaEstimate) {
+        const r = await salesOrderFromEstimate(db, orderId, o.zoho_estimate_id!, log);
+        so = r; est = { status: r.estimate_status, number: r.estimate_number };
+      } else so = await salesOrderFor(db, cfg, orderId, log);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       await log({ doc_type: "salesorder", ctp_id: orderId, ctp_ref: o.number, action: e instanceof Blocked ? "blocked" : "error", ok: false, message: msg });
+      if (viaEstimate) await reopenEstimate(o.zoho_estimate_id!);   // the estimate may already be accepted
       await db.from("sales_order").update({ zoho_so_error: msg }).eq("id", orderId);
       return json({ error: `We could not raise the sales order in our accounts system, so nothing was accepted or reserved. Please try again in a minute; if it keeps failing, call us. (${msg})` }, 502);
     }
@@ -143,6 +156,7 @@ Deno.serve(async (req: Request) => {
       });
   if (accErr) {
     // ── 5. compensate: a sales order we just created is removed again ──
+    if (est && o.zoho_estimate_id) await reopenEstimate(o.zoho_estimate_id);
     if (so?.created) {
       try {
         await deleteSalesOrder(so.salesorder_id);
@@ -158,7 +172,8 @@ Deno.serve(async (req: Request) => {
   // Zoho's own status (open = confirmed, since 21 Oct) over accept_quote's default
   if (so) {
     await db.from("sales_order").update({ zoho_so_status: so.status === "existing" ? undefined : so.status,
-      zoho_so_status_at: new Date().toISOString(), zoho_so_error: so.warning ?? null }).eq("id", orderId);
+      zoho_so_status_at: new Date().toISOString(), zoho_so_error: so.warning ?? null,
+      ...(est ? { zoho_estimate_status: est.status, zoho_estimate_status_at: new Date().toISOString(), zoho_estimate_error: null } : {}) }).eq("id", orderId);
   }
 
   return json({ ok: true, already: acc?.already ?? false, order_id: orderId, number: o.number,

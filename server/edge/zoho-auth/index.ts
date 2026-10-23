@@ -14,7 +14,7 @@
 // POST { "action": "status" } says whether a token is stored, nothing more.
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient, type SupabaseClient } from "jsr:@supabase/supabase-js@2";
-import { zohoInit, zohoToken, zoho } from "../_shared/zoho.ts";
+import { zohoInit, zohoToken, zoho, findByReference } from "../_shared/zoho.ts";
 
 const env = (k: string) => Deno.env.get(k) ?? "";
 const json = (b: unknown, status = 200) =>
@@ -174,6 +174,67 @@ Deno.serve(async (req: Request) => {
   // Admin test of the 21 Oct rule (sales orders CONFIRMED): a TEST sales order for
   // the Test Account contact, marked open, status read back, then removed
   // (delete, else void) — the same calls accept-quote makes.
+  // 0062 (Phase 2) live test: TEST estimate on the Test Account contact → sent →
+  // accepted → confirmed sales order from it (with estimate_id) → read back →
+  // delete both. Proves the estimate path end to end before the switch goes on.
+  if (body.action === "est_test") {
+    await zohoInit(db);
+    const { data: link } = await db.from("zoho_item").select("zoho_item_id, sku").eq("status", "active").not("part_id", "is", null).limit(1).single();
+    const { data: tc } = await db.from("customer").select("zoho_contact_id").eq("code", "TESTACC").maybeSingle();
+    if (!link || !tc?.zoho_contact_id) return json({ ok: false, error: "no test item/contact" }, 412);
+    const stamp = new Date().toISOString().replace(/[-:T]/g, "").slice(0, 12);
+    const ref = `CTP-TEST-EST-${stamp}`;
+    const out: Record<string, unknown> = { stamp };
+    // deno-lint-ignore no-explicit-any
+    let est: any = null, so: any = null;
+    try {
+      est = (await zoho("POST", "/estimates", {}, { customer_id: tc.zoho_contact_id, reference_number: ref, is_inclusive_tax: false,
+        line_items: [{ item_id: link.zoho_item_id, quantity: 1, rate: 1, description: `TEST ${link.sku}` }], notes: "CTP CORE TEST - DELETE ME" })).estimate;
+      out.created = `${est.estimate_number} status=${est.status}`;
+      out.found_by_reference = !!(await findByReference("estimates", ref));
+      await zoho("PUT", `/estimates/${est.estimate_id}`, {}, { customer_id: tc.zoho_contact_id, reference_number: ref, is_inclusive_tax: false,
+        line_items: [{ item_id: link.zoho_item_id, quantity: 2, rate: 1, description: `TEST ${link.sku}` }], notes: "CTP CORE TEST - DELETE ME" });
+      out.updated_qty = (await zoho("GET", `/estimates/${est.estimate_id}`)).estimate?.line_items?.[0]?.quantity;
+      try { await zoho("POST", `/estimates/${est.estimate_id}/status/accepted`); out.accept_from_draft = "ok"; }
+      catch (e) {
+        out.accept_from_draft = "refused: " + (e instanceof Error ? e.message : String(e));
+        await zoho("POST", `/estimates/${est.estimate_id}/status/sent`);
+        out.after_sent = (await zoho("GET", `/estimates/${est.estimate_id}`)).estimate?.status;
+        await zoho("POST", `/estimates/${est.estimate_id}/status/accepted`);
+      }
+      const acc = (await zoho("GET", `/estimates/${est.estimate_id}`)).estimate;
+      out.after_accept = acc?.status;
+      const soBody = { customer_id: acc.customer_id, reference_number: ref, is_inclusive_tax: false,
+        // deno-lint-ignore no-explicit-any
+        line_items: (acc.line_items ?? []).map((l: any) => ({ item_id: l.item_id, quantity: l.quantity, rate: l.rate, description: l.description })),
+        notes: "CTP CORE TEST - DELETE ME" };
+      try { so = (await zoho("POST", "/salesorders", {}, { ...soBody, estimate_id: est.estimate_id })).salesorder; out.so_with_estimate_id = "accepted"; }
+      catch (e) {
+        out.so_with_estimate_id = "refused: " + (e instanceof Error ? e.message : String(e));
+        so = (await zoho("POST", "/salesorders", {}, soBody)).salesorder;
+      }
+      out.so_created = `${so.salesorder_number} status=${so.status}`;
+      await zoho("POST", `/salesorders/${so.salesorder_id}/status/open`);
+      const soAfter = (await zoho("GET", `/salesorders/${so.salesorder_id}`)).salesorder;
+      out.so_after_confirm = soAfter?.status;
+      out.so_estimate_link = soAfter?.estimate_id ?? soAfter?.estimate_number ?? null;
+      out.estimate_after_so = (await zoho("GET", `/estimates/${est.estimate_id}`)).estimate?.status;
+    } catch (e) {
+      out.error = e instanceof Error ? e.message : String(e);
+    } finally {
+      for (const [k, id] of [["salesorders", so?.salesorder_id], ["estimates", est?.estimate_id]] as const) {
+        if (!id) continue;
+        try { await zoho("DELETE", `/${k}/${id}`); out[`removed_${k}`] = "deleted"; }
+        catch (e) {
+          try { await zoho("POST", `/${k}/${id}/status/void`); out[`removed_${k}`] = "voided"; }
+          catch { out[`removed_${k}`] = "FAILED: " + (e instanceof Error ? e.message : String(e)); }
+        }
+      }
+    }
+    return json({ ok: !out.error && out.after_accept === "accepted" && out.so_after_confirm === "open"
+      && !String(out.removed_salesorders ?? "").startsWith("FAILED") && !String(out.removed_estimates ?? "").startsWith("FAILED"), ...out });
+  }
+
   if (body.action === "so_test") {
     await zohoInit(db);
     const { data: link } = await db.from("zoho_item").select("zoho_item_id, sku").eq("status", "active").not("part_id", "is", null).limit(1).single();

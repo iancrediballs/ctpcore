@@ -108,6 +108,9 @@ const sales_order = new Table({
   // 0061: accounts' invoice raised from the SO in Zoho, and its payments
   zoho_invoice_total_minor: column.integer, zoho_invoice_balance_minor: column.integer, zoho_invoice_paid_minor: column.integer,
   zoho_invoice_payments: column.text, zoho_invoice_count: column.integer, zoho_invoice_linked_at: column.text,
+  // 0062 (Phase 2): the quote's Zoho estimate
+  zoho_estimate_id: column.text, zoho_estimate_number: column.text, zoho_estimate_status: column.text,
+  zoho_estimate_status_at: column.text, zoho_estimate_error: column.text, zoho_estimate_modified_at: column.text,
 }, { indexes: { customer: ["customer_id"], status: ["status"] } });
 
 const sales_line = new Table({

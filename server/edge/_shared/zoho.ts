@@ -86,7 +86,7 @@ export const jhbDate = (iso: string) =>
 // Find our own document again by its reference. The list filter is not
 // documented for every field, so the result is ALWAYS re-checked exactly here:
 // a filter Zoho ignores can widen the result, never produce a false match.
-export async function findByReference(kind: "invoices" | "bills" | "salesorders", ref: string) {
+export async function findByReference(kind: "invoices" | "bills" | "salesorders" | "estimates", ref: string) {
   for (const q of [{ reference_number: ref }, { search_text: ref }]) {
     const b = await zoho("GET", `/${kind}`, { ...q, per_page: "200" });
     const rows = (b[kind] ?? []) as Record<string, unknown>[];
@@ -291,4 +291,164 @@ export async function linkToSalesOrder(soId: string, lines: any[]): Promise<{ li
   const invoices = ((so.invoices ?? []) as any[]).filter((i) => !["void"].includes(String(i.status)))
     .map((i) => ({ invoice_id: String(i.invoice_id), invoice_number: String(i.invoice_number ?? ""), status: String(i.status ?? "") }));
   return { lines: out, customer_id: String(so.customer_id), status: String(so.status ?? ""), linked, invoices };
+}
+
+// ── estimates (Phase 2, 0062) ────────────────────────────────────────────────
+// Quote = Zoho estimate (draft; Michelle sends it). Accept = estimate accepted +
+// a CONFIRMED sales order raised from the ESTIMATE's lines (Zoho wins on price,
+// discount and tax). Only used when zoho_config.estimates_enabled is on.
+export type EstimateRef = { estimate_id: string; estimate_number: string; status: string;
+  action: "created" | "updated" | "unchanged" | "found"; warning?: string; last_modified_time?: string };
+
+/** One quote's lines as Zoho line items. Unlinked SKUs and unpriced lines block. */
+// deno-lint-ignore no-explicit-any
+async function quoteDoc(db: SupabaseClient, cfg: any, orderId: number, log: Logger) {
+  const { data, error } = await db.from("sales_order")
+    .select("id, number, status, tax_rate_bps, zoho_estimate_id, zoho_estimate_number, zoho_estimate_status, " +
+            "customer:customer_id(id, code, name, email, vat_no, zoho_contact_id), " +
+            "lines:sales_line(qty, unit_price_minor, rebate_pct, deleted_at, part:part_id(id, sku, name))")
+    .eq("id", orderId).single();
+  if (error || !data) throw new Blocked(`Order ${orderId} not found`);
+  // deno-lint-ignore no-explicit-any
+  const o = data as any;
+  // deno-lint-ignore no-explicit-any
+  const lines = ((o.lines ?? []) as any[]).filter((l) => !l.deleted_at);
+  if (!lines.length) throw new Blocked(`${o.number} has no lines`);
+  const unpriced = lines.filter((l) => !(Number(l.unit_price_minor) > 0)).map((l) => l.part.sku);
+  if (unpriced.length) throw new Blocked(`${o.number} is not fully priced: ${unpriced.join(", ")}`);
+  const ids = await itemIds(db, lines.map((l) => l.part.id));
+  const missing = lines.filter((l) => !ids.get(l.part.id)).map((l) => l.part.sku);
+  if (missing.length) throw new Blocked(`Not linked to a Zoho item: ${missing.join(", ")}`);
+  const taxId = await taxIdFor(o.tax_rate_bps ?? 0, cfg?.tax_id ?? null);
+  // deno-lint-ignore no-explicit-any
+  const customerId = await resolveContact(db, "customer", o.customer as any, "customer", log);
+  const line_items = lines.map((l) => ({
+    item_id: ids.get(l.part.id), quantity: l.qty, rate: rands(l.unit_price_minor),
+    description: l.part.sku, ...(taxId ? { tax_id: taxId } : {}), ...rebateDiscount(l.rebate_pct),
+  }));
+  return { o, customerId, line_items };
+}
+
+// deno-lint-ignore no-explicit-any
+const lineKey = (l: any) => `${l.item_id}|${Number(l.quantity)}|${Number(l.rate).toFixed(2)}|${String(l.discount ?? "0").replace(/%$/, "")}`;
+// deno-lint-ignore no-explicit-any
+const sameLines = (a: any[], b: any[]) => a.map(lineKey).sort().join(";") === b.map(lineKey).sort().join(";");
+const gone = (e: unknown) => /\(404|does not exist|not found/i.test(e instanceof Error ? e.message : String(e));
+
+/** Create the quote's draft estimate, or bring a still-draft one up to date.
+ *  Idempotent: the stored id first, then Zoho searched by reference. A sent or
+ *  accepted estimate is never edited: the difference comes back as a warning
+ *  for the desk (accounts revise it in Zoho). A deleted one is not re-created. */
+// deno-lint-ignore no-explicit-any
+export async function estimateFor(db: SupabaseClient, cfg: any, orderId: number, log: Logger): Promise<EstimateRef> {
+  const { o, customerId, line_items } = await quoteDoc(db, cfg, orderId, log);
+  if (o.status !== "quote") throw new Blocked(`${o.number} is ${o.status}, not a quote`);
+  if (o.zoho_estimate_status === "deleted") {
+    throw new Blocked(`The Zoho estimate ${o.zoho_estimate_number ?? ""} for ${o.number} was deleted in Zoho — not re-created automatically.`);
+  }
+  // deno-lint-ignore no-explicit-any
+  let est: any = null;
+  let found = false;
+  if (o.zoho_estimate_id) {
+    try { est = (await zoho("GET", `/estimates/${o.zoho_estimate_id}`)).estimate; }
+    catch (e) {
+      if (gone(e)) return { estimate_id: o.zoho_estimate_id, estimate_number: o.zoho_estimate_number ?? "", status: "deleted",
+                            action: "unchanged", warning: "This estimate was DELETED in Zoho." };
+      throw e;
+    }
+  } else {
+    const hit = await findByReference("estimates", o.number);
+    if (hit && !["void", "declined"].includes(String(hit.status))) {
+      est = (await zoho("GET", `/estimates/${hit.estimate_id}`)).estimate;
+      found = true;
+    }
+  }
+  const body = { customer_id: customerId, reference_number: o.number, is_inclusive_tax: false, line_items,
+                 notes: `Quote from CTP Core · order ${o.number}` };
+  if (!est) {
+    const e = (await zoho("POST", "/estimates", {}, { ...body, date: jhbDate(new Date().toISOString()) })).estimate;
+    await log({ doc_type: "estimate", ctp_id: orderId, ctp_ref: o.number, action: "create", ok: true, zoho_id: String(e.estimate_id),
+                message: `${o.number} → Zoho estimate ${e.estimate_number} (${e.status})` });
+    return { estimate_id: String(e.estimate_id), estimate_number: String(e.estimate_number), status: String(e.status ?? "draft"),
+             action: "created", last_modified_time: e.last_modified_time };
+  }
+  const ref: EstimateRef = { estimate_id: String(est.estimate_id), estimate_number: String(est.estimate_number),
+                             status: String(est.status ?? ""), action: found ? "found" : "unchanged", last_modified_time: est.last_modified_time };
+  if (sameLines(est.line_items ?? [], line_items) && String(est.customer_id) === String(customerId)) return ref;
+  if (ref.status !== "draft") {
+    ref.warning = `CTP's quote differs from Zoho estimate ${ref.estimate_number}, which is already ${ref.status} — accounts must revise it in Zoho.`;
+    await log({ doc_type: "estimate", ctp_id: orderId, ctp_ref: o.number, action: "blocked", ok: false, zoho_id: ref.estimate_id, message: ref.warning });
+    return ref;
+  }
+  const b = await zoho("PUT", `/estimates/${ref.estimate_id}`, {}, body);
+  await log({ doc_type: "estimate", ctp_id: orderId, ctp_ref: o.number, action: "update", ok: true, zoho_id: ref.estimate_id,
+              message: `${o.number} → Zoho estimate ${ref.estimate_number} updated (still draft)` });
+  return { ...ref, action: "updated", last_modified_time: b.estimate?.last_modified_time ?? ref.last_modified_time };
+}
+
+/** Customer accepted: estimate → accepted (via sent if still a draft), then the
+ *  confirmed sales order from the ESTIMATE's own lines, linked to it when Zoho
+ *  takes estimate_id. Idempotent on the CTP order number, like salesOrderFor. */
+// deno-lint-ignore no-explicit-any
+export async function salesOrderFromEstimate(db: SupabaseClient, orderId: number, estimateId: string, log: Logger):
+    Promise<SalesOrderRef & { estimate_status: string; estimate_number: string }> {
+  const { data: o } = await db.from("sales_order").select("id, number, zoho_salesorder_id, zoho_salesorder_number").eq("id", orderId).single();
+  if (!o) throw new Blocked(`Order ${orderId} not found`);
+  const est = (await zoho("GET", `/estimates/${estimateId}`)).estimate;
+  if (!est) throw new Blocked(`Zoho estimate ${estimateId} not found`);
+  const estimate_number = String(est.estimate_number ?? "");
+  let estimate_status = String(est.status ?? "");
+  if (["declined", "expired", "void"].includes(estimate_status)) {
+    throw new Blocked(`Zoho estimate ${estimate_number} is ${estimate_status} — ask accounts before accepting.`);
+  }
+  if (estimate_status === "draft") { await zoho("POST", `/estimates/${estimateId}/status/sent`); estimate_status = "sent"; }
+  if (estimate_status === "sent") { await zoho("POST", `/estimates/${estimateId}/status/accepted`); estimate_status = "accepted"; }
+  const existing = o.zoho_salesorder_id ? null : await findByReference("salesorders", o.number);
+  if (o.zoho_salesorder_id || (existing && !["void", "cancelled"].includes(String(existing.status)))) {
+    const id = String(o.zoho_salesorder_id ?? existing!.salesorder_id);
+    let st = existing ? String(existing.status ?? "") : "existing";
+    if (st === "draft") { try { await zoho("POST", `/salesorders/${id}/status/open`); st = "open"; } catch { /* stays draft; shown */ } }
+    return { salesorder_id: id, salesorder_number: String(o.zoho_salesorder_number ?? existing!.salesorder_number ?? ""), status: st,
+             created: false, estimate_status, estimate_number };
+  }
+  // deno-lint-ignore no-explicit-any
+  const line_items = ((est.line_items ?? []) as any[]).map((l) => ({
+    item_id: l.item_id, quantity: l.quantity, rate: l.rate, description: l.description ?? l.sku,
+    ...(l.tax_id ? { tax_id: l.tax_id } : {}),
+    ...(l.discount !== undefined && l.discount !== null && String(l.discount) !== "0" && String(l.discount) !== "" ? { discount: l.discount } : {}),
+  }));
+  const body = { customer_id: est.customer_id, reference_number: o.number, date: jhbDate(new Date().toISOString()),
+    is_inclusive_tax: !!est.is_inclusive_tax, line_items,
+    notes: `Accepted in CTP Core · order ${o.number} · from estimate ${estimate_number}` };
+  // deno-lint-ignore no-explicit-any
+  let so: any;
+  let linked = true;
+  try { so = (await zoho("POST", "/salesorders", {}, { ...body, estimate_id: estimateId })).salesorder; }
+  catch (e) {
+    // Zoho refused the estimate link: raise it unlinked (reference + note keep the trail)
+    if (!/estimate/i.test(e instanceof Error ? e.message : String(e))) throw e;
+    linked = false;
+    so = (await zoho("POST", "/salesorders", {}, body)).salesorder;
+  }
+  let st = String(so.status ?? "");
+  let warning: string | undefined;
+  if (st === "draft") {
+    try {
+      await zoho("POST", `/salesorders/${so.salesorder_id}/status/open`);
+      st = String((await zoho("GET", `/salesorders/${so.salesorder_id}`)).salesorder?.status ?? "open");
+    } catch (e) {
+      warning = `Sales order ${so.salesorder_number} could not be confirmed in Zoho and is still a draft: ${e instanceof Error ? e.message : String(e)}`;
+    }
+  }
+  if (!warning && st !== "open") warning = `Zoho shows sales order ${so.salesorder_number} as "${st}", not confirmed.`;
+  await log({ doc_type: "salesorder", ctp_id: orderId, ctp_ref: o.number, action: "create", ok: !warning, zoho_id: String(so.salesorder_id),
+              message: `${o.number} → Zoho sales order ${so.salesorder_number} (${st}) from estimate ${estimate_number}` +
+                       `${linked ? "" : " (not linked: Zoho refused estimate_id)"}${warning ? " — " + warning : ""}` });
+  return { salesorder_id: String(so.salesorder_id), salesorder_number: String(so.salesorder_number), status: st, created: true, warning,
+           estimate_status, estimate_number };
+}
+
+/** The acceptance failed after the estimate was accepted: back to sent. */
+export async function reopenEstimate(estimateId: string) {
+  await zoho("POST", `/estimates/${estimateId}/status/sent`).catch(() => undefined);
 }

@@ -16,7 +16,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useStatus } from "@powersync/react";
 import * as api from "../data/api";
-import { refreshZohoStatus, zohoStatusLabel, syncSalesOrder, overrideFulfilGate, fulfilBlockReason, setCustomerOnAccount } from "../data/zoho";
+import { refreshZohoStatus, zohoStatusLabel, syncSalesOrder, syncEstimate, overrideFulfilGate, fulfilBlockReason, setCustomerOnAccount } from "../data/zoho";
 import AddCustomer from "../admin/AddCustomer";
 import { assetUrl, photoWebUrl } from "../assets";
 import { DiagramCanvas, Marker, loadMarkerScale, saveMarkerScale, markerRadius, MARKER_SCALE_MIN, MARKER_SCALE_MAX, type CanvasApi, type Frame, type Pt } from "./DiagramCanvas";
@@ -112,6 +112,9 @@ type StaffOrder = {
   customer_id?: number | null; cust_on_account?: boolean; zoho_invoice_id?: string | null;
   zoho_invoice_total_minor?: number | null; zoho_invoice_balance_minor?: number | null; zoho_invoice_paid_minor?: number | null;
   zoho_invoice_payments?: string | null; zoho_invoice_count?: number | null;
+  // 0062: the quote's Zoho estimate (Phase 2)
+  zoho_estimate_id?: string | null; zoho_estimate_number?: string | null;
+  zoho_estimate_status?: string | null; zoho_estimate_error?: string | null;
   unpriced: number; total_minor: number;
   stage: "to_price" | "with_customer" | "to_pick" | "fulfilled" | string;
   lines: StaffLine[];
@@ -862,6 +865,15 @@ const parseRand = (s: string): number => {
       setDraftPrices({});
       setFloorBlock(null);
       loadOrders();
+      // 0062: fully priced → its draft Zoho estimate (skipped until the switch is on)
+      if (left === 0 && warns.length === 0) {
+        void syncEstimate(o.id).then((r) => {
+          if (r.skipped) return;
+          if (!r.ok) showToast({ text: `Quote saved, but the Zoho estimate failed: ${r.message ?? "unknown error"}`, err: true });
+          else if (r.message) showToast({ text: r.message, err: true });
+          else loadOrders();
+        });
+      }
     } catch (e) {
       console.error(e);
       const msg = e instanceof Error ? e.message.replace(/^\[CTP web\] could not save prices: /, "") : "Could not save.";
@@ -1835,6 +1847,15 @@ const parseRand = (s: string): number => {
                           <div className="mb-row">
                             <span className="mb-rk">Waiting</span>
                             <span className="mb-rv">sent {timeAgo(o.created_at)} · they see it on their phone</span>
+                          </div>
+                        )}
+                        {(o.zoho_estimate_number || o.zoho_estimate_error) && (
+                          <div className="mb-row">
+                            <span className="mb-rk">Estimate</span>
+                            <span className="mb-rv">
+                              {o.zoho_estimate_number && <><b className="mb-mono">{o.zoho_estimate_number}</b> in Zoho · {o.zoho_estimate_status === "draft" ? "draft — accounts send it from Zoho" : o.zoho_estimate_status}</>}
+                              {o.zoho_estimate_error && <div style={{ color: "var(--amber)" }}>{o.zoho_estimate_error}</div>}
+                            </span>
                           </div>
                         )}
                         {o.stage === "with_customer" && role === "admin" && (
