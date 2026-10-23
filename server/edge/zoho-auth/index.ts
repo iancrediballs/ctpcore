@@ -234,6 +234,78 @@ Deno.serve(async (req: Request) => {
       && !String(out.removed_salesorders ?? "").startsWith("FAILED") && !String(out.removed_estimates ?? "").startsWith("FAILED"), ...out });
   }
 
+  // Phase 3 (23 Oct): READ-ONLY stock reconciliation feed. GETs only, throttled
+  // (~1.2 calls/s, under Zoho's 100/min).
+  //   { part: "items" }                      every item: stock_on_hand, available_stock
+  //   { part: "details", ids: [...] }        per item: committed, available-for-sale, opening stock
+  //   { part: "docs" }                       bills, invoices, sales orders, credit notes (+ lines),
+  //                                          and whether inventory adjustments are readable
+  if (body.action === "stock_report") {
+    await zohoInit(db);
+    const nap = () => new Promise((r) => setTimeout(r, 800));
+    // deno-lint-ignore no-explicit-any
+    const all = async (path: string, key: string, extra: Record<string, string> = {}): Promise<any[]> => {
+      // deno-lint-ignore no-explicit-any
+      const out: any[] = [];
+      for (let page = 1; page <= 20; page++) {
+        const b = await zoho("GET", path, { ...extra, page: String(page), per_page: "200" });
+        out.push(...(b[key] ?? []));
+        if (!b.page_context?.has_more_page) break;
+        await nap();
+      }
+      return out;
+    };
+    if (body.part === "items") {
+      const items = await all("/items", "items");
+      return json({ ok: true, items: items.map((i) => ({ item_id: String(i.item_id), sku: i.sku, name: i.name, status: i.status,
+        item_type: i.item_type, track_inventory: i.track_inventory ?? i.is_track_inventory ?? null,
+        stock_on_hand: i.stock_on_hand ?? null, available_stock: i.available_stock ?? null, actual_available_stock: i.actual_available_stock ?? null })) });
+    }
+    if (body.part === "details") {
+      const ids = (Array.isArray(body.ids) ? body.ids : []).map(String).filter((x: string) => /^\d+$/.test(x)).slice(0, 90);
+      // deno-lint-ignore no-explicit-any
+      const rows: any[] = [];
+      for (const id of ids) {
+        try {
+          const i = (await zoho("GET", `/items/${id}`)).item;
+          rows.push({ item_id: id, stock_on_hand: i.stock_on_hand, available_stock: i.available_stock, committed_stock: i.committed_stock,
+            available_for_sale_stock: i.available_for_sale_stock, actual_available_stock: i.actual_available_stock,
+            initial_stock: i.initial_stock, initial_stock_rate: i.initial_stock_rate, purchase_rate: i.purchase_rate, rate: i.rate });
+        } catch (e) { rows.push({ item_id: id, error: e instanceof Error ? e.message : String(e) }); }
+        await nap();
+      }
+      return json({ ok: true, rows });
+    }
+    if (body.part === "docs") {
+      // deno-lint-ignore no-explicit-any
+      const docs: any[] = [];
+      const kinds = [["bills", "bills", "bill", "bill_id", "bill_number"], ["invoices", "invoices", "invoice", "invoice_id", "invoice_number"],
+                     ["salesorders", "salesorders", "salesorder", "salesorder_id", "salesorder_number"],
+                     ["creditnotes", "creditnotes", "creditnote", "creditnote_id", "creditnote_number"]] as const;
+      for (const [path, listKey, oneKey, idKey, numKey] of kinds) {
+        const list = await all(`/${path}`, listKey);
+        for (const d of list) {
+          await nap();
+          try {
+            const full = (await zoho("GET", `/${path}/${d[idKey]}`))[oneKey];
+            docs.push({ kind: oneKey, number: full[numKey], status: full.status, date: full.date, reference: full.reference_number ?? null,
+              contact: full.customer_name ?? full.vendor_name ?? null,
+              // deno-lint-ignore no-explicit-any
+              lines: (full.line_items ?? []).map((l: any) => ({ item_id: String(l.item_id ?? ""), sku: l.sku ?? null, qty: Number(l.quantity ?? 0) })) });
+          } catch (e) { docs.push({ kind: oneKey, number: d[numKey], error: e instanceof Error ? e.message : String(e) }); }
+        }
+        await nap();
+      }
+      let adjustments: unknown = null;
+      try { const b = await zoho("GET", "/inventoryadjustments", { per_page: "200" }); adjustments = { readable: true, count: (b.inventory_adjustments ?? []).length,
+        // deno-lint-ignore no-explicit-any
+        rows: (b.inventory_adjustments ?? []).map((x: any) => ({ id: x.inventory_adjustment_id, date: x.date, reason: x.reason, status: x.status, type: x.adjustment_type })) }; }
+      catch (e) { adjustments = { readable: false, error: e instanceof Error ? e.message : String(e) }; }
+      return json({ ok: true, docs, adjustments });
+    }
+    return json({ ok: false, error: "part = items | details | docs" }, 400);
+  }
+
   // 23 Oct: live-test helper — plays ACCOUNTS on a TEST estimate (mark sent / delete / read).
   // Refuses any estimate whose reference is not a CTP test order (RQ-TEST-…).
   if (body.action === "test_estimate") {

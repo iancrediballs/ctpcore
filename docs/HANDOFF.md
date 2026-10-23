@@ -386,3 +386,19 @@ Ian's screenshot: "Hermans Panel Beaters" and "R 1 329,40" near-black on the dar
   SHIPPED: this laptop has no Rust toolchain; it ships with the next `tauri build` (desktop PC).
 - Tests: 0064 15/15, 0063 24/24, 0062 17/17; deno check 71 (baseline); tsc + build clean.
   Deployed: 0064 (dry run first), zoho-push / zoho-auth / accept-quote, PWA SW v28.
+
+## 23 Oct (afternoon) — Phase 3 PLANNED (no stock changed anywhere)
+- Read: `docs/08_PHASE3_STOCK_TO_ZOHO.md`; report `docs/stock/reconciliation_2026-10-23.{xlsx,csv}`
+  (+ `_totals.json`, raw pull in `docs/stock/raw_2026-10-23/`, script `tools/stock_reconcile.py`).
+- New read-only `zoho-auth {action:"stock_report", part: items|details|docs}` (GET only,
+  throttled ~1.2 calls/s). Deployed.
+- Totals: CTP on hand 812 (809 on linked items + 3 untracked in Zoho), held 5; Zoho on hand
+  937, committed 0, available 937; difference +128 net / 174 gross on 70 of 155 items; 85 match.
+- Main cause: the 28 Jun CTP opening load took ONE Supalift shipment per SKU where the item is
+  on both PI000001 and PI000002 (19 Oct bills in Zoho) — 53 items, 158 units. If both deliveries
+  were received, Zoho is right for those. Rest: 12 document gaps, 24 to count, 2 parts to track
+  in Zoho. Four parts carry an extra INACTIVE zoho_item link (report uses the active one).
+- Books token cannot read/create inventory adjustments (401 code 57) → recommendation: buy Zoho
+  Inventory before the Phase 3 build; one new grant code with Books + Inventory scopes (doc 08 §3).
+- Awaiting Ian + Michelle: approve the reconciliation, confirm both Supalift deliveries, decide
+  on Inventory, cut-over date. NO adjustments until then.
