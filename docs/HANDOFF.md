@@ -358,3 +358,31 @@ Ian's screenshot: "Hermans Panel Beaters" and "R 1 329,40" near-black on the dar
   back to #c0392b/#2f855a, ~3:1 on dark) replaced by `--red`/`--green` (Zoho status lines,
   Add customer messages).
 - Not swept: the Settings screen (st-*) and the Tauri desktop app.
+
+## 23 Oct (midday) — Phase 2 closed out (0064, PWA v28, live)
+- **Decline, tested live** (RQ-TEST-2610230854, Test Account): Send quote → QT draft from CTP
+  lines → (test plays accounts) sent → the CUSTOMER declined via the real `respond_to_quote`
+  → status read-back declined it in Zoho (QT-000005 declined) → CTP "cancelled / QT-000005
+  declined", notes old → new. Completed/cancelled cards now show "Estimate QT-… · <status>".
+- **Admin "Create new estimate"** (phone, admin, only when the estimate is deleted/voided):
+  zoho-push `{action:"estimate_recreate"}` re-checks Zoho (refuses if it still exists, and
+  refreshes CTP), links a LIVE estimate with the same RQ reference instead of making a second
+  one (`findLiveEstimate` scans all matches — `findByReference` stops at the first, which could
+  be the voided one), then `reset_zoho_estimate()` (0064, server-only: quote + deleted/void
+  only; old number kept in the notes) and a fresh draft from the current CTP lines, logged.
+  Live: QT-000004 deleted in Zoho → CTP flagged → new QT-000005 → second attempt 409.
+  Voided estimates now behave like deleted ones (lock released, customer "being finalised",
+  staff told an admin can create a new one).
+- `zoho-auth {action:"test_estimate", estimate_id, op: sent|delete|get}` plays accounts in
+  live tests, refuses any estimate whose reference is not `RQ-TEST-…`.
+- Test docs deleted: QT-000004, QT-000005 (gaps in Zoho numbering); CTP test orders 46, 47
+  soft-deleted (46 was a first run that failed before reaching Zoho — the sync token is read
+  from `vault.decrypted_secrets`, not `zoho_secret_get`).
+- **Desktop (Tauri)**: it does not sync sales orders at all — local SQLite, no sign-in
+  (`AUTH_ENABLED=false`), pull-only for parts/stock; it has no price-edit command (tier price
+  at add). So it cannot show estimate numbers/statuses or a Zoho fulfil gate. Done instead:
+  SalesView `QUOTES_IN_ZOHO` — notice "Quotes are Zoho estimates … edit prices in Zoho (QT-…)",
+  "+ New quote", line/qty edits, Confirm and Fulfil locked; history readable/printable. NOT
+  SHIPPED: this laptop has no Rust toolchain; it ships with the next `tauri build` (desktop PC).
+- Tests: 0064 15/15, 0063 24/24, 0062 17/17; deno check 71 (baseline); tsc + build clean.
+  Deployed: 0064 (dry run first), zoho-push / zoho-auth / accept-quote, PWA SW v28.

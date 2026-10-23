@@ -27,6 +27,10 @@
 //   { "action": "so_sync", "order_id": 43 }     one order's sales order + its customer's terms, now
 //   { "action": "estimate", "order_id": 43 }    Phase 2 (0062/0063): the quote's DRAFT Zoho estimate,
 //                          created ONCE, then only read back (Zoho leads); skipped unless estimates_enabled
+//   { "action": "estimate_recreate", "order_id": 43, "note"? }   ADMIN (0064): the quote's estimate was
+//                          deleted/voided in Zoho → confirm that in Zoho, retire the link, new draft from
+//                          the current CTP lines. Links a live estimate with the same reference instead
+//                          of making a second one.
 //   { "action": "test" }   manager/admin: create a clearly marked TEST draft
 //                          invoice + bill against TEST contacts, read them back,
 //                          then delete all four; returns what was created.
@@ -38,7 +42,8 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient, type SupabaseClient } from "jsr:@supabase/supabase-js@2";
 
 import { env, zohoInit, zohoMissing, Blocked, zoho, rands, jhbDate, findByReference, resolveContact, itemIds, taxIdFor,
-         rebateDiscount, linkToSalesOrder, salesOrderFor, deleteSalesOrder, estimateFor, estimatePayload, type Logger } from "../_shared/zoho.ts";
+         rebateDiscount, linkToSalesOrder, salesOrderFor, deleteSalesOrder, estimateFor, estimatePayload, findLiveEstimate,
+         type Logger } from "../_shared/zoho.ts";
 
 
 const CORS = {
@@ -538,13 +543,13 @@ async function liveTest(db: SupabaseClient, cfg: any, log: Logger) {
 // ── entry ────────────────────────────────────────────────────────────────────
 async function authorise(req: Request, db: SupabaseClient) {
   const syncToken = env("ZOHO_SYNC_TOKEN");
-  if (syncToken && req.headers.get("x-sync-token") === syncToken) return { ok: true, actor: null as string | null, manager: false };
+  if (syncToken && req.headers.get("x-sync-token") === syncToken) return { ok: true, actor: null as string | null, manager: false, admin: false };
   const jwt = (req.headers.get("Authorization") ?? "").replace(/^Bearer\s+/i, "");
   const { data } = jwt ? await db.auth.getUser(jwt) : { data: null };
-  if (!data?.user) return { ok: false, actor: null, manager: false };
+  if (!data?.user) return { ok: false, actor: null, manager: false, admin: false };
   const { data: me } = await db.from("app_user").select("role").eq("id", data.user.id).maybeSingle();
   const staff = ["sales", "warehouse", "manager", "admin"].includes(me?.role ?? "");
-  return { ok: staff, actor: data.user.id, manager: me?.role === "manager" || me?.role === "admin" };
+  return { ok: staff, actor: data.user.id, manager: me?.role === "manager" || me?.role === "admin", admin: me?.role === "admin" };
 }
 
 Deno.serve(async (req: Request) => {
@@ -562,7 +567,7 @@ Deno.serve(async (req: Request) => {
   // invoice issued before go-live does not report a failure that isn't one.
   // (Status read-back is allowed while sending is off: documents already in
   // Zoho still change status there.)
-  if (body.action !== "test" && body.action !== "status" && body.action !== "so_sync" && (!cfg?.push_enabled || !cfg?.push_from)) {
+  if (!["test", "status", "so_sync"].includes(body.action) && (!cfg?.push_enabled || !cfg?.push_from)) {
     return json({ ok: true, skipped: "Sending to Zoho is off (Settings → Zoho). Nothing was sent." });
   }
   await zohoInit(db);
@@ -592,6 +597,45 @@ Deno.serve(async (req: Request) => {
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         await log({ doc_type: "estimate", ctp_id: id, action: e instanceof Blocked ? "blocked" : "error", ok: false, message: msg });
+        await db.from("sales_order").update({ zoho_estimate_error: msg }).eq("id", id);
+        return json({ ok: false, error: msg }, e instanceof Blocked ? 409 : 502);
+      }
+    }
+    if (body.action === "estimate_recreate") {
+      // admin only; the server's own sync token is trusted like the live test (actor null)
+      if (who.actor && !who.admin) return json({ error: "Only an admin can create a new estimate." }, 403);
+      const id = Number(body.order_id);
+      if (!Number.isInteger(id) || id <= 0) return json({ error: "order_id is required" }, 400);
+      if (!cfg?.estimates_enabled) return json({ error: "Quotes are not Zoho estimates (switch is off)." }, 409);
+      const { data: o } = await db.from("sales_order").select("id, number, status, zoho_estimate_id, zoho_estimate_number, zoho_estimate_status")
+        .eq("id", id).is("deleted_at", null).maybeSingle();
+      if (!o) return json({ error: "No such order" }, 404);
+      if (o.status !== "quote" || !o.zoho_estimate_id) return json({ error: `${o.number} has no estimate to replace.` }, 409);
+      // 1. Zoho must agree the old one is gone (deleted) or void — never trust a stale cache
+      let zst = "deleted";
+      try { zst = String((await zoho("GET", `/estimates/${o.zoho_estimate_id}`)).estimate?.status ?? "deleted"); }
+      catch (e) { if (!/\(404|does not exist|not found/i.test(e instanceof Error ? e.message : String(e))) throw e; }
+      if (!["deleted", "void"].includes(zst)) {
+        await db.rpc("apply_zoho_estimate", { p_order_id: id, p_est: { estimate_id: o.zoho_estimate_id, status: zst } });
+        return json({ error: `Zoho estimate ${o.zoho_estimate_number} still exists in Zoho (${zst}) — no new estimate.` }, 409);
+      }
+      if (o.zoho_estimate_status !== zst) await db.rpc("apply_zoho_estimate", { p_order_id: id, p_est: { estimate_id: o.zoho_estimate_id, status: zst } });
+      // 2. a live estimate already carrying this RQ no. is linked, not doubled
+      const live = await findLiveEstimate(o.number, o.zoho_estimate_id);
+      const { error: rsErr } = await db.rpc("reset_zoho_estimate", { p_order_id: id, p_actor: who.actor, p_reason: String(body.note ?? "") });
+      if (rsErr) return json({ error: rsErr.message }, 409);
+      // 3. the new draft from the current CTP lines (estimateFor links `live` if there is one)
+      try {
+        const est = await estimateFor(db, cfg, id, log);
+        const { data: ap, error: apErr } = await db.rpc("apply_zoho_estimate", { p_order_id: id, p_est: estimatePayload(est.estimate) });
+        if (apErr) throw new Error(`Estimate ${est.estimate_number} is in Zoho, but linking it failed: ${apErr.message}`);
+        await log({ doc_type: "estimate", ctp_id: id, ctp_ref: o.number, action: live ? "found_existing" : "create", ok: true, zoho_id: est.estimate_id,
+                    message: `${o.number}: estimate ${o.zoho_estimate_number} was ${zst} in Zoho → ${live ? "linked existing" : "new draft"} ${est.estimate_number} (admin recovery)` });
+        const { estimate: _e, ...ref } = est;
+        return json({ ok: true, replaced: o.zoho_estimate_number, was: zst, linked_existing: !!live, ...ref, changes: ap?.changes ?? [] });
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        await log({ doc_type: "estimate", ctp_id: id, ctp_ref: o.number, action: e instanceof Blocked ? "blocked" : "error", ok: false, message: msg });
         await db.from("sales_order").update({ zoho_estimate_error: msg }).eq("id", id);
         return json({ ok: false, error: msg }, e instanceof Blocked ? 409 : 502);
       }

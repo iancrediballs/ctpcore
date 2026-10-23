@@ -72,6 +72,23 @@ export async function syncEstimate(orderId: number): Promise<{ ok: boolean; skip
   }
 }
 
+/** 0064: ADMIN — the quote's estimate was deleted/voided in Zoho; Zoho is
+ *  re-checked, the old link retired and a fresh draft made from the current
+ *  CTP lines (or a live one with the same reference linked). Never throws. */
+export async function recreateEstimate(orderId: number): Promise<{ ok: boolean; message?: string; number?: string; linked?: boolean }> {
+  try {
+    const { data, error } = await supabase.functions.invoke("zoho-push", { body: { action: "estimate_recreate", order_id: orderId } });
+    let d = data as { ok?: boolean; error?: string; estimate_number?: string; linked_existing?: boolean } | null;
+    if (error) {
+      try { d = await (error as { context?: Response }).context?.json(); } catch { /* keep */ }
+      if (!d) return { ok: false, message: error.message };
+    }
+    return { ok: d?.ok === true, message: d?.error, number: d?.estimate_number, linked: d?.linked_existing };
+  } catch (e) {
+    return { ok: false, message: e instanceof Error ? e.message : String(e) };
+  }
+}
+
 /** 0059: admin releases an order for fulfilment before accounts have sent the
  *  Zoho sales order. The note is required and goes on the order. */
 export async function overrideFulfilGate(orderId: number, note: string): Promise<void> {

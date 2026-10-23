@@ -332,6 +332,20 @@ async function quoteDoc(db: SupabaseClient, cfg: any, orderId: number, log: Logg
 
 const gone = (e: unknown) => /\(404|does not exist|not found/i.test(e instanceof Error ? e.message : String(e));
 
+/** A LIVE estimate carrying this reference (not void/declined/expired), other
+ *  than `exceptId`. Scans every match: findByReference stops at the first row,
+ *  which could be the voided one and hide a live duplicate. */
+// deno-lint-ignore no-explicit-any
+export async function findLiveEstimate(ref: string, exceptId?: string | null): Promise<any | null> {
+  for (const q of [{ reference_number: ref }, { search_text: ref }] as Record<string, string>[]) {
+    const rows = ((await zoho("GET", "/estimates", { ...q, per_page: "200" })).estimates ?? []) as Record<string, unknown>[];
+    const hit = rows.find((r) => String(r.reference_number ?? "") === ref && String(r.estimate_id) !== String(exceptId ?? "")
+      && !["void", "declined", "expired"].includes(String(r.status)));
+    if (hit) return hit;
+  }
+  return null;
+}
+
 /** What the read-back hands apply_zoho_estimate (0063): Zoho's estimate as CTP stores it. */
 // deno-lint-ignore no-explicit-any
 export const estimatePayload = (e: any) => ({
@@ -366,8 +380,8 @@ export async function estimateFor(db: SupabaseClient, cfg: any, orderId: number,
     }
   }
   if (cur.status !== "quote") throw new Blocked(`${cur.number} is ${cur.status}, not a quote`);
-  const hit = await findByReference("estimates", cur.number);
-  if (hit && !["void", "declined", "expired"].includes(String(hit.status))) {
+  const hit = await findLiveEstimate(cur.number);
+  if (hit) {
     const e = (await zoho("GET", `/estimates/${hit.estimate_id}`)).estimate;
     await log({ doc_type: "estimate", ctp_id: orderId, ctp_ref: cur.number, action: "found_existing", ok: true, zoho_id: String(e.estimate_id),
                 message: `${cur.number} → existing Zoho estimate ${e.estimate_number} (${e.status})` });

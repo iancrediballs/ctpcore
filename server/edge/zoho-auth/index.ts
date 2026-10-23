@@ -234,6 +234,23 @@ Deno.serve(async (req: Request) => {
       && !String(out.removed_salesorders ?? "").startsWith("FAILED") && !String(out.removed_estimates ?? "").startsWith("FAILED"), ...out });
   }
 
+  // 23 Oct: live-test helper — plays ACCOUNTS on a TEST estimate (mark sent / delete / read).
+  // Refuses any estimate whose reference is not a CTP test order (RQ-TEST-…).
+  if (body.action === "test_estimate") {
+    await zohoInit(db);
+    const id = String(body.estimate_id ?? "");
+    if (!/^\d+$/.test(id) || !["sent", "delete", "get"].includes(body.op)) return json({ ok: false, error: "estimate_id/op" }, 400);
+    // deno-lint-ignore no-explicit-any
+    let e: any;
+    try { e = (await zoho("GET", `/estimates/${id}`)).estimate; }
+    catch (err) { return json({ ok: true, status: "deleted", note: err instanceof Error ? err.message : String(err) }); }
+    if (!String(e.reference_number ?? "").startsWith("RQ-TEST-")) return json({ ok: false, error: "not a CTP test estimate" }, 403);
+    if (body.op === "sent") await zoho("POST", `/estimates/${id}/status/sent`);
+    if (body.op === "delete") { await zoho("DELETE", `/estimates/${id}`); return json({ ok: true, deleted: e.estimate_number }); }
+    const now = (await zoho("GET", `/estimates/${id}`)).estimate;
+    return json({ ok: true, number: now.estimate_number, status: now.status, reference: now.reference_number, total: now.total });
+  }
+
   if (body.action === "so_test") {
     await zohoInit(db);
     const { data: link } = await db.from("zoho_item").select("zoho_item_id, sku").eq("status", "active").not("part_id", "is", null).limit(1).single();

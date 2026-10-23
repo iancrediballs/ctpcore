@@ -4,6 +4,24 @@ import { money, stockClass, type Hit } from "./App";
 import { buildDocHTML, openPrintWindow, type DocCompany } from "./invoiceDoc";
 import AddCustomer from "./admin/AddCustomer";
 
+// 23 Oct 2026 (Ian): quotes are Zoho ESTIMATES and Zoho leads their content.
+// This desktop screen works on the PC's own SQLite: its orders never reach
+// Supabase, Zoho or the customer, so it cannot know estimate numbers or
+// statuses. Until it is rebuilt on the cloud data, quoting and stock-out here
+// are locked; history stays readable and printable.
+const QUOTES_IN_ZOHO = true;
+function ZohoNotice() {
+  return (
+    <div className="msg" style={{ margin: "8px 0 12px" }}>
+      <b>Quotes are Zoho estimates now.</b> Raise and price quotes in the phone/browser app
+      (ctpcore.vercel.app) — "Send quote" creates the estimate (QT-…) in Zoho, and prices are
+      edited in Zoho (Edit prices in Zoho, QT-…). Accounts send it from Zoho; the customer accepts
+      in the app; fulfil there once Zoho shows the invoice. Orders on this PC are local only and
+      never reach Zoho or the customer, so new quotes, line edits and stock-out are locked here.
+    </div>
+  );
+}
+
 type Customer = { id: number; code: string; name: string; contact: string | null; phone: string | null; price_tier: string };
 type Loc = { id: number; code: string; name: string };
 type OrderSummary = { id: number; number: string; customer_name: string; status: string; line_count: number; subtotal_minor: number; created_at: string };
@@ -42,8 +60,10 @@ export default function SalesView() {
       <div className="salesbar">
         <span className="tag">// sales &amp; quotes</span>
         <span className="spacer" />
-        <button className="post sm" onClick={() => setCreating(true)}>+ New quote</button>
+        <button className="post sm" disabled={QUOTES_IN_ZOHO} title={QUOTES_IN_ZOHO ? "Quotes are raised in the phone/browser app as Zoho estimates" : undefined}
+          onClick={() => setCreating(true)}>+ New quote</button>
       </div>
+      {QUOTES_IN_ZOHO && <ZohoNotice />}
 
       <div className="count">{orders.length} order{orders.length !== 1 ? "s" : ""}</div>
       {orders.map((o) => (
@@ -140,7 +160,7 @@ function OrderPanel({ order, onClose, onChange, afterMutation }: {
   onChange: (d: OrderDetail) => void;
   afterMutation: () => void;
 }) {
-  const editable = order.status === "quote" || order.status === "confirmed";
+  const editable = !QUOTES_IN_ZOHO && (order.status === "quote" || order.status === "confirmed");
   const [q, setQ] = useState("");
   const [hits, setHits] = useState<Hit[]>([]);
   const [msg, setMsg] = useState("");
@@ -279,10 +299,11 @@ function OrderPanel({ order, onClose, onChange, afterMutation }: {
           </div>
         </div>
 
+        {QUOTES_IN_ZOHO && (order.status === "quote" || order.status === "confirmed") && <ZohoNotice />}
         {/* actions */}
         <div className="actbar">
-          {order.status === "quote" && <button className="ghost" onClick={() => setStatus("confirmed")}>Confirm</button>}
-          {order.status === "confirmed" && <button className="ghost" onClick={() => setStatus("quote")}>← Back to quote</button>}
+          {!QUOTES_IN_ZOHO && order.status === "quote" && <button className="ghost" onClick={() => setStatus("confirmed")}>Confirm</button>}
+          {!QUOTES_IN_ZOHO && order.status === "confirmed" && <button className="ghost" onClick={() => setStatus("quote")}>← Back to quote</button>}
           {(order.status === "quote" || order.status === "confirmed") && (
             <button className="ghost danger" onClick={() => setStatus("cancelled")}>Cancel</button>
           )}

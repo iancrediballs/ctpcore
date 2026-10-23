@@ -16,7 +16,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useStatus } from "@powersync/react";
 import * as api from "../data/api";
-import { refreshZohoStatus, zohoStatusLabel, syncSalesOrder, syncEstimate, overrideFulfilGate, fulfilBlockReason, setCustomerOnAccount } from "../data/zoho";
+import { refreshZohoStatus, zohoStatusLabel, syncSalesOrder, syncEstimate, recreateEstimate, overrideFulfilGate, fulfilBlockReason, setCustomerOnAccount } from "../data/zoho";
 import AddCustomer from "../admin/AddCustomer";
 import { assetUrl, photoWebUrl } from "../assets";
 import { DiagramCanvas, Marker, loadMarkerScale, saveMarkerScale, markerRadius, MARKER_SCALE_MIN, MARKER_SCALE_MAX, type CanvasApi, type Frame, type Pt } from "./DiagramCanvas";
@@ -1886,7 +1886,18 @@ const parseRand = (s: string): number => {
                                 {o.zoho_estimate_error && <div style={{ color: "var(--amber)" }}>{o.zoho_estimate_error}</div>}
                               </span>
                             </div>
-                            {o.zoho_estimate_id && !["deleted", "declined", "expired"].includes(o.zoho_estimate_status ?? "") && (
+                            {o.zoho_estimate_id && ["deleted", "void"].includes(o.zoho_estimate_status ?? "") && role === "admin" && (
+                              <div className="mb-row">
+                                <button className="mb-btn s" style={{ height: 46 }} disabled={savingOrder}
+                                  onClick={() => { setSavingOrder(true); void recreateEstimate(o.id).then((r) => {
+                                    setSavingOrder(false);
+                                    showToast(r.ok ? { text: r.linked ? `Linked the live Zoho estimate ${r.number ?? ""} (no duplicate made).` : `New draft estimate ${r.number ?? ""} created in Zoho — accounts send it from Zoho.` }
+                                      : { text: r.message ?? "Could not create a new estimate.", err: true });
+                                    loadOrders();
+                                  }); }}>Create new estimate (admin)</button>
+                              </div>
+                            )}
+                            {o.zoho_estimate_id && !["deleted", "void", "declined", "expired"].includes(o.zoho_estimate_status ?? "") && (
                               <div className="mb-row">
                                 <span className="mb-rk">Prices</span>
                                 <span className="mb-rv">Edit prices in Zoho ({o.zoho_estimate_number}) — CTP follows Zoho. <button className="mb-chip" disabled={syncingSo === o.id}
@@ -2076,6 +2087,12 @@ const parseRand = (s: string): number => {
                         {o.zoho_so_error && (
                           <div className="mb-csku" style={{ color: "var(--red)", padding: "6px 0" }}>
                             ✕ Zoho sales order: {o.zoho_so_error}
+                          </div>
+                        )}
+                        {o.zoho_estimate_number && (
+                          <div className="mb-row">
+                            <span className="mb-rk">Estimate</span>
+                            <span className="mb-rv"><b className="mb-mono">{o.zoho_estimate_number}</b> · {o.zoho_estimate_status ?? "—"} in Zoho</span>
                           </div>
                         )}
                         {o.notes && (
