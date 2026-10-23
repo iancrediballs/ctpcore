@@ -4,7 +4,11 @@
 // estimates_enabled) and this quote has one, accepting marks the ESTIMATE
 // accepted and raises the confirmed sales order from the estimate's lines
 // (salesOrderFromEstimate). Without an estimate: the 20 Oct path, unchanged.
-// A failed acceptance deletes the new SO and puts the estimate back to sent.
+// 0063 (Ian, 23 Oct): accept only once accounts have SENT the estimate (the app
+// never marks it sent); with estimates on, a quote without one cannot be
+// accepted. Zoho converts only ACCEPTED estimates, so the estimate is accepted,
+// then the linked SO raised; if CTP's transaction fails the SO is deleted and
+// the estimate stays accepted (logged; a retry links normally).
 //
 // 2026-10-22 (0058): { order_id, on_behalf_note } lets an ADMIN accept for the
 // customer (confirmed by phone/email). Same Zoho SO + stock hold; the admin and
@@ -43,7 +47,7 @@
 // a hold without a document would be a real one.
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
-import { zohoInit, zohoMissing, salesOrderFor, salesOrderFromEstimate, reopenEstimate, deleteSalesOrder, Blocked, type Logger } from "../_shared/zoho.ts";
+import { zohoInit, zohoMissing, salesOrderFor, salesOrderFromEstimate, markEstimateAccepted, deleteSalesOrder, Blocked, type Logger } from "../_shared/zoho.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -120,7 +124,11 @@ Deno.serve(async (req: Request) => {
 
   let so: { salesorder_id: string; salesorder_number: string; status: string; created: boolean; warning?: string } | null = null;
   // 0062: accept through the quote's Zoho estimate when there is one
-  const viaEstimate = !!(cfg?.estimates_enabled && o.zoho_estimate_id && o.zoho_estimate_status !== "deleted");
+  const viaEstimate = !!(live && cfg?.estimates_enabled);
+  if (viaEstimate && (!o.zoho_estimate_id || o.zoho_estimate_status === "deleted")) {
+    const m = "Your quote is being finalised by our accounts team.";
+    return json({ error: m, blockers: [{ kind: "estimate", message: m }], message: m }, 409);
+  }
   let est: { status: string; number: string } | null = null;
   if (live) {
     await zohoInit(db);
@@ -138,7 +146,6 @@ Deno.serve(async (req: Request) => {
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       await log({ doc_type: "salesorder", ctp_id: orderId, ctp_ref: o.number, action: e instanceof Blocked ? "blocked" : "error", ok: false, message: msg });
-      if (viaEstimate) await reopenEstimate(o.zoho_estimate_id!);   // the estimate may already be accepted
       await db.from("sales_order").update({ zoho_so_error: msg }).eq("id", orderId);
       return json({ error: `We could not raise the sales order in our accounts system, so nothing was accepted or reserved. Please try again in a minute; if it keeps failing, call us. (${msg})` }, 502);
     }
@@ -156,7 +163,10 @@ Deno.serve(async (req: Request) => {
       });
   if (accErr) {
     // ── 5. compensate: a sales order we just created is removed again ──
-    if (est && o.zoho_estimate_id) await reopenEstimate(o.zoho_estimate_id);
+    if (est && o.zoho_estimate_id) {
+      await log({ doc_type: "estimate", ctp_id: orderId, ctp_ref: o.number, action: "error", ok: false, zoho_id: o.zoho_estimate_id,
+                  message: `${o.number}: acceptance failed in CTP (${accErr.message}); Zoho estimate ${est.number} stays ACCEPTED — the customer can retry, or ask accounts.` });
+    }
     if (so?.created) {
       try {
         await deleteSalesOrder(so.salesorder_id);
@@ -168,6 +178,14 @@ Deno.serve(async (req: Request) => {
       }
     }
     return json({ error: `Nothing was accepted or reserved: ${accErr.message.replace(/^[A-Z0-9]+: /, "")}` }, 409);
+  }
+  // 0063: the CTP side is committed — now the estimate → accepted in Zoho
+  if (est && o.zoho_estimate_id) {
+    try { est.status = await markEstimateAccepted(o.zoho_estimate_id); }
+    catch (e) {
+      await log({ doc_type: "estimate", ctp_id: orderId, ctp_ref: o.number, action: "error", ok: false, zoho_id: o.zoho_estimate_id,
+                  message: `Accepted in CTP (${so?.salesorder_number}) but Zoho would not mark estimate ${est.number} accepted: ${e instanceof Error ? e.message : String(e)}` });
+    }
   }
   // Zoho's own status (open = confirmed, since 21 Oct) over accept_quote's default
   if (so) {

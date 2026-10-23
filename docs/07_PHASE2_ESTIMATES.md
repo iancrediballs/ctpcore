@@ -45,3 +45,10 @@ Built dark and live with the switch OFF (0062, zoho-push, accept-quote, zoho-aut
   On customer accept the app marks it sent (no email) then accepted.
 - `POST /salesorders` takes `estimate_id` and Zoho links the SO to the estimate;
   the estimate stays `accepted` (not `invoiced`) after the SO.
+
+## Switched on (23 Oct 2026, 0063)
+Ian's rules: the app never marks estimates sent; Zoho leads the content. Accept
+is blocked until accounts send the estimate; CTP's quote lines are locked to the
+estimate and follow it on read-back; on accept the estimate is accepted (Zoho
+converts only accepted estimates) and the linked SO is raised from its lines.
+See HANDOFF 23 Oct (late morning).

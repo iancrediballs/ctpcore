@@ -159,9 +159,12 @@ export type DropLineResult = {
 export const quoteDropLine = (lineId: number) =>
   call<DropLineResult>("quote_drop_line", { lineId });
 /** Why a quote cannot be accepted yet (0047): blockers by name, or ok. */
-export type AcceptBlocker = { kind: string; message: string; sku?: string; name?: string };
+export type AcceptBlocker = { kind: string; message: string; staff_message?: string; sku?: string; name?: string };
+/** 0063: Zoho's own figures for a quote that is a Zoho estimate (Zoho leads). */
+export type EstimateInfo = { number: string | null; status: string | null; total_minor: number | null; expiry: string | null;
+  lines: { part_id: number; discount_pct: number | null; net_minor: number }[] };
 export const quoteAcceptCheck = (orderId: number) =>
-  call<{ ok: boolean; blockers: AcceptBlocker[] }>("quote_accept_check", { orderId });
+  call<{ ok: boolean; blockers: AcceptBlocker[]; estimate?: EstimateInfo | null }>("quote_accept_check", { orderId });
 /** Accept a quote: raises the sales order in Zoho Books AND reserves the stock,
  *  both or neither (the accept-quote edge function, 0047). */
 export type AcceptResult = { ok: true; already: boolean; number: string; zoho_salesorder_number: string; reserved_lines: number };

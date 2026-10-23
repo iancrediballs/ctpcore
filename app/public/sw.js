@@ -42,7 +42,8 @@
 //   non-http(s) scheme. So the guard WAS the whole bug on that count. It is
 //   still wrapped in a catch below, because quota exhaustion is real and an
 //   image that fails to cache must still be shown.
-const CACHE = "ctp-core-v25";   // v25: Phase 2 groundwork — quote card shows its Zoho estimate; Send quote asks for the draft estimate (server skips until 0062 switch is on) (2026-10-23)
+const CACHE = "ctp-core-v26";   // v26: quotes as Zoho estimates, Zoho leads — lines locked to the estimate, accept only after accounts send it, Zoho figures for the customer, Settings toggle (0063) (2026-10-23)
+// v25:   // v25: Phase 2 groundwork — quote card shows its Zoho estimate; Send quote asks for the draft estimate (server skips until 0062 switch is on) (2026-10-23)
 // v24:   // v24: header basket with a live quantity badge (persists on the device); order desk search + filters (2026-10-23)
 // v22: fulfil waits for accounts (Zoho SO sent), Michelle's SO edits read back, account terms (0059) (2026-10-22)
 // v21: admin "Accept on customer's behalf" on the order desk (0058) (2026-10-22)

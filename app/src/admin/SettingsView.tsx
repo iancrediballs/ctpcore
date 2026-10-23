@@ -715,7 +715,7 @@ function ZohoPanel({ flash, fail }: PanelProps) {
 // accountant and must never be pushed a second time.
 
 type ZohoConfig = { push_enabled: boolean; push_from: string | null; invoice_as_draft: boolean;
-  bill_as_draft: boolean; tax_id: string | null };
+  bill_as_draft: boolean; tax_id: string | null; estimates_enabled?: boolean };
 type QueueRow = { doc_type: string; ctp_id: number; ctp_ref: string; doc_at: string; last_error: string | null };
 type PushLog = { id: number; at: string; doc_type: string; ctp_ref: string | null; action: string;
   ok: boolean; message: string | null };
@@ -733,7 +733,7 @@ function ZohoPushCard({ flash, fail }: PanelProps) {
   const [out, setOut] = useState<string | null>(null);
 
   const load = useCallback(() => {
-    supabase.from("zoho_config").select("push_enabled,push_from,invoice_as_draft,bill_as_draft,tax_id").eq("id", 1).maybeSingle()
+    supabase.from("zoho_config").select("push_enabled,push_from,invoice_as_draft,bill_as_draft,tax_id,estimates_enabled").eq("id", 1).maybeSingle()
       .then(({ data, error }) => {
         if (error) return fail(error);
         const c = data as ZohoConfig | null;
@@ -805,6 +805,24 @@ function ZohoPushCard({ flash, fail }: PanelProps) {
           <button className="st-save" onClick={() => save({})}>Save</button>
           <button className="st-save" onClick={() => save({ push_enabled: !cfg.push_enabled })}>
             {cfg.push_enabled ? "Stop sending" : "Start sending"}</button>
+        </div>
+      </div>
+
+      {/* 0062/0063: quotes as Zoho estimates (admin). */}
+      <div className="st-card">
+        <div className="st-sub">Quotes as Zoho estimates {cfg.estimates_enabled ? "· ON" : "· OFF"}</div>
+        <p className="st-note">
+          {cfg.estimates_enabled
+            ? "ON: Send quote creates a draft estimate in Zoho once. Accounts check it, edit prices there if needed, and send it from Zoho — CTP follows Zoho. The customer can accept only after it is sent; the sales order is raised from the estimate."
+            : "OFF: quotes stay in CTP, and accepting raises the Zoho sales order directly."}
+        </p>
+        <div className="st-row2">
+          <button className="st-save" disabled={busy} onClick={async () => {
+            const { error } = await supabase.rpc("set_zoho_estimates", { p_enabled: !cfg.estimates_enabled });
+            if (error) return fail(error);
+            flash(`Quotes as Zoho estimates: ${cfg.estimates_enabled ? "OFF" : "ON"}.`);
+            load();
+          }}>{cfg.estimates_enabled ? "Turn off (admin)" : "Turn on (admin)"}</button>
         </div>
       </div>
 

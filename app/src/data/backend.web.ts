@@ -750,7 +750,7 @@ async function myRequests(): Promise<unknown[]> {
   const out = [];
   for (const o of orders) {
     const lines = await all(
-      `SELECT sl.id, sl.qty, sl.unit_price_minor, p.sku, p.name, p.catalogue_pn
+      `SELECT sl.id, sl.part_id, sl.qty, sl.unit_price_minor, p.sku, p.name, p.catalogue_pn
          FROM sales_line sl LEFT JOIN part p ON p.id = sl.part_id
         WHERE sl.order_id = ? AND sl.deleted_at IS NULL
         ORDER BY CAST(sl.id AS INTEGER)`,
@@ -758,6 +758,7 @@ async function myRequests(): Promise<unknown[]> {
     );
     const mapped = lines.map((l) => ({
       id: numId(l["id"], "sales_line.id"),
+      part_id: Number(l["part_id"]),
       qty: Number(l["qty"]),
       unit_price_minor: nnum(l["unit_price_minor"]),
       sku: str(l["sku"]),
@@ -808,6 +809,7 @@ async function staffOrders(): Promise<unknown[]> {
             so.zoho_invoice_id, so.zoho_invoice_total_minor, so.zoho_invoice_balance_minor, so.zoho_invoice_paid_minor,
             so.zoho_invoice_payments, so.zoho_invoice_count,
             so.zoho_estimate_id, so.zoho_estimate_number, so.zoho_estimate_status, so.zoho_estimate_error,
+            so.zoho_estimate_total_minor, so.zoho_estimate_expiry,
             c.name AS customer_name, c.contact AS customer_contact,
             c.phone AS customer_phone, c.email AS customer_email,
             (SELECT l.code FROM location l WHERE l.id = so.location_id) AS location_code
@@ -901,6 +903,8 @@ async function staffOrders(): Promise<unknown[]> {
       zoho_estimate_number: nstr(o["zoho_estimate_number"]),
       zoho_estimate_status: nstr(o["zoho_estimate_status"]),
       zoho_estimate_error: nstr(o["zoho_estimate_error"]),
+      zoho_estimate_total_minor: o["zoho_estimate_total_minor"] == null ? null : Number(o["zoho_estimate_total_minor"]),
+      zoho_estimate_expiry: nstr(o["zoho_estimate_expiry"]),
       unpriced,
       total_minor: mapped.reduce((t, l) => t + l.unit_price_minor * l.qty, 0),
       // The queue this order sits in. Derived here so every surface agrees.

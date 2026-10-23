@@ -29,6 +29,7 @@ import { ShelfRefusedError } from "../data/errors";
 import type { WebHotspot } from "../data/api";
 import { useAuth, type Role } from "../auth/AuthProvider";
 import SettingsView from "../admin/SettingsView";
+import { supabase } from "../sync/supabase";
 import {
   applyFilter, customerKey, isFiltering, loadFilter, saveFilter, EMPTY_FILTER, RANGE_LABEL, STAGE_LABEL,
   type OrderFilter, type Range, type StageKey,
@@ -84,7 +85,7 @@ type Detail = {
 type Toast = { text: string; err?: boolean; undo?: () => void };
 
 type MyLine = {
-  id: number; qty: number; unit_price_minor: number | null;
+  id: number; part_id: number; qty: number; unit_price_minor: number | null;
   sku: string; name: string; catalogue_pn: string | null;
 };
 type StaffLine = {
@@ -115,6 +116,7 @@ type StaffOrder = {
   // 0062: the quote's Zoho estimate (Phase 2)
   zoho_estimate_id?: string | null; zoho_estimate_number?: string | null;
   zoho_estimate_status?: string | null; zoho_estimate_error?: string | null;
+  zoho_estimate_total_minor?: number | null; zoho_estimate_expiry?: string | null;
   unpriced: number; total_minor: number;
   stage: "to_price" | "with_customer" | "to_pick" | "fulfilled" | string;
   lines: StaffLine[];
@@ -772,6 +774,14 @@ export default function MobileShell() {
     refreshZohoStatus().then((r) => { if (r.changed > 0) loadOrders(); });
   }, [isClient, loadOrders]);
 
+  // 0063: are quotes Zoho estimates? (staff can read zoho_config; customers cannot)
+  const [estimatesOn, setEstimatesOn] = useState(false);
+  useEffect(() => {
+    if (isClient) return;
+    void supabase.from("zoho_config").select("estimates_enabled").eq("id", 1).maybeSingle()
+      .then(({ data }) => setEstimatesOn(!!data?.estimates_enabled));
+  }, [isClient, lastSynced]);
+
   // 0053 — the customer list for counter sales. Staff only, and read from the
   // local mirror, so it costs nothing to refresh whenever sync moves.
   useEffect(() => {
@@ -940,7 +950,9 @@ const parseRand = (s: string): number => {
    *  Michelle's prices and "sent" show before anyone fulfils. */
   const [syncingSo, setSyncingSo] = useState<number | null>(null);
   const syncOrderFromZoho = useCallback(async (o: StaffOrder, force = false) => {
-    if (!o.zoho_salesorder_id || !["to_pick", "fulfilled"].includes(o.stage)) return;
+    const soSide = !!o.zoho_salesorder_id && ["to_pick", "fulfilled"].includes(o.stage);
+    const estSide = !!o.zoho_estimate_id && o.status === "quote";   // 0063: Zoho leads the quote
+    if (!soSide && !estSide) return;
     setSyncingSo(o.id);
     const r = await syncSalesOrder(o.id, force);
     setSyncingSo(null);
@@ -1054,17 +1066,24 @@ const parseRand = (s: string): number => {
   // 0047: why a quote cannot be accepted yet, by order id — read when the
   // quote is ready so the button says so before anyone taps it.
   const [blockers, setBlockers] = useState<Record<number, api.AcceptBlocker[]>>({});
+  // 0063: a quote that is a Zoho estimate shows Zoho's figures (total, discounts, expiry)
+  const [estInfo, setEstInfo] = useState<Record<number, api.EstimateInfo>>({});
   useEffect(() => {
     if (!isClient) return;
     const ready = (mine ?? []).filter((r) => r.status === "quote" && r.priced);
     let stale = false;
     (async () => {
       const next: Record<number, api.AcceptBlocker[]> = {};
+      const est: Record<number, api.EstimateInfo> = {};
       for (const r of ready) {
-        try { const c = await api.quoteAcceptCheck(r.id); next[r.id] = c.ok ? [] : c.blockers; }
+        try {
+          const c = await api.quoteAcceptCheck(r.id);
+          next[r.id] = c.ok ? [] : c.blockers;
+          if (c.estimate) est[r.id] = c.estimate;
+        }
         catch (e) { console.error(e); }
       }
-      if (!stale) setBlockers(next);
+      if (!stale) { setBlockers(next); setEstInfo(est); }
     })();
     return () => { stale = true; };
   }, [isClient, mine]);
@@ -1846,26 +1865,60 @@ const parseRand = (s: string): number => {
                         {o.stage === "with_customer" && (
                           <div className="mb-row">
                             <span className="mb-rk">Waiting</span>
-                            <span className="mb-rv">sent {timeAgo(o.created_at)} · they see it on their phone</span>
+                            <span className="mb-rv">{(estimatesOn || o.zoho_estimate_id) && !["sent", "accepted"].includes(o.zoho_estimate_status ?? "")
+                              ? "on accounts — the customer sees the quote but cannot accept until the estimate is sent"
+                              : `sent ${timeAgo(o.created_at)} · they see it on their phone`}</span>
                           </div>
                         )}
-                        {(o.zoho_estimate_number || o.zoho_estimate_error) && (
-                          <div className="mb-row">
-                            <span className="mb-rk">Estimate</span>
-                            <span className="mb-rv">
-                              {o.zoho_estimate_number && <><b className="mb-mono">{o.zoho_estimate_number}</b> in Zoho · {o.zoho_estimate_status === "draft" ? "draft — accounts send it from Zoho" : o.zoho_estimate_status}</>}
-                              {o.zoho_estimate_error && <div style={{ color: "var(--amber)" }}>{o.zoho_estimate_error}</div>}
-                            </span>
-                          </div>
+                        {o.status === "quote" && (o.zoho_estimate_id || (estimatesOn && o.stage === "with_customer")) && (
+                          <>
+                            <div className="mb-row">
+                              <span className="mb-rk">Zoho</span>
+                              <span className="mb-rv">
+                                {!o.zoho_estimate_id
+                                  ? <span style={{ color: "var(--amber)" }}>No Zoho estimate yet — the customer cannot accept until one is sent.</span>
+                                  : o.zoho_estimate_status === "draft"
+                                    ? <span style={{ color: "var(--amber)" }}>Waiting for accounts to send estimate <b className="mb-mono">{o.zoho_estimate_number}</b> from Zoho.</span>
+                                    : o.zoho_estimate_status === "sent" || o.zoho_estimate_status === "accepted"
+                                      ? <span style={{ color: "var(--green)" }}>Estimate <b className="mb-mono">{o.zoho_estimate_number}</b> sent by accounts — the customer can accept.</span>
+                                      : <span style={{ color: "var(--amber)" }}>Estimate <b className="mb-mono">{o.zoho_estimate_number}</b> is {o.zoho_estimate_status} in Zoho.</span>}
+                                {o.zoho_estimate_total_minor != null && <div className="mb-csku">Zoho total {fmtR(o.zoho_estimate_total_minor)} incl VAT{o.zoho_estimate_expiry ? ` · valid until ${String(o.zoho_estimate_expiry).slice(0, 10)}` : ""}</div>}
+                                {o.zoho_estimate_error && <div style={{ color: "var(--amber)" }}>{o.zoho_estimate_error}</div>}
+                              </span>
+                            </div>
+                            {o.zoho_estimate_id && !["deleted", "declined", "expired"].includes(o.zoho_estimate_status ?? "") && (
+                              <div className="mb-row">
+                                <span className="mb-rk">Prices</span>
+                                <span className="mb-rv">Edit prices in Zoho ({o.zoho_estimate_number}) — CTP follows Zoho. <button className="mb-chip" disabled={syncingSo === o.id}
+                                  onClick={() => { void syncOrderFromZoho(o, true); }}>{syncingSo === o.id ? "Reading…" : "Refresh from Zoho"}</button></span>
+                              </div>
+                            )}
+                            {!o.zoho_estimate_id && estimatesOn && (
+                              <div className="mb-row">
+                                <button className="mb-btn s" style={{ height: 46 }} disabled={savingOrder}
+                                  onClick={() => { setSavingOrder(true); void syncEstimate(o.id).then((r) => {
+                                    setSavingOrder(false);
+                                    showToast(r.ok && !r.skipped ? { text: `Estimate ${r.number ?? ""} created in Zoho as a draft — accounts send it from Zoho.` }
+                                      : { text: r.skipped ?? `Could not create the Zoho estimate: ${r.message ?? "unknown error"}`, err: !r.skipped });
+                                    loadOrders();
+                                  }); }}>Create estimate in Zoho</button>
+                              </div>
+                            )}
+                          </>
                         )}
-                        {o.stage === "with_customer" && role === "admin" && (
-                          <div className="mb-row">
-                            <button className="mb-btn s" style={{ height: 46 }} disabled={savingOrder}
-                              onClick={() => { void acceptOnBehalf(o); }}>
-                              Accept on customer's behalf
-                            </button>
-                          </div>
-                        )}
+                        {o.stage === "with_customer" && role === "admin" && (() => {
+                          // 0063: only once accounts have SENT the Zoho estimate
+                          const notYet = (estimatesOn || !!o.zoho_estimate_id) && !(o.zoho_estimate_id && ["sent", "accepted"].includes(o.zoho_estimate_status ?? ""));
+                          return (
+                            <div className="mb-row">
+                              <button className="mb-btn s" style={{ height: 46 }} disabled={savingOrder || notYet}
+                                title={notYet ? `Waiting for accounts to send estimate ${o.zoho_estimate_number ?? ""} from Zoho` : undefined}
+                                onClick={() => { void acceptOnBehalf(o); }}>
+                                {notYet ? `Accept on customer's behalf — waiting for accounts to send ${o.zoho_estimate_number ?? "the estimate"}` : "Accept on customer's behalf"}
+                              </button>
+                            </div>
+                          );
+                        })()}
                         {o.stage !== "to_price" && (
                           <div className="mb-row">
                             <button className="mb-btn s" style={{ height: 46 }} onClick={() => { void printOrder(o); }}>
@@ -2178,14 +2231,22 @@ const parseRand = (s: string): number => {
                         <div className="mb-cname">{l.qty} × {l.name}</div>
                         <div className="mb-csku mb-mono">{l.sku}</div>
                       </span>
-                      {/* Only ever their OWN quoted price — never the price list */}
-                      {(l.unit_price_minor ?? 0) > 0 && (
-                        <span className="mb-rv">{fmtR((l.unit_price_minor ?? 0) * l.qty)}</span>
-                      )}
+                      {/* Only ever their OWN quoted price — never the price list.
+                          0063: a Zoho estimate's line shows Zoho's discount and net. */}
+                      {(l.unit_price_minor ?? 0) > 0 && (() => {
+                        const z = estInfo[r.id]?.lines.find((x) => x.part_id === l.part_id);
+                        const pct = Number(z?.discount_pct ?? 0);
+                        return (
+                          <span className="mb-rv">
+                            {fmtR(z ? z.net_minor : (l.unit_price_minor ?? 0) * l.qty)}
+                            {pct > 0 && <div className="mb-csku">less {Math.round(pct * 100) / 100}%</div>}
+                          </span>
+                        );
+                      })()}
                       {/* Ian, 2026-09-25: let them drop what they do not want
                           before accepting. Disabled on the last remaining line
                           — that is what Decline is for. */}
-                      {r.status === "quote" && (
+                      {r.status === "quote" && !estInfo[r.id] && (
                         <button className="mb-lx" aria-label={`Remove ${l.name} from this quote`}
                           title={canDrop ? `Remove ${l.name}` : "The last item cannot be removed — use Decline to turn the whole quote down"}
                           disabled={!canDrop || droppingLine === l.id || answering === r.id}
@@ -2193,10 +2254,19 @@ const parseRand = (s: string): number => {
                       )}
                     </div>
                   ))}
-                  {priced && (
+                  {priced && !(estInfo[r.id]?.total_minor) && (
                     <div className="mb-row">
                       <span className="mb-rk">Total</span>
                       <span className="mb-rv"><b>{fmtR(total)}</b> excl VAT</span>
+                    </div>
+                  )}
+                  {priced && estInfo[r.id]?.total_minor != null && (
+                    <div className="mb-row">
+                      <span className="mb-rk">Total</span>
+                      <span className="mb-rv">
+                        <b>{fmtR(estInfo[r.id].total_minor)}</b> incl VAT
+                        <div className="mb-csku">Quote {estInfo[r.id].number}{estInfo[r.id].expiry ? ` · valid until ${String(estInfo[r.id].expiry).slice(0, 10)}` : ""}</div>
+                      </span>
                     </div>
                   )}
                   {/* No "n items removed" banner: r.lines stops carrying a
@@ -2211,7 +2281,9 @@ const parseRand = (s: string): number => {
                   )}
                   {awaiting && (blockers[r.id]?.length ?? 0) > 0 && (
                     <div className="mb-note" style={{ margin: "6px 0 0" }}>
-                      <b>Not quite ready to accept:</b> {blockers[r.id].map((b) => b.message).join(" ")}
+                      {blockers[r.id].every((b) => b.kind === "estimate")
+                        ? blockers[r.id].map((b) => b.message).join(" ")
+                        : <><b>Not quite ready to accept:</b> {blockers[r.id].map((b) => b.message).join(" ")}</>}
                     </div>
                   )}
                   {awaiting && (

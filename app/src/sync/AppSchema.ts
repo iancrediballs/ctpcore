@@ -111,6 +111,9 @@ const sales_order = new Table({
   // 0062 (Phase 2): the quote's Zoho estimate
   zoho_estimate_id: column.text, zoho_estimate_number: column.text, zoho_estimate_status: column.text,
   zoho_estimate_status_at: column.text, zoho_estimate_error: column.text, zoho_estimate_modified_at: column.text,
+  // 0063: Zoho leads the quote — its total, expiry, emailed flag
+  zoho_estimate_total_minor: column.integer, zoho_estimate_expiry: column.text, zoho_estimate_emailed: column.integer,
+  zoho_estimate_synced_at: column.text,
 }, { indexes: { customer: ["customer_id"], status: ["status"] } });
 
 const sales_line = new Table({

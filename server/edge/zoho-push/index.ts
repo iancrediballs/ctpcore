@@ -25,8 +25,8 @@
 //   { "action": "status", "force"?: true }      read Zoho status back (draft/sent/paid/void);
 //                          sales orders also bring Michelle's edits back (0059)
 //   { "action": "so_sync", "order_id": 43 }     one order's sales order + its customer's terms, now
-//   { "action": "estimate", "order_id": 43 }    Phase 2 (0062): the quote's DRAFT Zoho estimate, created
-//                          or brought up to date; skipped unless zoho_config.estimates_enabled
+//   { "action": "estimate", "order_id": 43 }    Phase 2 (0062/0063): the quote's DRAFT Zoho estimate,
+//                          created ONCE, then only read back (Zoho leads); skipped unless estimates_enabled
 //   { "action": "test" }   manager/admin: create a clearly marked TEST draft
 //                          invoice + bill against TEST contacts, read them back,
 //                          then delete all four; returns what was created.
@@ -38,7 +38,7 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient, type SupabaseClient } from "jsr:@supabase/supabase-js@2";
 
 import { env, zohoInit, zohoMissing, Blocked, zoho, rands, jhbDate, findByReference, resolveContact, itemIds, taxIdFor,
-         rebateDiscount, linkToSalesOrder, salesOrderFor, deleteSalesOrder, estimateFor, type Logger } from "../_shared/zoho.ts";
+         rebateDiscount, linkToSalesOrder, salesOrderFor, deleteSalesOrder, estimateFor, estimatePayload, type Logger } from "../_shared/zoho.ts";
 
 
 const CORS = {
@@ -288,6 +288,18 @@ async function refreshStatus(db: SupabaseClient, log: Logger, force: boolean) {
             && (r.client_response === "declined" || r.status === "cancelled" || r.deleted_at)) {
           await zoho("POST", `/estimates/${r[k.idCol]}/status/declined`);
           status = "declined";
+          b.estimate.status = "declined";
+        }
+        // 0063: Zoho leads the quote — lines, prices, discounts, total, expiry, status
+        if (k.doc === "estimate") {
+          const { data: ap, error: apErr } = await db.rpc("apply_zoho_estimate", { p_order_id: r.id, p_est: estimatePayload(b.estimate) });
+          if (apErr) await log({ doc_type: "estimate", ctp_id: r.id, ctp_ref: r.number, action: "readback_error", ok: false, message: apErr.message });
+          else if ((ap?.changes?.length ?? 0) + (ap?.warnings?.length ?? 0) > 0) {
+            if (status !== was) changes.push({ doc: k.doc, ref: r[k.ref], from: was, to: status });
+            await log({ doc_type: "estimate", ctp_id: r.id, ctp_ref: r.number, action: "readback", ok: !(ap.warnings?.length), zoho_id: r[k.idCol],
+                        message: `${r.number}: ${[...(ap.changes ?? []), ...(ap.warnings ?? [])].join("; ")}`.slice(0, 2000) });
+          }
+          continue;
         }
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
@@ -414,7 +426,23 @@ async function syncOne(db: SupabaseClient, log: Logger, orderId: number, force: 
   const { data: o } = await db.from("sales_order").select("id, number, customer_id, zoho_salesorder_id, zoho_so_synced_at, zoho_so_status")
     .eq("id", orderId).is("deleted_at", null).maybeSingle();
   if (!o) return { skipped: "no such order" };
-  if (!o.zoho_salesorder_id) return { skipped: "no Zoho sales order" };
+  if (!o.zoho_salesorder_id) {
+    // 0063: a quote with a Zoho estimate — Zoho's version comes back now (Zoho leads)
+    const { data: q } = await db.from("sales_order").select("zoho_estimate_id, zoho_estimate_synced_at").eq("id", orderId).maybeSingle();
+    if (!q?.zoho_estimate_id) return { skipped: "no Zoho sales order or estimate" };
+    if (!force && q.zoho_estimate_synced_at && Date.now() - new Date(q.zoho_estimate_synced_at).getTime() < 30_000) return { skipped: "read less than 30 s ago" };
+    // deno-lint-ignore no-explicit-any
+    let e: any;
+    try { e = (await zoho("GET", `/estimates/${q.zoho_estimate_id}`)).estimate; }
+    catch (err) {
+      if (!/\(404|does not exist|not found/i.test(err instanceof Error ? err.message : String(err))) throw err;
+      e = { estimate_id: q.zoho_estimate_id, status: "deleted" };
+    }
+    const { data: ap, error: apErr } = await db.rpc("apply_zoho_estimate", { p_order_id: orderId,
+      p_est: e.status === "deleted" ? { estimate_id: q.zoho_estimate_id, status: "deleted" } : estimatePayload(e) });
+    if (apErr) throw new Error(apErr.message);
+    return { status: e.status, estimate: true, changes: ap?.changes ?? [], warnings: ap?.warnings ?? [] };
+  }
   if (!force && o.zoho_so_synced_at && Date.now() - new Date(o.zoho_so_synced_at).getTime() < 30_000) return { skipped: "read less than 30 s ago" };
   let so;
   try { so = (await zoho("GET", `/salesorders/${o.zoho_salesorder_id}`)).salesorder; }
@@ -557,9 +585,10 @@ Deno.serve(async (req: Request) => {
       if (new Date(cfg.push_from) > new Date()) return json({ ok: true, skipped: "Before the Zoho go-live date." });
       try {
         const est = await estimateFor(db, cfg, id, log);
-        await db.rpc("apply_zoho_estimate", { p_order_id: id, p_est: { estimate_id: est.estimate_id, estimate_number: est.estimate_number,
-          status: est.status, last_modified_time: est.last_modified_time ?? null, error: est.warning ?? "" } });
-        return json({ ok: !est.warning, ...est });
+        const { data: ap, error: apErr } = await db.rpc("apply_zoho_estimate", { p_order_id: id, p_est: estimatePayload(est.estimate) });
+        if (apErr) throw new Error(`Estimate ${est.estimate_number} is in Zoho, but linking it failed: ${apErr.message}`);
+        const { estimate: _e, ...ref } = est;
+        return json({ ok: true, ...ref, changes: ap?.changes ?? [], warnings: ap?.warnings ?? [] });
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         await log({ doc_type: "estimate", ctp_id: id, action: e instanceof Blocked ? "blocked" : "error", ok: false, message: msg });

@@ -287,3 +287,55 @@ directly — is untouched while it is off.
   "Decline" path check; decide whether an accepted-in-app quote that Michelle never
   sent is OK to mark sent automatically (Zoho requires sent before accepted);
   re-price after sent = warning only. Then Ian + Michelle switch on together.
+
+## 23 Oct (late morning) — quotes ARE Zoho estimates now; Zoho leads; accept only after accounts send (0063, live, switch ON)
+Ian's decisions (23 Oct): switch on immediately; the app must NOT mark estimates
+sent; Zoho leads estimate content; delete the stray Vercel project; soft-delete
+RQ-261020-44.
+- **Switch ON** since 23 Oct ~09:25 SAST (`zoho_config.estimates_enabled = true`, push log
+  id 22). Settings → Zoho → "Quotes as Zoho estimates" card: Turn on/off (admin,
+  `set_zoho_estimates`).
+- **Send quote** (staff, fully priced) creates the DRAFT estimate in Zoho ONCE
+  (`estimateFor`, create-only; found by reference if a retry). CTP never edits it
+  after that. If creation failed, the card shows "Create estimate in Zoho".
+- **Zoho leads** (0063): a trigger (`sales_line_estimate_lock`) refuses any change
+  to a quote's lines once it has a live estimate — "Edit prices in Zoho (QT-…)".
+  Only `apply_zoho_estimate` (read-back) changes them: lines, prices, discounts,
+  qty, added/removed lines, total incl VAT, expiry, emailed, status; old → new in
+  the notes; unmapped Zoho items → "Differs from Zoho: …" on the order. Read-back
+  runs on the 10-min cron, when the desk opens the order (`so_sync`, 30 s throttle)
+  and on "Refresh from Zoho". A deleted/declined/expired estimate releases the lock.
+  CHOICE (Ian asked): changes before Michelle sends = **ask Michelle to edit in Zoho**
+  (no "Re-send to Zoho" — Zoho leads; CTP follows within 10 min or on Refresh).
+- **Accept only after accounts SEND**: `quote_accept_check` blocks with
+  "Your quote is being finalised by our accounts team." (customer) / "Waiting for
+  accounts to send estimate QT-… from Zoho." (staff) while there is no estimate or it
+  is draft; declined/expired/invoiced are refused. The admin "Accept on customer's
+  behalf" button is disabled until sent. accept-quote refuses too (409).
+- **On accept**: Zoho converts only ACCEPTED estimates (live test: "Only accepted
+  quotes can be converted to sales orders"). So: estimate sent → accepted (the
+  customer's act — never "sent"), then the confirmed SO raised from the ESTIMATE's
+  lines with `estimate_id` (linked in Zoho), then accept_quote() (stock held). If CTP
+  fails: SO deleted, estimate stays accepted (logged), retry allowed and links.
+- **Customer sees Zoho's figures**: their stream has no discounts/totals, so
+  `quote_accept_check` returns `estimate` {number, status, total incl VAT, expiry,
+  per-line discount and net}; the Request card shows "Total R… incl VAT · Quote QT-…
+  · valid until …", line nets with "less x%". Remove-line ✕ hidden on estimates.
+- Live est_test (07:21 UTC): QT-000003 → (test plays accounts: price 2 × R1.50, sent)
+  → accepted → SO-00015 open, total 3.45, `estimate_link` set → both deleted. Earlier
+  runs left gaps QT-000001/2, SO-00013/14 (deleted).
+- Tests: tests_0063_local.js 24/24, 0062 17/17, 0061 19/19, 0059 26/26, 0058 13/13,
+  orderFilter 33/33; deno check 71 (baseline, none new); tsc + build clean; harness:
+  draft-estimate card text, on-behalf disabled "waiting for accounts to send QT-…".
+- Deployed: 0063 (dry run first), zoho-push / zoho-auth / accept-quote (verify_jwt on),
+  PWA SW v26 at ctpcore.vercel.app. Cron read-back on the new code: 0 errors.
+- **Vercel "app" project deleted** (23 Oct). Correction: it was NOT created today — it
+  dated from 26 Sept (one earlier accidental Vite deploy from `app/`, same user, no
+  domains); today's slip deployed into it. ctp-core / ctpcore.vercel.app untouched.
+- **RQ-261020-44 soft-deleted** (Test Account; Zoho SO-00009 already deleted); stock
+  effect reversed (+1 each on parts 1018, 1019, origin `cleanup20261023`); net 0.
+- Hermans VAT: Michelle adding the VAT no. in Zoho (23 Oct). Contact sync picks it up.
+- Not covered: the Tauri desktop has no estimate awareness (its quote edits would be
+  refused on upload by the lock — price on the phone/Zoho). Customer Decline marks the
+  estimate declined on the next read-back. Quotes priced before the switch with no
+  estimate: staff tap "Create estimate in Zoho" (none were open at switch-on).

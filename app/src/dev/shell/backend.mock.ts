@@ -16,6 +16,9 @@ const base = { customer_contact: null, customer_phone: null, customer_email: nul
 const orders = [
   { ...base, id: 2, number: "RQ-261023-50", status: "quote", created_at: iso(0), fulfilled_at: null, invoice_no: null, invoiced_at: null,
     customer_id: 7, customer_name: "Test Account", stage: "to_price", unpriced: 1, lines: [L(21, 11, 1, 0)] },
+  { ...base, id: 6, number: "RQ-261023-51", status: "quote", created_at: iso(0), fulfilled_at: null, invoice_no: null, invoiced_at: null,
+    customer_id: 6, customer_name: "Hermans", stage: "with_customer", zoho_estimate_id: "e1", zoho_estimate_number: "QT-000002",
+    zoho_estimate_status: "draft", zoho_estimate_total_minor: 159040, zoho_estimate_expiry: "2026-11-22", lines: [L(61, 10, 1, 115600)] },
   { ...base, id: 3, number: "RQ-261021-45", status: "confirmed", created_at: iso(2), fulfilled_at: null, invoice_no: null, invoiced_at: null,
     customer_id: 6, customer_name: "Hermans", cust_on_account: true, zoho_salesorder_id: "y", zoho_salesorder_number: "SO-00012", zoho_so_status: "open",
     stage: "to_pick", lines: [L(31, 10, 2, 115600)] },
