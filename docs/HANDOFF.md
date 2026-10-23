@@ -402,3 +402,21 @@ Ian's screenshot: "Hermans Panel Beaters" and "R 1 329,40" near-black on the dar
   Inventory before the Phase 3 build; one new grant code with Books + Inventory scopes (doc 08 §3).
 - Awaiting Ian + Michelle: approve the reconciliation, confirm both Supalift deliveries, decide
   on Inventory, cut-over date. NO adjustments until then.
+
+## 23 Oct (late afternoon) — Inventory Premium bought; cut-over plan; waiting on the new grant code
+- Ian: both Supalift deliveries arrived; plan approved (spot-check ~5, count 24, Michelle checks 12
+  sales); **Zoho Inventory Premium bought**; webhooks yes; cut-over = run as REHEARSAL until Ian
+  says zero Zoho + re-initialise + go live.
+- `zoho-auth {action:"inv_probe"}` (read-only): every Inventory endpoint is 401 code 57 with the
+  current token (Books scopes only); the Books org record has no plan fields. Plan limits are read
+  via the API after the new code. Published Premium (ZA page, 23 Oct): 7,500 orders/month,
+  3,000 POs/bills a month, 6 locations, **2 users**, API 7,500/day (ZA page) vs 10,000/day (API
+  docs) — to be confirmed by the x-rate-limit header after the grant.
+- `docs/09_CUTOVER_ZERO_AND_INIT.md`: wipe vs keep, options (scripted delete recommended, Zoho
+  support reset, fresh org), re-import order, CTP reset, dry-run checklist, rollback. Caution:
+  the rehearsal org holds REAL records (DS invoices ≈ R1.7m Hermans receivable, Supalift bills);
+  Michelle signs off deletes and opening balances.
+- NEXT: exchange the new code (Books + Inventory scopes, in the reply of 23 Oct) via zoho-auth,
+  re-run `inv_probe` (plan, limits, warehouse id), then build Phase 3 on Inventory behind
+  `zoho_config.stock_master` ('ctp' until cut-over): packages+shipments on Fulfil, purchase
+  receives, adjustments from counts, `zoho-hook` webhooks, stock cache.

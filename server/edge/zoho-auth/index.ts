@@ -128,6 +128,41 @@ Deno.serve(async (req: Request) => {
 
   // READ-ONLY assessment for the Zoho-first plan (docs/06): plan, settings,
   // inventory tracking, and which endpoints the current token can read.
+  // 23 Oct: READ-ONLY plan probe for Zoho Inventory (Premium bought). GETs only:
+  // the org's plan fields from Books and Inventory, rate-limit headers, and which
+  // Inventory endpoints this token can reach (it carries Books scopes only).
+  if (body.action === "inv_probe") {
+    await zohoInit(db);
+    const tk = await zohoToken();
+    const org = env("ZOHO_ORG_ID");
+    const get = async (base: string, path: string) => {
+      const r = await fetch(`${base}${path}${path.includes("?") ? "&" : "?"}organization_id=${org}`, { headers: { Authorization: `Zoho-oauthtoken ${tk}` } });
+      const j = await r.json().catch(() => ({}));
+      return { status: r.status, code: j.code, message: j.message, j,
+        limit: r.headers.get("x-rate-limit-limit"), remaining: r.headers.get("x-rate-limit-remaining") };
+    };
+    const books = "https://www.zohoapis.com/books/v3", inv = "https://www.zohoapis.com/inventory/v1";
+    const pick = (o: Record<string, unknown>) => Object.fromEntries(Object.entries(o ?? {}).filter(([k]) =>
+      /plan|edition|inventory|warehouse|branch|location|version|addon|subscription|user|limit|product|is_|mode|country|currency_code|name$/i.test(k))
+      .map(([k, v]) => [k, typeof v === "object" ? JSON.stringify(v)?.slice(0, 200) : v]));
+    const bo = await get(books, `/organizations/${org}`);
+    const io = await get(inv, `/organizations/${org}`);
+    const probe: Record<string, string> = {};
+    for (const path of ["/items?per_page=1", "/salesorders?per_page=1", "/packages?per_page=1", "/shipmentorders?per_page=1",
+                        "/purchaseorders?per_page=1", "/purchasereceives?per_page=1", "/inventoryadjustments?per_page=1",
+                        "/transferorders?per_page=1", "/settings/warehouses", "/locations", "/settings/preferences", "/users?per_page=50"]) {
+      const x = await get(inv, path);
+      probe["inventory" + path] = `${x.status}${x.code ? " code " + x.code : ""} ${x.code ? (x.message ?? "") : "ok"} limit=${x.limit ?? "-"}`;
+    }
+    const bu = await get(books, "/users?per_page=50");
+    return json({ ok: true,
+      books_org: pick(bo.j.organization ?? {}), books_status: bo.status, books_limit: bo.limit,
+      inventory_org: pick(io.j.organization ?? {}), inventory_status: `${io.status}${io.code ? " code " + io.code + " " + io.message : ""}`, inventory_limit: io.limit,
+      // deno-lint-ignore no-explicit-any
+      books_users: bu.status === 200 ? (bu.j.users ?? []).map((u: any) => `${u.role_name ?? u.user_role}:${u.status}`) : `${bu.status} ${bu.message ?? ""}`,
+      probe });
+  }
+
   if (body.action === "assess") {
     await zohoInit(db);
     const tk = await zohoToken();
