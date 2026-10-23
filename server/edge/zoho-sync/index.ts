@@ -3,8 +3,12 @@
 // Reads every item from Zoho (Inventory by default, Books if ZOHO_API=books)
 // and mirrors it into `zoho_item`: Zoho Item ID, SKU, name, status, Rate,
 // Purchase Rate, stock on hand. Each Zoho item is linked to its CTP Core part by
-// Item ID, then by SKU (= the Multicat code, see CTP_Internal_Naming_Convention
-// v2.0), then by legacy CTP code.
+// Item ID, then by SKU (the part no.), then by legacy CTP code.
+//
+// 23 Oct 2026 (0066): ZOHO INVENTORY IS THE ITEM MASTER. New parts are added in Zoho;
+// with apply, an active Zoho item whose SKU CTP does not have becomes a CTP part
+// (zoho_new_part: category "New from Zoho", list price, landed cost, link). Preview
+// lists them under new_parts. Codes never change: the part no. is the Zoho SKU.
 //
 // READ-ONLY TOWARDS ZOHO. Nothing here writes to Zoho. Write-back (sales orders,
 // invoices) is a separate decision and not built.
@@ -222,6 +226,8 @@ Deno.serve(async (req: Request) => {
     const mirror: Record<string, unknown>[] = [];
     const changes: { sku: string; field: string; from: unknown; to: unknown }[] = [];
     const unmatched: { item_id: string; sku: string | null; name: string; status: string | null }[] = [];
+    // 0066: active Zoho items with a SKU CTP lacks → new CTP parts on apply
+    const newParts: { item_id: string; sku: string; name: string; rate_minor: number | null; purchase_rate_minor: number | null; description: string | null }[] = [];
     const nameUpd: { id: number; name: string }[] = [];
     const priceIns: Record<string, unknown>[] = [];
     const costIns: Record<string, unknown>[] = [];
@@ -239,7 +245,11 @@ Deno.serve(async (req: Request) => {
         synced_at: now,
       });
       if (partId == null) {
-        if (status !== "inactive") unmatched.push({ item_id: z.item_id, sku: sku || null, name: z.name, status });
+        if (status !== "inactive") {
+          unmatched.push({ item_id: z.item_id, sku: sku || null, name: z.name, status });
+          // deno-lint-ignore no-explicit-any
+          if (sku) newParts.push({ item_id: z.item_id, sku, name: z.name, rate_minor: minor(z.rate), purchase_rate_minor: minor(z.purchase_rate), description: (z as any).description ?? null });
+        }
         continue;
       }
       if (status === "inactive") continue; // never reprice from an inactive item
@@ -272,7 +282,14 @@ Deno.serve(async (req: Request) => {
       if (error) throw new Error(`zoho_item upsert: ${error.message}`);
     }
 
+    // deno-lint-ignore no-explicit-any
+    const created: any[] = [];
     if (apply) {
+      for (const n of newParts) {
+        const { data, error } = await db.rpc("zoho_new_part", { p: n });
+        if (error) throw new Error(`new part ${n.sku}: ${error.message}`);
+        created.push(data);
+      }
       for (const u of nameUpd) {
         const { error } = await db.from("part").update({ name: u.name, updated_at: now }).eq("id", u.id);
         if (error) throw new Error(`part name ${u.id}: ${error.message}`);
@@ -300,6 +317,7 @@ Deno.serve(async (req: Request) => {
     return json({
       ok: true, applied: apply, api: API, items_seen: items.length, linked: linkedCount,
       zoho_stock_units: stockTotal, unmatched, changes, customers,
+      new_parts: apply ? created : newParts.map((n) => ({ sku: n.sku, name: n.name, would_create: true })),
     });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);

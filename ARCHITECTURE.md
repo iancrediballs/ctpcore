@@ -114,6 +114,8 @@ Each phase ships something usable. You never hold all five products in your head
 
 ## 7. On Multicat
 
+> 23 Oct 2026: historical. Zoho Inventory is now the item master and Multicat is not used; see docs/11_SYSTEM_MAP.md.
+
 It "feels hollow" most likely because it's a generic catalog ERP without strong **interchange/cross-reference** and **fitment intelligence** — the two tables that make a *parts* business defensible. Before committing further, the high-value audit is narrow: does Multicat give you (a) fuzzy cross-reference search, (b) vehicle fitment, (c) an export path for your data, and (d) offline operation? Where it can't, that's precisely the gap FleetView fills. Say the word and I'll map its actual capabilities against this spine.
 
 ---

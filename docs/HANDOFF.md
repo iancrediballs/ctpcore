@@ -512,3 +512,19 @@ Ian's screenshot: "Hermans Panel Beaters" and "R 1 329,40" near-black on the dar
   `--no-verify-jwt`.
 - zoho-auth: `webhook_probe` (read-only), `webhook_admin` (list / placeholders read-only;
   create/delete only objects named "CTP Core …"). Placeholders read from Zoho are in docs/10.
+
+## 23 Oct (night) — Zoho Inventory is the item master; Multicat out (0066, PWA v30)
+- Ian: "why is multicat still being referenced?" — Zoho Inventory is the item/parts master;
+  Multicat is no longer a source. Codes unchanged (part no. = Zoho SKU).
+- App: Settings → Zoho text now says Zoho Inventory is the parts master; the only other mention
+  was a code comment. Nothing in code used Multicat as a source (only historical migration 0046,
+  its one-off generator, desktop migration 0025 and an unused root CSV — all left as history).
+- **New parts come from Zoho** (0066, live): category "New from Zoho" (code NEW, id 117);
+  `zoho_new_part()` (server-only: id = max+1 under a lock, part + list price + landed cost + Zoho
+  link; idempotent on SKU). zoho-sync "Pull & apply" creates them; "Check Zoho" previews
+  (`new_parts`). Live preview 23 Oct: none pending (161/162 linked, 0 unmatched); 37 name/price
+  differences wait for a staff Pull & apply (Zoho wins when applied).
+- Default: Pull & apply stays a manual staff action (Settings → Zoho), not automatic.
+- Docs: `docs/11_SYSTEM_MAP.md` (current masters + hosting); notes added to
+  CTP_Internal_Naming_Convention.md, ARCHITECTURE.md §7, docs/06; docs/09 wording.
+  Tests: tests_0066_local.js 10/10.

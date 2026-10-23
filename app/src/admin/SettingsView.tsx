@@ -597,7 +597,7 @@ function ZohoPanel({ flash, fail }: PanelProps) {
   useEffect(load, [load]);
 
   const sync = async (apply: boolean) => {
-    if (apply && !confirm("Write Zoho's item names, selling prices and landed costs into CTP Core, and add/link Zoho customers?\n\nPast quotes and invoices keep their prices.")) return;
+    if (apply && !confirm("Write Zoho's item names, selling prices and landed costs into CTP Core, add new Zoho items as CTP parts, and add/link Zoho customers?\n\nPast quotes and invoices keep their prices.")) return;
     setBusy(true); setResult(null);
     const { data, error } = await supabase.functions.invoke("zoho-sync", { body: { apply } });
     setBusy(false);
@@ -635,9 +635,9 @@ function ZohoPanel({ flash, fail }: PanelProps) {
   return (
     <>
       <p className="st-lead">
-        CTP Core reads items and stock from Zoho, and sends its own invoices
-        (to customers) and supplier bills to Zoho. The item code is the Zoho SKU
-        (the Multicat code).
+        Zoho Inventory is the parts master. New parts are added in Zoho; Pull &amp; apply
+        brings them into CTP Core (in "New from Zoho" until filed into a section), along
+        with names and prices. The part no. is the Zoho SKU.
       </p>
 
       <ZohoPushCard flash={flash} fail={fail} />
@@ -684,7 +684,7 @@ function ZohoPanel({ flash, fail }: PanelProps) {
             <p className="st-note" key={i}><span className="st-code">{c.sku}</span> {c.field}: {String(c.from ?? "—")} → {String(c.to)}</p>
           ))}
           {(result.unmatched ?? []).length > 0 && <>
-            <div className="st-sub">In Zoho, not in CTP Core</div>
+            <div className="st-sub">{result.applied ? "Added from Zoho (new parts)" : "New in Zoho — added to CTP Core on Pull & apply"}</div>
             {result.unmatched!.map((u, i) => (
               <p className="st-note" key={i}><span className="st-code">{u.sku ?? "(no SKU)"}</span> {u.name}</p>
             ))}

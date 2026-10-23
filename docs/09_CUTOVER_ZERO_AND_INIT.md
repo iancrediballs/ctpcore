@@ -32,7 +32,7 @@ Still open: **who takes the Zoho data backup** (Q4, §5).
 | Kept (master data) | Wiped (transactions) |
 |---|---|
 | Organisation, settings, taxes (Standard Rate 15%), branding, customer portal | All **test** documents (none remain: every CTP test doc was deleted after its test) |
-| **Items** (162; SKU = Multicat code; images, rates, purchase rates) | **Estimates** QT-… |
+| **Items** (162; the item master; SKU = part no.; images, rates, purchase rates) | **Estimates** QT-… |
 | **Contacts** (customers, vendors, contact persons; Hermans' VAT no.) | **Sales orders** SO-…, **packages**, **shipments** |
 | Locations/warehouses (Inventory) | **Invoices**, **credit notes**, **customer payments** |
 | Users and roles | **Bills**, **purchase orders**, **purchase receives**, **vendor payments** |

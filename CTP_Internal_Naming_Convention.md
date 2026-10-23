@@ -1,5 +1,12 @@
 # CTP Core — Part Identity & Naming Convention
 
+> **Update 23 Oct 2026 — Zoho Inventory is the item / parts master.** Multicat is no longer a
+> source of anything. The codes do NOT change: the item code ("part no.") is the Zoho SKU, the
+> same strings as before. New parts are created in Zoho and come into CTP Core with "Pull &
+> apply" (migration 0066). Where this document says "Multicat code" or "source of truth:
+> Multicat", read "Zoho SKU" / "source of truth: Zoho Inventory". The rest is kept as written
+> for history.
+
 **Version 2.0 · 19 October 2026 · Internal**
 
 > **What changed in 2.0 (Ian's decision, 19 Oct 2026).** CTP Core shows OEM

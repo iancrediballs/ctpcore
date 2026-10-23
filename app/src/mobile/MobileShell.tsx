@@ -1613,7 +1613,7 @@ const parseRand = (s: string): number => {
     try {
       const company = await api.getCompany<DocCompany>();
       const lines = o.lines.map((l) => ({
-        // The item code (Multicat code = Zoho SKU) — naming convention v2.0.
+        // The part no. (= the Zoho SKU; Zoho Inventory is the item master).
         // Not catalogue_pn: that is the base supplier number, without the
         // variant suffix, and would not match the Zoho invoice line.
         sku: l.sku, name: l.name, qty: l.qty,

@@ -1,5 +1,8 @@
 # CTP Core → Zoho-first: migration plan (21 Oct 2026)
 
+> 23 Oct 2026: items are now mastered in Zoho Inventory ("SKU = Multicat code" below means the
+> same strings, now simply the Zoho SKU / part no.). Current picture: docs/11_SYSTEM_MAP.md.
+
 Ian's direction: **Zoho Books is the system of record; CTP Core is a frontend.**
 Supabase keeps only what Zoho cannot hold: logins and the login → company map,
 hotspot diagrams and part-image mapping, UI settings, and a read cache.
