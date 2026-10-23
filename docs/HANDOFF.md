@@ -614,3 +614,26 @@ Traced part 2803052B1063 (E2E order RQ-261023-50 / SO-00018 / INV-000009) with t
   Receiving/counts in CTP mode do not touch Zoho:
   - Michelle's bills move Zoho accounting;
   - Zoho physical moves only via phone Receive (Zoho mode) or Zoho's own purchase receive.
+
+## 24 Oct — Anton demo glitches (PWA v33)
+Demo passed every step (RQ-261023-51 → QT-000007 → SO-00019 → INV-000010 paid → fulfilled/closed,
+PKG-00007/SHP-00007, stock 12→11 in Zoho).
+- **#3 SO status "not read yet" — real bug, now fixed:** `staffOrders()` SELECTed `zoho_so_status`
+  and `zoho_so_error` but never mapped them into the order object, so the phone always saw blank
+  (v30 showed it as "Draft", v31 as "not read yet"). DB had it right (SO-00019 "invoiced").
+- **#1 Send quote:** the log shows QT-000007 created by Ian at 15:06. The symptoms (Fill wrote
+  prices, Send quote vanished) were v30 behaviour → the open tab was still running an older
+  build. Now:
+  - **the app shows its version** (Info → "App version vNN · built …", Settings → Zoho header);
+  - main.tsx shows "A new version of CTP Core is ready — Reload" when a new service worker takes
+    over, and checks for updates whenever the app returns to the foreground;
+  - Send quote creates the estimate whenever the quote is fully priced (price warnings no longer
+    skip it);
+  - the "No Zoho estimate yet / Create estimate" block appears only after a failed attempt
+    (recovery).
+- **#2 Refresh:** the server applies Zoho's latest at once, but the change reaches the phone via
+  sync a moment later → Refresh re-reads the orders at +1.5 s and +4 s, so one tap shows it.
+- **#4:** CTP ledger for 2803052B1063: sale −1 at 15:12 (RQ-261023-51) → 11 → 10. Zoho
+  physical = accounting = Books 11.
+- Version shown in the app: **v33** (= the service-worker cache version, read at build time in
+  vite.config.ts).

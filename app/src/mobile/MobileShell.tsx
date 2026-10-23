@@ -465,6 +465,14 @@ export default function MobileShell() {
   const quietFocus = useRef(false);
   const isDesktop = useIsDesktop();
 
+  // ── version (24 Oct): shown in Info and Settings; a newer deploy offers a reload ──
+  const [newVersion, setNewVersion] = useState(false);
+  useEffect(() => {
+    const h = () => setNewVersion(true);
+    window.addEventListener("ctp-new-version", h);
+    return () => window.removeEventListener("ctp-new-version", h);
+  }, []);
+
   // ── appearance ──
   const [themePref, setThemePref] = useState<ThemePref>(loadThemePref);
   const [sysLight, setSysLight] = useState<boolean>(
@@ -887,7 +895,7 @@ const parseRand = (s: string): number => {
       setFloorBlock(null);
       loadOrders();
       // 0062: fully priced → its draft Zoho estimate (skipped until the switch is on)
-      if (left === 0 && warns.length === 0) {
+      if (left === 0) {   // 24 Oct: warnings are advisory — the estimate is still created
         void syncEstimate(o.id).then((r) => {
           if (r.skipped) return;
           if (!r.ok) showToast({ text: `Quote saved, but the Zoho estimate failed: ${r.message ?? "unknown error"}`, err: true });
@@ -969,6 +977,10 @@ const parseRand = (s: string): number => {
     if (r.changes.length) showToast({ text: `${o.number}: Zoho changes applied — ${r.changes.join("; ")}` });
     else if (force && !r.ok) showToast({ text: `Could not read Zoho: ${r.message ?? "unknown error"}`, err: true });
     loadOrders();
+    // 24 Oct: the server has applied Zoho's latest; the change reaches this phone through sync a
+    // moment later. Re-read twice so ONE tap of Refresh shows it (Ian's demo needed two).
+    window.setTimeout(loadOrders, 1500);
+    window.setTimeout(loadOrders, 4000);
   }, [showToast, loadOrders]);
 
   /** 0061: admin flips a customer between account (fulfil after invoice) and cash (after payment). */
@@ -1535,6 +1547,8 @@ const parseRand = (s: string): number => {
           </div>
         )}
         <div className="mb-rows">
+          <div className="mb-row"><span className="mb-rk">App version</span>
+            <span className="mb-rv">{__APP_VERSION__} · built {__APP_BUILT__} UTC</span></div>
           <div className="mb-row"><span className="mb-rk">Signed in</span>
             <span className="mb-rv">{session?.user.email ?? "—"}</span></div>
           <div className="mb-row"><span className="mb-rk">Access level</span>
@@ -1978,7 +1992,7 @@ const parseRand = (s: string): number => {
                               : `sent ${timeAgo(o.created_at)} · they see it on their phone`}</span>
                           </div>
                         )}
-                        {o.status === "quote" && (o.zoho_estimate_id || (estimatesOn && o.stage === "with_customer")) && (
+                        {o.status === "quote" && (o.zoho_estimate_id || (estimatesOn && o.unpriced === 0 && !!o.zoho_estimate_error)) && (
                           <>
                             <div className="mb-row">
                               <span className="mb-rk">Zoho</span>
@@ -2012,7 +2026,7 @@ const parseRand = (s: string): number => {
                                   onClick={() => { void syncOrderFromZoho(o, true); }}>{syncingSo === o.id ? "Reading…" : "Refresh from Zoho"}</button></span>
                               </div>
                             )}
-                            {!o.zoho_estimate_id && estimatesOn && (
+                            {!o.zoho_estimate_id && estimatesOn && !!o.zoho_estimate_error && (
                               <div className="mb-row">
                                 <button className="mb-btn s" style={{ height: 46 }} disabled={savingOrder}
                                   onClick={() => { setSavingOrder(true); void syncEstimate(o.id).then((r) => {
@@ -2823,6 +2837,13 @@ const parseRand = (s: string): number => {
               Price it below the floor anyway
             </button>
           </div>
+        </div>
+      )}
+
+      {newVersion && (
+        <div className="mb-toast" style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <span style={{ flex: 1 }}>A new version of CTP Core is ready.</span>
+          <button className="mb-chip on" onClick={() => window.location.reload()}>Reload</button>
         </div>
       )}
 

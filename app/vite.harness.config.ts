@@ -16,4 +16,5 @@ const swap: Plugin = {
     return null;
   },
 };
-export default defineConfig({ plugins: [swap, react()], server: { port: 4174, strictPort: true } });
+export default defineConfig({ plugins: [swap, react()], server: { port: 4174, strictPort: true },
+  define: { __APP_VERSION__: JSON.stringify("harness"), __APP_BUILT__: JSON.stringify("dev") } });

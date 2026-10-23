@@ -882,6 +882,9 @@ async function staffOrders(): Promise<unknown[]> {
       client_responded_at: nstr(o["client_responded_at"]),
       // 0059: Michelle's side in Zoho, the fulfil gate, and account terms
       zoho_salesorder_id: nstr(o["zoho_salesorder_id"]),
+      // 24 Oct: selected above but never mapped — the phone always saw a blank SO status
+      zoho_so_status: nstr(o["zoho_so_status"]),
+      zoho_so_error: nstr(o["zoho_so_error"]),
       zoho_so_emailed: o["zoho_so_emailed"] === 1 || o["zoho_so_emailed"] === "1" || o["zoho_so_emailed"] === true || o["zoho_so_emailed"] === "true",
       zoho_so_synced_at: nstr(o["zoho_so_synced_at"]),
       zoho_so_terms_label: nstr(o["zoho_so_terms_label"]),

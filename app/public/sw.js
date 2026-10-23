@@ -42,7 +42,8 @@
 //   non-http(s) scheme. So the guard WAS the whole bug on that count. It is
 //   still wrapped in a catch below, because quota exhaustion is real and an
 //   image that fails to cache must still be shown.
-const CACHE = "ctp-core-v32";   // v32: CTP-mode Fulfil also creates the Zoho package + shipment (mirror) so Inventory physical stock follows (2026-10-24)
+const CACHE = "ctp-core-v33";   // v33: app version shown (Info, Settings) + "new version ready — Reload"; SO status mapped on the order desk; Send quote always creates the estimate; one-tap Refresh (2026-10-24)
+// v32:   // v32: CTP-mode Fulfil also creates the Zoho package + shipment (mirror) so Inventory physical stock follows (2026-10-24)
 // v31:   // v31: e2e fixes — staff-only history (privacy, 0067), SO status labels, Fill from list only fills, Send quote creates the estimate, close toast, accept-on-behalf modal, lane headers, word wrap (2026-10-23)
 // v30:   // v30: Zoho Inventory is the item master — Multicat wording removed; new Zoho items become CTP parts on Pull & apply (0066) (2026-10-23)
 // v29:   // v29: Phase 3 on Zoho Inventory behind the rehearsal switch — Zoho stock on parts, Ship in Zoho, count → Zoho adjustment, Receive goods (0065) (2026-10-23)

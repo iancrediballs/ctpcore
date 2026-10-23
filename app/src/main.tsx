@@ -64,6 +64,15 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
 // server would fight the cache on every hot reload).
 if (!isTauri && import.meta.env.PROD && "serviceWorker" in navigator) {
   window.addEventListener("load", () => {
+    // 24 Oct: a tab left open keeps running the old build after a deploy. When a new service
+    // worker takes over, tell the shell (it shows "New version ready — Reload"), and look for
+    // an update whenever the app comes back to the foreground.
+    // (a first install also fires controllerchange — only a REPLACED worker means a new version)
+    const hadController = !!navigator.serviceWorker.controller;
+    navigator.serviceWorker.addEventListener("controllerchange", () => { if (hadController) window.dispatchEvent(new Event("ctp-new-version")); });
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") void navigator.serviceWorker.getRegistration().then((r) => r?.update());
+    });
     navigator.serviceWorker.register("/sw.js").catch((e) => {
       console.warn("[CTP] service worker registration failed:", e);
     });

@@ -634,6 +634,7 @@ function ZohoPanel({ flash, fail }: PanelProps) {
 
   return (
     <>
+      <p className="st-note">CTP Core {__APP_VERSION__} · built {__APP_BUILT__} UTC</p>
       <p className="st-lead">
         Zoho Inventory is the parts master. New parts are added in Zoho; Pull &amp; apply
         brings them into CTP Core (in "New from Zoho" until filed into a section), along
