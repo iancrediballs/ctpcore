@@ -420,3 +420,15 @@ Ian's screenshot: "Hermans Panel Beaters" and "R 1 329,40" near-black on the dar
   re-run `inv_probe` (plan, limits, warehouse id), then build Phase 3 on Inventory behind
   `zoho_config.stock_master` ('ctp' until cut-over): packages+shipments on Fulfil, purchase
   receives, adjustments from counts, `zoho-hook` webhooks, stock cache.
+
+## 23 Oct (evening) — Michelle's cut-over answers; dry run built (read-only)
+- Michelle: no VAT returns filed (deletes allowed); Hermans' opening receivables ITEMISED invoice
+  by invoice; all number series restart at 00001. Still open: who takes the Zoho backup; which
+  account the no-VAT opening documents post to.
+- Dry run: `zoho-auth {action:"cutover_dryrun"}` (list endpoints only) + `tools/cutover_dryrun.py`
+  → `docs/cutover/dryrun_2026-10-23.{xlsx,json}` (+ the raw read). 33 docs to delete (21 invoices,
+  3 credit notes, 2 SOs, 7 bills); 19 itemised opening invoices for Hermans = R1,757,210.30
+  (original no./dates kept, open balance, no VAT); 7 open bills = R2,024,950.90; 13 number
+  series to reset. Inventory documents unreadable until the new grant code — re-run then.
+- docs/09 updated. Nothing destructive has run; it needs Ian's "go" on the day.
+- Waiting for the new grant code to start Phase 3 on Inventory.

@@ -17,9 +17,15 @@ The "rehearsal" org already holds **real accounting records**:
 - INV-000005/6 from SO-00011/12 (live Hermans orders).
 
 Zeroing Zoho must not lose what Hermans owes or what CTP owes Supalift. Those balances come back
-as opening balances (§3). **Michelle signs off what is deleted and what is re-imported**,
-because VAT returns may already have been filed using these documents. A filed or locked period
-cannot be deleted and must be kept or reversed by her.
+as opening documents (§3). **Michelle signs off what is deleted and what is re-imported.**
+
+**Michelle's decisions (23 Oct):**
+1. **No VAT returns have been filed**, so all these transactions may be deleted.
+2. Hermans' opening receivables go in **itemised, invoice by invoice**: one opening invoice per
+   open original, keeping its number, dates and amount.
+3. **Document numbers restart at 00001** (invoices, estimates, sales orders and the rest).
+
+Still open: **who takes the Zoho data backup** (Q4, §5).
 
 ## 1. What is wiped vs kept in Zoho
 
@@ -45,11 +51,11 @@ cannot be deleted and must be kept or reversed by her.
 `customer.zoho_contact_id` and contact persons. Keeping them avoids re-linking everything.
 
 **Michelle by hand, on the day:**
-- confirm no VAT period containing these documents is filed or locked (or decide to keep it);
-- un-reconcile any bank or payment matches;
-- reset the document numbering in Settings (INV-, SO-, QT-, PO-, bills) if new numbers should
-  start at 00001;
-- approve the opening balances (§3).
+- un-reconcile any bank or payment matches the API refuses to delete around;
+- **reset every number series to 00001** (Settings → Preferences → each module's transaction
+  number series), after the wipe and before the opening invoices are created. The full list is in
+  the dry run, sheet 4;
+- approve the opening invoices and bills (§3, dry run sheets 2–3).
 
 ## 2. CTP Core alongside
 
@@ -75,12 +81,21 @@ cannot be deleted and must be kept or reversed by her.
      CSV Michelle imports).
 4. **Customers/contacts**: kept. Check Hermans' VAT number and terms (Net 30); account vs cash
    flags stay in CTP.
-5. **Opening receivables**: per customer, the amount owed at go-live. Either as Zoho **opening
-   balances** (Settings → Opening Balances, as of the day before go-live), or as one "opening
-   balance" invoice per open document, if Michelle wants them itemised for statements.
-   Hermans ≈ R1.7m (her figure rules).
-6. **Open supplier bills**: per vendor, what is still owed (Supalift PI000001–004 if unpaid), as
-   opening balances or re-entered bills (Michelle).
+5. **Opening receivables — itemised (Michelle).** One opening invoice per open original invoice,
+   created after the number series restart:
+   - **number**: the new series (INV-000001, INV-000002, …);
+   - **invoice date and due date**: the original's, so ageing, terms and statements stay true;
+   - **reference**: "Opening balance — DS0000xx" (the original number);
+   - **one line**: "Opening balance: DS0000xx dated … (original total R…, open R…)";
+   - **amount**: the open **balance** (a part-paid original comes in at what is still owed);
+   - **no VAT** (VAT was accounted on the original), posted to the account Michelle chooses
+     (an opening-balance account).
+
+   Dry run 23 Oct: **19 opening invoices, all Hermans, R1,757,210.30**. Fully paid originals
+   (DS000005, DS000012) do not come back.
+6. **Open supplier bills — same pattern.** One bill per open original: the supplier's bill number
+   kept as the bill number (e.g. PI000001), original dates, open balance, no VAT, and reference
+   "Opening balance — <no.>". Dry run 23 Oct: **7 bills, R2,024,950.90**.
 7. **Inventory value check**: the opening stock value must equal the Inventory Asset opening
    balance in the accounts (Michelle).
 8. CTP: `stock_master = 'zoho'`; first stock-cache read; a fresh reconciliation must show
@@ -99,12 +114,31 @@ cannot be deleted and must be kept or reversed by her.
 - [ ] Opening balances agreed by Michelle (receivables, payables, stock value).
 - [ ] Freeze: no quotes accepted or invoices raised after 17:00.
 
-### 4.2 Dry run (no writes)
-- [ ] CTP prints the **delete list**: every Zoho document by type, number, status, date, total,
-      plus the documents the API will refuse and why. It goes to Ian + Michelle as a file.
+### 4.2 Dry run (no writes) — built and run 23 Oct
+How it runs:
+- `zoho-auth {action:"cutover_dryrun"}` reads Zoho list endpoints only: payments, credit notes,
+  invoices, sales orders, estimates, vendor payments, bills, POs. It also reports whether the
+  Inventory documents can be read yet.
+- `python tools/cutover_dryrun.py <that json> docs/cutover/dryrun_<date>` writes the
+  `.xlsx` and `.json`:
+  - **1 Delete plan**: every document in wipe order, with the reason for its place;
+  - **2 Opening invoices**: itemised, as in §3.5;
+  - **3 Open supplier bills**;
+  - **4 Number series** (all restart at 00001);
+  - **Checks**: totals that must agree to the cent after re-import.
+
+First run (`docs/cutover/dryrun_2026-10-23.*`):
+- 33 documents: 21 invoices, 3 credit notes, 2 sales orders, 7 bills;
+- 0 payments recorded as payment documents, 0 estimates (all test estimates already deleted);
+- receivables open **R1,757,210.30** (Hermans, 19 invoices); payables open **R2,024,950.90**
+  (7 bills); no unapplied credit notes.
+- Inventory documents (packages, shipments, receives, adjustments) become readable with the new
+  grant code. The run must be repeated then, and again on the evening before.
+
+On the day:
+- [ ] Re-run the dry run; Ian + Michelle review the file.
 - [ ] CTP prints the **CTP reset list**: orders to soft-delete, refs to clear.
-- [ ] CTP prints the **opening-stock adjustment** (items, quantities, value) and the opening
-      balances to be keyed.
+- [ ] CTP prints the **opening-stock adjustment** (items, counted quantities, value).
 - [ ] Ian says **"go"** in chat. Without it nothing below runs.
 
 ### 4.3 Execution (order matters; each step logged)
@@ -114,7 +148,10 @@ cannot be deleted and must be kept or reversed by her.
 3. Inventory adjustments / transfer orders.
 4. Check: Zoho stock on hand is 0 everywhere; no transactions are left except what Michelle chose
    to keep.
-5. Michelle: numbering reset, opening balances, un-reconciliations.
+5. Michelle: every number series → 00001; any un-reconciliations.
+5b. Create the opening invoices (dry run sheet 2) and the opening bills (sheet 3), through the API
+    from the approved file or by Michelle. Check: Hermans' balance = R1,757,210.30 and supplier
+    balances = R2,024,950.90, to the cent (or the re-run figures on the day).
 6. Post the opening-stock adjustment; re-read the stock cache; reconcile → all match.
 7. CTP reset (§2): soft-delete pre-go-live orders, clear refs, freeze the ledger with a snapshot,
    `push_from = now`, `stock_master = 'zoho'`.
@@ -132,8 +169,10 @@ cannot be deleted and must be kept or reversed by her.
   (`stock_master = 'ctp'`, sending on) and nothing customer-facing breaks. Quotes simply start
   from the new numbers.
 
-## 5. Open questions for Michelle
-1. Are any VAT periods containing the DS invoices or the PI bills filed or locked?
-2. Opening receivables: one opening balance per customer, or itemised opening invoices?
-3. Should document numbers restart at 00001 after the wipe?
-4. Is a Zoho Books data backup/export available on this plan, and who keeps it?
+## 5. Questions for Michelle
+1. ~~Filed or locked VAT periods?~~ **None filed** (23 Oct): deletes allowed.
+2. ~~One balance per customer or itemised?~~ **Itemised**, invoice by invoice (23 Oct).
+3. ~~Restart numbering?~~ **Yes, 00001** for every series (23 Oct).
+4. **OPEN:** who takes the Zoho data backup/export the evening before, and where it is kept.
+5. New: which account should the opening invoices and bills post to (an opening-balance account),
+   with no VAT on them? Confirm.

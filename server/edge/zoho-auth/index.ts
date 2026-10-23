@@ -128,6 +128,61 @@ Deno.serve(async (req: Request) => {
 
   // READ-ONLY assessment for the Zoho-first plan (docs/06): plan, settings,
   // inventory tracking, and which endpoints the current token can read.
+  // Cut-over DRY RUN (docs/09). READ-ONLY: list endpoints only, nothing is written.
+  // Every transaction the zero-Zoho step would delete, with what the delete order and
+  // the itemised opening invoices / open bills need (number, date, due date, total,
+  // balance, status, contact, reference). Inventory-only documents (packages,
+  // shipments, purchase receives, adjustments) are reported as readable or not.
+  if (body.action === "cutover_dryrun") {
+    await zohoInit(db);
+    const nap = () => new Promise((r) => setTimeout(r, 700));
+    // deno-lint-ignore no-explicit-any
+    const all = async (path: string, key: string): Promise<any[] | string> => {
+      // deno-lint-ignore no-explicit-any
+      const out: any[] = [];
+      try {
+        for (let page = 1; page <= 20; page++) {
+          const b = await zoho("GET", path, { page: String(page), per_page: "200" });
+          out.push(...(b[key] ?? []));
+          if (!b.page_context?.has_more_page) break;
+          await nap();
+        }
+      } catch (e) { return e instanceof Error ? e.message : String(e); }
+      return out;
+    };
+    // deno-lint-ignore no-explicit-any
+    const slim = (kind: string, r: any) => ({ kind,
+      id: String(r[`${kind}_id`] ?? r.payment_id ?? r.estimate_id ?? r.salesorder_id ?? r.invoice_id ?? r.creditnote_id ?? r.bill_id ?? r.purchaseorder_id ?? ""),
+      number: r[`${kind}_number`] ?? r.payment_number ?? r.estimate_number ?? r.salesorder_number ?? r.invoice_number ?? r.creditnote_number ?? r.bill_number ?? r.purchaseorder_number ?? null,
+      status: r.status ?? null, date: r.date ?? null, due_date: r.due_date ?? null,
+      contact: r.customer_name ?? r.vendor_name ?? null, contact_id: String(r.customer_id ?? r.vendor_id ?? ""),
+      reference: r.reference_number ?? null, total: r.total ?? r.amount ?? null, balance: r.balance ?? r.unused_amount ?? null,
+      currency: r.currency_code ?? null });
+    const kinds: [string, string, string][] = [
+      ["customerpayments", "customerpayments", "customerpayment"], ["creditnotes", "creditnotes", "creditnote"],
+      ["invoices", "invoices", "invoice"], ["salesorders", "salesorders", "salesorder"], ["estimates", "estimates", "estimate"],
+      ["vendorpayments", "vendorpayments", "vendorpayment"], ["bills", "bills", "bill"], ["purchaseorders", "purchaseorders", "purchaseorder"],
+    ];
+    // deno-lint-ignore no-explicit-any
+    const docs: any[] = []; const unreadable: Record<string, string> = {};
+    for (const [path, key, kind] of kinds) {
+      const rows = await all(`/${path}`, key);
+      if (typeof rows === "string") unreadable[path] = rows; else docs.push(...rows.map((r) => slim(kind, r)));
+      await nap();
+    }
+    // Inventory-only documents: readable only with the Inventory scopes
+    const tk = await zohoToken();
+    const inv: Record<string, string> = {};
+    for (const path of ["packages", "shipmentorders", "purchasereceives", "inventoryadjustments", "transferorders"]) {
+      const r = await fetch(`https://www.zohoapis.com/inventory/v1/${path}?per_page=200&organization_id=${env("ZOHO_ORG_ID")}`,
+        { headers: { Authorization: `Zoho-oauthtoken ${tk}` } });
+      const j = await r.json().catch(() => ({}));
+      inv[path] = r.status === 200 ? `${(j[path] ?? j.inventory_adjustments ?? j.shipmentorders ?? []).length} found` : `not readable (${r.status} ${j.message ?? ""})`;
+      await nap();
+    }
+    return json({ ok: true, read_at: new Date().toISOString(), docs, unreadable, inventory: inv });
+  }
+
   // 23 Oct: READ-ONLY plan probe for Zoho Inventory (Premium bought). GETs only:
   // the org's plan fields from Books and Inventory, rate-limit headers, and which
   // Inventory endpoints this token can reach (it carries Books scopes only).
