@@ -29,6 +29,10 @@ import { ShelfRefusedError } from "../data/errors";
 import type { WebHotspot } from "../data/api";
 import { useAuth, type Role } from "../auth/AuthProvider";
 import SettingsView from "../admin/SettingsView";
+import {
+  applyFilter, customerKey, isFiltering, loadFilter, saveFilter, EMPTY_FILTER, RANGE_LABEL, STAGE_LABEL,
+  type OrderFilter, type Range, type StageKey,
+} from "./orderFilter";
 import "./mobile.css";
 
 // ─── shapes (mirror backend.web.ts returns) ──────────────────────────────────
@@ -305,6 +309,49 @@ const TabInfo = () => (
   <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8v.01"/></svg>
 );
 
+// ─── the basket, kept on the device ─────────────────────────────────────────
+//
+// Ian, 23 Oct 2026: the basket survives a reload. localStorage, per signed-in
+// person, so two people sharing a counter PC never see each other's basket.
+// Nothing here is authoritative: sending still goes through the same RPCs.
+type CartItem = { id: number; sku: string; name: string; qty: number };
+type SavedCart = { cart: CartItem[]; note: string; counterCustomer: number | null };
+const cartKey = (uid: string | undefined) => "ctp-cart.v1:" + (uid ?? "anon");
+function loadCart(key: string): SavedCart {
+  const empty: SavedCart = { cart: [], note: "", counterCustomer: null };
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return empty;
+    const v = JSON.parse(raw) as Partial<SavedCart>;
+    const cart = (Array.isArray(v.cart) ? v.cart : [])
+      .filter((c): c is CartItem => !!c && Number.isInteger(c.id) && typeof c.sku === "string"
+        && typeof c.name === "string" && Number.isInteger(c.qty) && c.qty > 0)
+      .map((c) => ({ id: c.id, sku: c.sku, name: c.name, qty: Math.min(999, c.qty) }));
+    return {
+      cart,
+      note: typeof v.note === "string" ? v.note.slice(0, 2000) : "",
+      counterCustomer: Number.isInteger(v.counterCustomer) ? (v.counterCustomer as number) : null,
+    };
+  } catch { return empty; }
+}
+
+/** The header basket. Counts QUANTITY, not lines: each "Add to order" tap is
+ *  +1, so the number moves with every tap. `bump` changes on every increase
+ *  and re-keys the badge, which replays its pop. */
+function CartButton({ count, bump, label, onOpen }: {
+  count: number; bump: number; label: string; onOpen: () => void;
+}) {
+  return (
+    <button type="button" className={"mb-cartbtn" + (count > 0 ? " has" : "")} onClick={onOpen}
+      aria-label={`${label}: ${count} item${count === 1 ? "" : "s"}`} title={label}>
+      <TabCart />
+      {count > 0 && (
+        <span key={bump} className={"mb-cartbdg" + (bump > 0 ? " bump" : "")}>{count > 99 ? "99+" : count}</span>
+      )}
+    </button>
+  );
+}
+
 // ─── the shell ───────────────────────────────────────────────────────────────
 
 export default function MobileShell() {
@@ -327,13 +374,34 @@ export default function MobileShell() {
   const [counterOpen, setCounterOpen] = useState(false);
   const [toast, setToast] = useState<Toast | null>(null);
   const [viewer, setViewer] = useState<{ items: { path: string; label: string; diagram?: boolean }[]; idx: number } | null>(null);
-  const [cart, setCart] = useState<{ id: number; sku: string; name: string; qty: number }[]>([]);
-  const [note, setNote] = useState("");
+  const basketKey = cartKey(session?.user.id);
+  const [saved] = useState(() => loadCart(basketKey));
+  const [cart, setCart] = useState<CartItem[]>(saved.cart);
+  const [note, setNote] = useState(saved.note);
   const [sending, setSending] = useState(false);
   // 0053 — counter sales. The cart is shared with the customer flow; these two
   // say who a STAFF cart is being raised for.
   const [customers, setCustomers] = useState<{ id: number; name: string }[]>([]);
-  const [counterCustomer, setCounterCustomer] = useState<number | null>(null);
+  const [counterCustomer, setCounterCustomer] = useState<number | null>(saved.counterCustomer);
+  useEffect(() => {
+    try {
+      if (cart.length === 0 && !note && counterCustomer == null) localStorage.removeItem(basketKey);
+      else localStorage.setItem(basketKey, JSON.stringify({ cart, note, counterCustomer } satisfies SavedCart));
+    } catch { /* private mode: the basket lives for this page only */ }
+  }, [basketKey, cart, note, counterCustomer]);
+  const cartCount = useMemo(() => cart.reduce((t, c) => t + c.qty, 0), [cart]);
+  const [cartBump, setCartBump] = useState(0);
+  const lastCount = useRef(cartCount);
+  useEffect(() => {
+    if (cartCount > lastCount.current) setCartBump((b) => b + 1);
+    lastCount.current = cartCount;
+  }, [cartCount]);
+  // ── order desk filters (staff), remembered for the session ──
+  const [ofilter, setOfilterRaw] = useState<OrderFilter>(loadFilter);
+  const setOfilter = useCallback((f: OrderFilter | ((p: OrderFilter) => OrderFilter)) => {
+    setOfilterRaw((p) => { const n = typeof f === "function" ? f(p) : f; saveFilter(n); return n; });
+  }, []);
+  const [filtersOpen, setFiltersOpen] = useState(false);
   // 0056: the customer list includes every synced Zoho customer, so it is searchable
   const [counterFind, setCounterFind] = useState("");
   const [addingCustomer, setAddingCustomer] = useState(false);   // Phase 1: Zoho-first add customer
@@ -1136,6 +1204,23 @@ const parseRand = (s: string): number => {
 
   const connected = status.connected;
 
+  // The header basket, on every screen (brand rows, the part sheet, the
+  // drawing). Opening it closes whatever is on top: for a customer it is
+  // their request; for staff it is the counter sale on the order desk.
+  const openCart = () => {
+    setSheetOpen(false); setCounterOpen(false); setViewer(null);
+    if (diagram) {
+      setDiagram(null);
+      if (/^#dg=/.test(location.hash)) history.replaceState(null, "", location.pathname + location.search);
+    }
+    setTab("cart");
+    window.setTimeout(() => document.querySelector(".mb-body")?.scrollTo({ top: 0 }), 0);
+  };
+  const cartBtn = (
+    <CartButton count={cartCount} bump={cartBump} onOpen={openCart}
+      label={isClient ? "Your request" : "Counter order"} />
+  );
+
   // ─── views ─────────────────────────────────────────────────────────────────
 
   // The front page: every section of the truck as a big card — the SEC
@@ -1173,6 +1258,7 @@ const parseRand = (s: string): number => {
           <span className={"mb-sync" + (connected ? "" : " off")}>
             <span className="mb-dot" />{connected ? "synced" : "offline"}
           </span>
+          {cartBtn}
         </div>
         <div className="mb-searchwrap">
           <div className="mb-sbox">
@@ -1223,6 +1309,7 @@ const parseRand = (s: string): number => {
           <span className={"mb-sync" + (connected ? "" : " off")}>
             <span className="mb-dot" />{connected ? "synced" : "offline"}
           </span>
+          {cartBtn}
         </div>
         {tab === "find" && (
           <div className="mb-searchwrap">
@@ -1316,6 +1403,7 @@ const parseRand = (s: string): number => {
           <span className={"mb-sync" + (connected ? "" : " off")}>
             <span className="mb-dot" />{connected ? "synced" : "offline"}
           </span>
+          {cartBtn}
         </div>
       </div>
       <div className="mb-body">
@@ -1463,6 +1551,123 @@ const parseRand = (s: string): number => {
     { key: "fulfilled",     label: "Goods out",       hint: "stock taken — Zoho issues the invoice from the sales order" },
   ];
 
+  // ── order desk search + filters (Ian, 23 Oct 2026) ──
+  // All on the rows already on the phone; nothing here calls Zoho.
+  const shown = useMemo(() => orders ? applyFilter(orders, ofilter) : null, [orders, ofilter]);
+  const custOpts = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const o of orders ?? []) m.set(customerKey(o), o.customer_name);
+    return [...m].sort((a, b) => a[1].localeCompare(b[1]));
+  }, [orders]);
+  const partOpts = useMemo(() => {
+    const m = new Map<number, string>();
+    for (const o of orders ?? []) for (const l of o.lines) m.set(l.part_id, `${l.sku} · ${l.name}`);
+    return [...m].sort((a, b) => a[1].localeCompare(b[1]));
+  }, [orders]);
+  const filtering = isFiltering(ofilter);
+  const fchips: { label: string; clear: Partial<OrderFilter> }[] = [];
+  if (ofilter.q.trim()) fchips.push({ label: `“${ofilter.q.trim()}”`, clear: { q: "" } });
+  if (ofilter.range !== "all") fchips.push({
+    label: ofilter.range === "custom"
+      ? `${ofilter.from || "…"} → ${ofilter.to || "…"}` : RANGE_LABEL[ofilter.range],
+    clear: { range: "all", from: "", to: "" },
+  });
+  if (ofilter.stage) fchips.push({ label: STAGE_LABEL[ofilter.stage], clear: { stage: null } });
+  if (ofilter.customer) fchips.push({
+    label: custOpts.find(([k]) => k === ofilter.customer)?.[1] ?? "Customer", clear: { customer: null },
+  });
+  if (ofilter.part != null) fchips.push({
+    label: partOpts.find(([k]) => k === ofilter.part)?.[1].split(" · ")[0] ?? "Part", clear: { part: null },
+  });
+  if (ofilter.invoice !== "any") fchips.push({ label: ofilter.invoice === "has" ? "Has invoice" : "No invoice", clear: { invoice: "any" } });
+  if (ofilter.paid !== "any") fchips.push({ label: ofilter.paid === "paid" ? "Paid" : "Unpaid", clear: { paid: "any" } });
+  const opt = <K extends keyof OrderFilter>(k: K, v: OrderFilter[K], label: string) => (
+    <button key={String(v)} type="button" className={"mb-chip" + (ofilter[k] === v ? " on" : "")}
+      onClick={() => setOfilter((f) => ({ ...f, [k]: v }))}>{label}</button>
+  );
+  const orderFilterBar = orders && orders.length > 0 && (
+    <div className="mb-of">
+      <div className="mb-of-row">
+        <div className="mb-sbox">
+          <IcSearch />
+          <input className="mb-of-q" type="search" inputMode="search" enterKeyHint="search" value={ofilter.q}
+            placeholder="RQ, SO, INV, quote no, customer, part…"
+            onChange={(e) => { const q = e.target.value; setOfilter((f) => ({ ...f, q })); }} />
+          {ofilter.q && <button className="mb-clr" onClick={() => setOfilter((f) => ({ ...f, q: "" }))}>✕</button>}
+        </div>
+        <button type="button" className={"mb-of-tg" + (filtersOpen || fchips.some((c) => !("q" in c.clear)) ? " on" : "")}
+          onClick={() => setFiltersOpen((v) => !v)}>
+          Filters{fchips.filter((c) => !("q" in c.clear)).length > 0 ? ` · ${fchips.filter((c) => !("q" in c.clear)).length}` : ""}
+        </button>
+      </div>
+      {filtersOpen && (
+        <div className="mb-of-panel">
+          <div>
+            <div className="mb-of-lbl">Date</div>
+            <div className="mb-of-opts">
+              {(["all", "today", "7d", "month", "custom"] as Range[]).map((r) => opt("range", r, RANGE_LABEL[r]))}
+            </div>
+            {ofilter.range === "custom" && (
+              <div className="mb-of-dates">
+                <input className="mb-of-date" type="date" value={ofilter.from} aria-label="From"
+                  onChange={(e) => { const from = e.target.value; setOfilter((f) => ({ ...f, from })); }} />
+                <input className="mb-of-date" type="date" value={ofilter.to} aria-label="To"
+                  onChange={(e) => { const to = e.target.value; setOfilter((f) => ({ ...f, to })); }} />
+              </div>
+            )}
+          </div>
+          <div>
+            <div className="mb-of-lbl">Stage</div>
+            <div className="mb-of-opts">
+              {opt("stage", null, "Any")}
+              {(Object.keys(STAGE_LABEL) as StageKey[]).map((s) => opt("stage", s, STAGE_LABEL[s]))}
+            </div>
+          </div>
+          <div>
+            <div className="mb-of-lbl">Customer</div>
+            <select className="mb-of-sel" value={ofilter.customer ?? ""}
+              onChange={(e) => { const customer = e.target.value || null; setOfilter((f) => ({ ...f, customer })); }}>
+              <option value="">Any customer</option>
+              {custOpts.map(([k, n]) => <option key={k} value={k}>{n}</option>)}
+            </select>
+          </div>
+          <div>
+            <div className="mb-of-lbl">Part</div>
+            <select className="mb-of-sel" value={ofilter.part ?? ""}
+              onChange={(e) => { const part = e.target.value ? Number(e.target.value) : null; setOfilter((f) => ({ ...f, part })); }}>
+              <option value="">Any part</option>
+              {partOpts.map(([k, n]) => <option key={k} value={k}>{n}</option>)}
+            </select>
+          </div>
+          <div>
+            <div className="mb-of-lbl">Invoice</div>
+            <div className="mb-of-opts">
+              {opt("invoice", "any", "Any")}{opt("invoice", "has", "Has invoice")}{opt("invoice", "none", "No invoice")}
+            </div>
+          </div>
+          <div>
+            <div className="mb-of-lbl">Payment</div>
+            <div className="mb-of-opts">
+              {opt("paid", "any", "Any")}{opt("paid", "paid", "Paid")}{opt("paid", "unpaid", "Unpaid")}
+            </div>
+          </div>
+        </div>
+      )}
+      {filtering && (
+        <div className="mb-of-chips">
+          {fchips.map((c) => (
+            <button key={c.label} type="button" className="mb-of-chip"
+              onClick={() => setOfilter((f) => ({ ...f, ...c.clear }))}>
+              {c.label}<b>✕</b>
+            </button>
+          ))}
+          <button type="button" className="mb-of-clear" onClick={() => setOfilter(EMPTY_FILTER)}>Clear all</button>
+          <span className="mb-of-n">{shown?.length ?? 0} of {orders.length}</span>
+        </div>
+      )}
+    </div>
+  );
+
   const ordersView = (
     <div className="mb-view">
       <div className="mb-top">
@@ -1472,6 +1677,7 @@ const parseRand = (s: string): number => {
           <span className={"mb-sync" + (connected ? "" : " off")}>
             <span className="mb-dot" />{connected ? "synced" : "offline"}
           </span>
+          {cartBtn}
         </div>
       </div>
       <div className="mb-body">
@@ -1484,7 +1690,7 @@ const parseRand = (s: string): number => {
           <div className="mb-card" style={{ borderColor: "var(--amber)", marginBottom: 14 }}>
             <div className="mb-cbody">
               <div className="mb-count" style={{ color: "var(--amber)", paddingTop: 0 }}>
-                Counter sale · {cart.length} part{cart.length === 1 ? "" : "s"}
+                Counter sale · {cart.length} part{cart.length === 1 ? "" : "s"} · {cartCount} item{cartCount === 1 ? "" : "s"}
               </div>
 
               {customers.length > 8 && (
@@ -1543,6 +1749,7 @@ const parseRand = (s: string): number => {
           </div>
         )}
 
+        {orderFilterBar}
         {orders === null && !ordersErr && <div className="mb-count">Loading…</div>}
         {ordersErr && (
           <div className="mb-empty">
@@ -1555,8 +1762,14 @@ const parseRand = (s: string): number => {
         {orders !== null && !ordersErr && orders.length === 0 && (
           <div className="mb-empty">No orders on the desk.</div>
         )}
-        {orders && STAGES.map((s) => {
-          const inStage = orders.filter((o) => o.stage === s.key);
+        {shown && filtering && shown.length === 0 && (
+          <div className="mb-empty">
+            <h3>No orders match</h3>
+            <p>Nothing fits these filters. Tap a chip to drop it, or <b>Clear all</b>.</p>
+          </div>
+        )}
+        {shown && STAGES.map((s) => {
+          const inStage = shown.filter((o) => o.stage === s.key);
           if (inStage.length === 0) return null;
           return (
             <div key={s.key}>
@@ -1732,8 +1945,9 @@ const parseRand = (s: string): number => {
             these; the desk only ever drew its three lanes, so four invoiced
             Hermans orders were on the phone and invisible. Same card as the
             lanes, newest first (the query's order), no actions. */}
-        {orders && (() => {
-          const done = orders.filter((o) => !STAGES.some((s) => s.key === o.stage))
+        {shown && [false, true].map((cancelledGroup) => {
+          const done = shown.filter((o) => !STAGES.some((s) => s.key === o.stage)
+              && (o.status === "cancelled") === cancelledGroup)
             // Newest first by the time it was invoiced. Never by invoice_no:
             // the count is two digits by design, so as text '260914100' would
             // sort before '26091499' (0042).
@@ -1744,8 +1958,8 @@ const parseRand = (s: string): number => {
           // main.rs rounds half-up in cents. The card must agree with the paper.
           const grand = (o: StaffOrder) => o.total_minor + Math.floor((o.total_minor * o.tax_rate_bps + 5000) / 10000);
           return (
-            <div>
-              <div className="mb-count">Completed · {done.length} — invoiced and closed</div>
+            <div key={cancelledGroup ? "cancelled" : "done"}>
+              <div className="mb-count">{cancelledGroup ? `Cancelled · ${done.length}` : `Completed · ${done.length} — invoiced and closed`}</div>
               {done.map((o) => {
                 const open = openOrder === o.id;
                 const when = o.invoiced_at ?? o.fulfilled_at ?? o.created_at;
@@ -1827,7 +2041,7 @@ const parseRand = (s: string): number => {
               })}
             </div>
           );
-        })()}
+        })}
         {orders && orders.length === 0 && (
           <div className="mb-empty">
             <h3>No orders yet</h3>
@@ -1852,6 +2066,7 @@ const parseRand = (s: string): number => {
           <span className={"mb-sync" + (connected ? "" : " off")}>
             <span className="mb-dot" />{connected ? "online" : "offline"}
           </span>
+          {cartBtn}
         </div>
       </div>
       <div className="mb-body">
@@ -2061,6 +2276,7 @@ const parseRand = (s: string): number => {
           <div className="mb-shead">
             <button className="mb-back" onClick={() => { setSheetOpen(false); setCounterOpen(false); }}>‹</button>
             <span className="mb-shead-t">{d.category_name ?? "Part"}</span>
+            <span style={{ marginLeft: "auto" }}>{cartBtn}</span>
           </div>
           <div className="mb-sbody">
             {/* One photo: exactly what it always was. More than one: a carousel
@@ -2313,7 +2529,7 @@ const parseRand = (s: string): number => {
               ? `${p.sku} × ${n} added to your request`
               : `${p.sku} × ${n} on the counter` });
           }}
-          inRequest={inCart} />
+          inRequest={inCart} headerExtra={cartBtn} />
       )}
       {viewer && !hotspotEditor && (
         <Lightbox items={viewer.items} start={viewer.idx} onClose={() => setViewer(null)}
@@ -2408,7 +2624,7 @@ const parseRand = (s: string): number => {
             onClick={() => { setTab("cart"); setSheetOpen(false); }}>
             <span className="mb-tabwrap">
               <TabCart />
-              {cart.length > 0 && <span className="mb-tabbadge">{cart.length}</span>}
+              {cartCount > 0 && <span className="mb-tabbadge">{cartCount > 99 ? "99+" : cartCount}</span>}
             </span>
             Request
           </button>

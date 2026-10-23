@@ -813,18 +813,31 @@ async function staffOrders(): Promise<unknown[]> {
        FROM sales_order so LEFT JOIN customer c ON c.id = so.customer_id
       WHERE so.deleted_at IS NULL
       ORDER BY so.created_at DESC, CAST(so.id AS INTEGER) DESC
-      LIMIT 60`
+      LIMIT 1000`
   );
-  const out = [];
-  for (const o of orders) {
-    const lines = await all(
-      `SELECT sl.id, sl.qty, sl.unit_price_minor, sl.part_id,
+  // 23 Oct: the desk filters by date/part/invoice over everything on the
+  // phone, so the cap went from 60 to 1000 — and the lines come in ONE query
+  // instead of one per order.
+  const byOrder = new Map<string, Record<string, unknown>[]>();
+  if (orders.length > 0) {
+    const ids = orders.map((o) => String(o["id"]));
+    const allLines = await all(
+      `SELECT sl.id, sl.order_id, sl.qty, sl.unit_price_minor, sl.part_id,
               p.sku, p.name, p.catalogue_pn
          FROM sales_line sl LEFT JOIN part p ON p.id = sl.part_id
-        WHERE sl.order_id = ? AND sl.deleted_at IS NULL
+        WHERE sl.order_id IN (SELECT value FROM json_each(?)) AND sl.deleted_at IS NULL
         ORDER BY CAST(sl.id AS INTEGER)`,
-      [String(o["id"])]
+      [JSON.stringify(ids)]
     );
+    for (const l of allLines) {
+      const k = String(l["order_id"]);
+      const arr = byOrder.get(k);
+      if (arr) arr.push(l); else byOrder.set(k, [l]);
+    }
+  }
+  const out = [];
+  for (const o of orders) {
+    const lines = byOrder.get(String(o["id"])) ?? [];
     const mapped = lines.map((l) => ({
       id: numId(l["id"], "sales_line.id"),
       part_id: numId(l["part_id"], "part_id"),

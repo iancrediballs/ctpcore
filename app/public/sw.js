@@ -42,7 +42,7 @@
 //   non-http(s) scheme. So the guard WAS the whole bug on that count. It is
 //   still wrapped in a catch below, because quota exhaustion is real and an
 //   image that fails to cache must still be shown.
-const CACHE = "ctp-core-v23";   // v23: fulfil only after accounts INVOICE the SO in Zoho (cash: after paid); CTP links, never creates, that invoice (0061) (2026-10-22)
+const CACHE = "ctp-core-v24";   // v24: header basket with a live quantity badge (persists on the device); order desk search + filters (2026-10-23)
 // v22: fulfil waits for accounts (Zoho SO sent), Michelle's SO edits read back, account terms (0059) (2026-10-22)
 // v21: admin "Accept on customer's behalf" on the order desk (0058) (2026-10-22)
 // v20: add customer (Zoho companies & people), print copy carries Zoho invoice no. (2026-10-21)

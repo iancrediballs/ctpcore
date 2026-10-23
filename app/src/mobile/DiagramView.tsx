@@ -19,7 +19,7 @@
 // above, list below — the phone experience as it was.
 //
 // Deep link: #dg=<drawing_key>&part=<part_id> opens straight onto the part.
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import * as api from "../data/api";
 import type { DiagramPart, WebHotspot } from "../data/api";
 import { assetUrl } from "../assets";
@@ -40,7 +40,7 @@ type Row = {
   sku: string | null; name: string; badges: string[]; link: WebHotspot["link"];
 };
 
-export function DiagramView({ drawings, start, onClose, canEdit, onOpenPart, onEditMarkers, onAddToRequest, inRequest, deepPart }: {
+export function DiagramView({ drawings, start, onClose, canEdit, onOpenPart, onEditMarkers, onAddToRequest, inRequest, deepPart, headerExtra }: {
   drawings: Drawing[]; start: number;
   onClose: () => void;
   canEdit?: boolean;
@@ -51,6 +51,8 @@ export function DiagramView({ drawings, start, onClose, canEdit, onOpenPart, onE
   inRequest?: (partId: number) => number;
   /** Part to land on (deep link). */
   deepPart?: number | null;
+  /** The shell's header basket, so adding from the drawing shows the count. */
+  headerExtra?: ReactNode;
 }) {
   const [idx, setIdx] = useState(Math.min(Math.max(start, 0), drawings.length - 1));
   const d = drawings[idx];
@@ -286,6 +288,7 @@ export function DiagramView({ drawings, start, onClose, canEdit, onOpenPart, onE
         {canEdit && onEditMarkers && (
           <button className="mb-chip on" onClick={() => onEditMarkers(d.path, d.label)}>{hots.length ? "Edit markers" : "Add markers"}</button>
         )}
+        {headerExtra}
       </div>
       {wide ? (
         <div className="dv-pane" ref={paneRef} style={{ gridTemplateColumns: `${split * 100}% 8px 1fr` }}>

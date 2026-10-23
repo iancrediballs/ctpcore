@@ -208,3 +208,39 @@ received payment' and she converts to tax invoice".
   on account → Fulfil is available. Next on the phone: Fulfil → "Close order".
 - Tests: tests_0061_local.js 19/19 (+0057 10, 0058 13, 0059 26). Live: 0061
   applied, zoho-push + zoho-auth deployed, PWA SW v23.
+
+## 23 Oct — header basket + order desk filters (PWA v24, live)
+Ian: "a cart icon showing number of items being added as they are being
+clicked, obviously clickable, and filtering in the orders menu, by date, by
+item, by invoice, by quote etc."
+- **Header basket** (`CartButton`, MobileShell): on every screen — each brand
+  row (Home, Find/Shelf, Orders, Request, Info), the part sheet header and the
+  diagram viewer header (`DiagramView headerExtra`). Badge = **total quantity**
+  (each "Add to order"/"+" tap is +1; the bottom tab badge for customers now
+  matches). Pops on every increase (`mb-cartpop`, off under reduced-motion).
+  Tap → closes the sheet/drawing and opens the basket: customers' Request tab;
+  staff the counter-sale card at the top of Orders.
+- **Persists**: localStorage `ctp-cart.v1:<auth uid>` = lines + note + counter
+  customer, per login (two people on one PC never share a basket). Cleared when
+  the basket is sent/cleared. Device-only; nothing new on the server.
+- **Order desk search + filters** (`app/src/mobile/orderFilter.ts`, pure):
+  search RQ no., Zoho SO / invoice / estimate no., CTP invoice no., customer,
+  part SKU / catalogue no. / name (separators ignored: "so00011" = SO-00011).
+  Filters: date (any / today / 7 days / this month / custom from–to, on
+  created_at, local time), stage (quote, accepted, awaiting invoice, invoiced,
+  fulfilled, cancelled — they overlap by design), customer, part, has/no
+  invoice, paid/unpaid (Zoho status paid, or read-back balance 0). Clearable
+  chips, "Clear all", "N of M" count. Remembered for the session
+  (sessionStorage `ctp-order-filter.v1`). No Zoho calls.
+- Cancelled orders now have their own "Cancelled" group (they used to sit
+  under Completed). `staffOrders()` cap 60 → 1000 and lines load in one query
+  (json_each) instead of one per order.
+- **Shell harness** (dev only): `cd app && npx vite --config vite.harness.config.ts`
+  → `http://localhost:4174/shell-harness.html` (`?role=customer`). The REAL
+  MobileShell over mocked backend/auth/sync (`app/src/dev/shell/`), because the
+  signed-in app needs a password we don't type. Not in the build.
+- Tests: `node --experimental-strip-types server/tests_orderfilter_local.mjs`
+  33/33; harness: basket +3 → badge 3, survives reload, separate per login,
+  opens the basket from header and sheet; filters combine, chips clear,
+  remembered across reload, Clear all. tsc + build clean. Deployed to
+  ctpcore.vercel.app, SW v24. The Tauri desktop app is unchanged.
