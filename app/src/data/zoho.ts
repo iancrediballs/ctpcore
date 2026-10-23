@@ -156,22 +156,39 @@ export async function setCustomerOnAccount(customerId: number, onAccount: boolea
  *  this is only the label. `doc` matters: an "open" bill is an approved one. */
 export function zohoStatusLabel(status: string | null | undefined, doc: "invoice" | "bill" | "salesorder" = "invoice"):
     { text: string; tone: "wait" | "ok" | "done" | "bad" } {
+  // 23 Oct (Ian's e2e test): a sales order "open" in Zoho is CONFIRMED — never show it as a draft.
+  if (doc === "salesorder") {
+    switch (status) {
+      case null: case undefined: case "": return { text: "Zoho: status not read yet", tone: "wait" };
+      case "draft": return { text: "Zoho: Draft — not confirmed", tone: "wait" };
+      case "pending_approval": return { text: "Zoho: Awaiting approval", tone: "wait" };
+      case "approved": case "open": case "confirmed": return { text: "Zoho: Confirmed", tone: "ok" };
+      case "onhold": case "on_hold": return { text: "Zoho: On hold", tone: "wait" };
+      case "partially_invoiced": return { text: "Zoho: Part-invoiced", tone: "ok" };
+      case "invoiced": return { text: "Zoho: Invoiced", tone: "done" };
+      case "partially_shipped": return { text: "Zoho: Part-shipped", tone: "ok" };
+      case "shipped": case "fulfilled": return { text: "Zoho: Shipped", tone: "done" };
+      case "closed": return { text: "Zoho: Closed", tone: "done" };
+      case "void": case "cancelled": return { text: "Zoho: Void", tone: "bad" };
+      case "deleted": return { text: "Deleted in Zoho", tone: "bad" };
+      case "blocked": case "error": return { text: "NOT in Zoho — error", tone: "bad" };
+      default: return { text: `Zoho: ${status.replace(/_/g, " ")}`, tone: "ok" };
+    }
+  }
   switch (status) {
     case null: case undefined: case "": return { text: "Not in Zoho yet", tone: "wait" };
     case "pushing": return { text: "Sending to Zoho…", tone: "wait" };
     case "draft": return { text: "Zoho: Draft — awaiting accountant", tone: "wait" };
     case "sent": case "viewed": case "unpaid": return { text: "Zoho: Sent (approved)", tone: "ok" };
-    case "open": return { text: doc === "invoice" ? "Zoho: Sent (approved)" : doc === "bill" ? "Zoho: Open (approved)" : "Zoho: Open (confirmed)", tone: "ok" };
-    case "invoiced": return { text: "Zoho: Invoiced", tone: "done" };
-    case "partially_invoiced": return { text: "Zoho: Part-invoiced", tone: "ok" };
-    case "closed": return { text: "Zoho: Closed", tone: "done" };
+    case "open": return { text: doc === "bill" ? "Zoho: Open (approved)" : "Zoho: Sent (approved)", tone: "ok" };
     case "overdue": return { text: "Zoho: Overdue", tone: "bad" };
     case "partially_paid": return { text: "Zoho: Part-paid", tone: "ok" };
     case "paid": return { text: "Zoho: Paid", tone: "done" };
+    case "closed": return { text: "Zoho: Closed", tone: "done" };
     case "void": return { text: "Zoho: Void", tone: "bad" };
     case "deleted": return { text: "Deleted in Zoho", tone: "bad" };
     case "blocked": case "error": return { text: "NOT in Zoho — error", tone: "bad" };
-    default: return { text: `Zoho: ${status}`, tone: "ok" };
+    default: return { text: `Zoho: ${status.replace(/_/g, " ")}`, tone: "ok" };
   }
 }
 

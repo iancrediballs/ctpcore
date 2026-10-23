@@ -169,6 +169,11 @@ On the day:
   (`stock_master = 'ctp'`, sending on) and nothing customer-facing breaks. Quotes simply start
   from the new numbers.
 
+## 4b. Note for Michelle (from Ian's end-to-end test, 23 Oct)
+- Zoho's **"Record payment"** form ticks **"Send a Thank you note"** by default. Untick it unless
+  a thank-you email should really go to the customer. (The app itself sends no customer
+  documents; this is Zoho's own email.)
+
 ## 5. Questions for Michelle
 1. ~~Filed or locked VAT periods?~~ **None filed** (23 Oct): deletes allowed.
 2. ~~One balance per customer or itemised?~~ **Itemised**, invoice by invoice (23 Oct).

@@ -539,3 +539,39 @@ Ian's screenshot: "Hermans Panel Beaters" and "R 1 329,40" near-black on the dar
   all **155 active items now unit = "pcs"**. Verified against the morning snapshot
   (docs/stock/raw_2026-10-23): 162 items / 155 details, 0 differences in name, SKU, status, type,
   rate, purchase rate; 0 empty units left. The 7 inactive items were not touched.
+
+## 23 Oct (late night) — end-to-end test fixes (0067, PWA v31)
+Ian's browser e2e passed every stage (RQ-261023-50 → QT-000006 → SO-00018 → INV-000009 paid →
+fulfilled/closed). Findings fixed:
+- **PRIVACY (#4, 0067, live):** `sales_order.notes` syncs to the customer's phone but also carried
+  staff history (accounts' price changes, "Accepted on the customer's behalf by …", holds, Zoho
+  events). Now:
+  - new `staff_log`; live notes were split (customer text stays, system lines moved);
+  - trigger `sales_order_notes_to_staff_log` redirects every later write to notes into
+    staff_log — every existing function is covered without rewriting it;
+  - `authenticated`/`anon` lose SELECT on staff_log (column grants: verified "permission denied"
+    live); staff phones get it via the SELECT * stream and show it as "History (staff only)".
+
+  **NOTE:** column-level grants mean a NEW sales_order column must be granted to authenticated
+  explicitly (`grant select (col) on sales_order to authenticated`) if anything reads it over the
+  Data API. The app reads sales_order via PowerSync / RPCs only.
+- **SO status (#1):** labels per document — sales order open = "Confirmed", plus closed / void /
+  on hold / invoiced / shipped; no "Draft" fallback. Root cause: accept functions hard-code
+  zoho_so_status 'draft' until accept-quote writes Zoho's status → trigger
+  `sales_order_so_open_on_accept` records 'open' at acceptance (Zoho confirms the SO first).
+- **Fill from list (#2):** fills the price boxes only (latest list price read locally — no
+  write). With estimates on, a priced quote without an estimate stays in "Needs pricing"
+  (`stageOf`) until **Send quote** saves and creates the estimate.
+- **Close toast (#3):** SO-backed orders: "Order closed — invoiced in Zoho as INV-…".
+- **Accept on behalf (#5):** in-app dialog with a required note (no window.prompt). Still
+  window.prompt: Cancel order, Release for fulfil (not asked yet).
+- **Outstanding (#6):** the customer's Zoho balance is re-read whenever an invoice is linked or
+  changes (was 6-hourly; the test read it 1 min before the invoice). refreshTerms always reads a
+  named customer.
+- **Lane headers (#7):** reflect the orders in them (invoiced/paid → "close the order", etc.).
+- **Word wrap (#8):** `.mb-rv` breaks only overlong words (no "accou/nts").
+- **#9:** two test customers exist — "CTP TEST - Ian" and "Test Account (Ian)" (TESTACC, used by
+  the live tests). Left as is.
+- docs/09: note for Michelle — Zoho's payment form ticks "Send a Thank you note" by default.
+- Tests: 0067 14/14 (+0066 10, 0065 20, 0064 15, 0063 24, 0061 19, 0059 26, orderFilter 33);
+  tsc + build clean. Deployed: 0067 (dry run first), zoho-push, PWA SW v31.

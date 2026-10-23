@@ -815,7 +815,7 @@ async function staffOrders(): Promise<unknown[]> {
             so.zoho_invoice_id, so.zoho_invoice_total_minor, so.zoho_invoice_balance_minor, so.zoho_invoice_paid_minor,
             so.zoho_invoice_payments, so.zoho_invoice_count,
             so.zoho_estimate_id, so.zoho_estimate_number, so.zoho_estimate_status, so.zoho_estimate_error,
-            so.zoho_estimate_total_minor, so.zoho_estimate_expiry,
+            so.zoho_estimate_total_minor, so.zoho_estimate_expiry, so.staff_log,
             c.name AS customer_name, c.contact AS customer_contact,
             c.phone AS customer_phone, c.email AS customer_email,
             (SELECT l.code FROM location l WHERE l.id = so.location_id) AS location_code
@@ -909,6 +909,7 @@ async function staffOrders(): Promise<unknown[]> {
       zoho_estimate_number: nstr(o["zoho_estimate_number"]),
       zoho_estimate_status: nstr(o["zoho_estimate_status"]),
       zoho_estimate_error: nstr(o["zoho_estimate_error"]),
+      staff_log: nstr(o["staff_log"]),
       zoho_estimate_total_minor: o["zoho_estimate_total_minor"] == null ? null : Number(o["zoho_estimate_total_minor"]),
       zoho_estimate_expiry: nstr(o["zoho_estimate_expiry"]),
       unpriced,
@@ -953,6 +954,20 @@ async function quotePriceCheck(a: Record<string, unknown>): Promise<unknown> {
   const { data, error } = await supabase.rpc("quote_price_check", { order_id: orderId, lines });
   if (error) throw new Error(`[CTP web] could not check prices: ${error.message}`);
   return data;
+}
+
+/** 23 Oct: "Fill from list" only FILLS the price boxes — the latest list price per part, read from
+ *  the local copy. Nothing is written; "Send quote" saves and creates the Zoho estimate. */
+async function listPrices(a: Record<string, unknown>): Promise<unknown> {
+  const ids = (Array.isArray(a["partIds"]) ? a["partIds"] : []).map((x) => String(x));
+  if (!ids.length) return {};
+  const rows = await all(
+    `SELECT part_id, amount_minor, valid_from FROM price
+      WHERE tier = 'list' AND deleted_at IS NULL AND part_id IN (SELECT value FROM json_each(?))
+      ORDER BY valid_from DESC`, [JSON.stringify(ids)]);
+  const out: Record<string, number> = {};
+  for (const r of rows) { const k = String(r["part_id"]); if (!(k in out)) out[k] = Number(r["amount_minor"]); }
+  return out;
 }
 
 async function fillFromList(a: Record<string, unknown>): Promise<unknown> {
@@ -1419,6 +1434,7 @@ const PORTED: Record<string, Handler> = {
   delete_hotspot: (a) => deleteHotspot(a),
   set_diagram_dims: (a) => setDiagramDims(a),
   fill_quote_from_list: (a) => fillFromList(a),
+  list_prices: (a) => listPrices(a),
   device_audit: () => deviceAudit(),
   admin_delete_photo: (a) => adminDeletePhoto(a),
   admin_set_primary_photo: (a) => adminSetPrimaryPhoto(a),

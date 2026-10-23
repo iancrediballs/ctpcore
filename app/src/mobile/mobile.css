@@ -149,7 +149,7 @@
 .mb-row{display:flex;align-items:center;gap:12px;padding:13px 15px;border-bottom:1px solid var(--line)}
 .mb-row:last-child{border-bottom:0}
 .mb-rk{font-size:12.5px;font-weight:800;color:var(--dim);text-transform:uppercase;letter-spacing:.7px;flex:0 0 108px}
-.mb-rv{font-size:15px;font-weight:750;margin-left:auto;text-align:right;word-break:break-all;color:var(--txt)}
+.mb-rv{font-size:15px;font-weight:750;margin-left:auto;text-align:right;word-break:normal;overflow-wrap:break-word;color:var(--txt)}
 .mb-actions{position:absolute;left:0;right:0;bottom:0;padding:12px 16px calc(12px + var(--safe-b));
   background:linear-gradient(to top,var(--bg) 72%,transparent);display:flex;gap:10px;z-index:41}
 .mb-btn{flex:1;height:56px;border:0;border-radius:var(--r);font-size:16px;font-weight:850;cursor:pointer;

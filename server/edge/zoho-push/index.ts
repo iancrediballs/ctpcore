@@ -407,17 +407,26 @@ async function linkInvoices(db: SupabaseClient, orderId: number, ref: string, in
     payments: invs.flatMap((i) => (i.payments ?? []).map((p: any) => payLine(p))),
   } });
   if (error) await log({ doc_type: "invoice", ctp_id: orderId, ctp_ref: ref, action: "readback_error", ok: false, message: error.message });
-  else if (data?.note) await log({ doc_type: "invoice", ctp_id: orderId, ctp_ref: ref, action: data.linked ? "found_existing" : "status", ok: true,
-                                   zoho_id: String(invs[0].invoice_id), message: `${ref}: ${data.note}` });
+  else if (data?.note) {
+    await log({ doc_type: "invoice", ctp_id: orderId, ctp_ref: ref, action: data.linked ? "found_existing" : "status", ok: true,
+                zoho_id: String(invs[0].invoice_id), message: `${ref}: ${data.note}` });
+    // 23 Oct: the invoice was just linked or changed (raised / paid) — the customer's outstanding
+    // balance in Zoho changed with it, so re-read it now instead of on the 6-hour schedule.
+    const { data: o } = await db.from("sales_order").select("customer_id").eq("id", orderId).maybeSingle();
+    if (o?.customer_id) await refreshTerms(db, log, 0, o.customer_id);
+  }
 }
 
 // Account terms from the Zoho contact, for customers with live orders. One GET
 // per customer, at most every `maxAge` (6 h on the schedule).
 async function refreshTerms(db: SupabaseClient, log: Logger, maxAge: number, only?: number) {
-  let q = db.from("sales_order").select("customer_id").is("deleted_at", null).in("status", ["quote", "confirmed", "fulfilled"]);
-  if (only) q = q.eq("customer_id", only);
-  const { data: live } = await q;
-  const ids = [...new Set((live ?? []).map((r) => r.customer_id))];
+  // one named customer: always (their invoice may just have closed the order); otherwise customers with open orders
+  let ids: number[];
+  if (only) ids = [only];
+  else {
+    const { data: live } = await db.from("sales_order").select("customer_id").is("deleted_at", null).in("status", ["quote", "confirmed", "fulfilled"]);
+    ids = [...new Set((live ?? []).map((r) => r.customer_id))];
+  }
   if (!ids.length) return 0;
   const { data: custs } = await db.from("customer").select("id, code, zoho_contact_id, zoho_terms_synced_at").in("id", ids).not("zoho_contact_id", "is", null);
   let n = 0;

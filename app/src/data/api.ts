@@ -163,6 +163,8 @@ export type AcceptBlocker = { kind: string; message: string; staff_message?: str
 /** 0063: Zoho's own figures for a quote that is a Zoho estimate (Zoho leads). */
 export type EstimateInfo = { number: string | null; status: string | null; total_minor: number | null; expiry: string | null;
   lines: { part_id: number; discount_pct: number | null; net_minor: number }[] };
+/** Latest list price per part (local, read-only) — keyed by part id, in cents. */
+export const listPrices = (partIds: number[]) => call<Record<string, number>>("list_prices", { partIds });
 export const quoteAcceptCheck = (orderId: number) =>
   call<{ ok: boolean; blockers: AcceptBlocker[]; estimate?: EstimateInfo | null }>("quote_accept_check", { orderId });
 /** Accept a quote: raises the sales order in Zoho Books AND reserves the stock,

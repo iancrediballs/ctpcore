@@ -120,6 +120,7 @@ type StaffOrder = {
   zoho_estimate_id?: string | null; zoho_estimate_number?: string | null;
   zoho_estimate_status?: string | null; zoho_estimate_error?: string | null;
   zoho_estimate_total_minor?: number | null; zoho_estimate_expiry?: string | null;
+  staff_log?: string | null;   // 0067: internal history, staff only
   unpriced: number; total_minor: number;
   stage: "to_price" | "with_customer" | "to_pick" | "fulfilled" | string;
   lines: StaffLine[];
@@ -924,9 +925,8 @@ const parseRand = (s: string): number => {
   /** 0058: admin accepts for a customer who confirmed by phone/email. Same path
    *  as the customer's accept (confirmed Zoho sales order + stock hold); the
    *  admin and the note are recorded on the order. */
-  const acceptOnBehalf = useCallback(async (o: StaffOrder) => {
-    const note = window.prompt(`Accept ${o.number} for ${o.customer_name}? This raises the confirmed sales order in Zoho and holds the stock.\nWho confirmed it, and how? e.g. "Confirmed by Denver via phone"`, "");
-    if (note == null) return;
+  const [behalf, setBehalf] = useState<{ order: StaffOrder; note: string } | null>(null);
+  const acceptOnBehalf = useCallback(async (o: StaffOrder, note: string) => {
     // the old prefill ("Confirmed by  via phone") was saved once with no name in it
     if (!/\w{2,}/.test(note.replace(/\b(confirmed|by|via|phone|email|e-mail)\b/gi, ""))) {
       showToast({ text: "Say who confirmed it, e.g. \"Confirmed by Denver via phone\".", err: true });
@@ -990,7 +990,7 @@ const parseRand = (s: string): number => {
         <div className="mb-row">
           <span className="mb-rk">Accounts</span>
           <span className="mb-rv">
-            {o.zoho_salesorder_number} {zohoStatusLabel(o.zoho_so_status ?? "draft", "salesorder").text}
+            {o.zoho_salesorder_number} {zohoStatusLabel(o.zoho_so_status, "salesorder").text}
             {o.zoho_so_emailed ? <> · <span style={{ color: "var(--green)" }}>sent to the customer</span></> : null}
             {" · "}{o.zoho_invoice_id
               ? <>invoice <b className="mb-mono">{o.zoho_invoice_number}</b> {zohoStatusLabel(o.zoho_status ?? "draft", "invoice").text}
@@ -1051,6 +1051,13 @@ const parseRand = (s: string): number => {
     try {
       const r = await api.invoiceOrder<{ invoice_no: string; already: boolean;
                                          zoho?: { ok: boolean; message: string } }>(o.id);
+      if (o.zoho_salesorder_id) {
+        // 0061: accounts invoiced it in Zoho; CTP only closes the order and links that invoice — nothing is sent.
+        showToast({ text: r?.already ? `${o.number} was already closed — invoiced in Zoho as ${o.zoho_invoice_number ?? "—"}.`
+                                     : `Order closed — invoiced in Zoho as ${o.zoho_invoice_number ?? "—"}.` });
+        loadOrders();
+        return;
+      }
       const base = r?.already
         ? `${o.number} is already invoiced as ${r.invoice_no}.`
         : `Invoice ${r?.invoice_no ?? ""} issued for ${o.number}.`;
@@ -1065,22 +1072,30 @@ const parseRand = (s: string): number => {
   }, [showToast, loadOrders]);
 
   const fillList = useCallback(async (o: StaffOrder) => {
+    // 23 Oct: fills the price boxes only (latest list price, read locally). Nothing is saved;
+    // "Send quote" saves the prices and creates the Zoho estimate.
     setSavingOrder(true);
     try {
-      const res = await api.fillQuoteFromList<{ unpriced_left?: number; total_minor?: number }>(o.id);
-      const left = Number(res?.unpriced_left ?? 0);
-      showToast({ text: left > 0
-        ? `Filled from list — ${left} part${left === 1 ? " has" : "s have"} no list price, fill by hand.`
-        : `Filled from list: ${fmtR(Number(res?.total_minor ?? 0))}.` });
-      setDraftPrices({});
-      loadOrders();
+      const lp = await api.listPrices(o.lines.map((l) => l.part_id));
+      const next: Record<number, string> = {};
+      let missing = 0, total = 0;
+      for (const l of o.lines) {
+        const c = lp[String(l.part_id)];
+        if (c != null && c > 0) { next[l.id] = (c / 100).toFixed(2); total += c * l.qty; }
+        else if (l.unit_price_minor > 0) total += l.unit_price_minor * l.qty;
+        else missing++;
+      }
+      setDraftPrices((d) => ({ ...d, ...next }));
+      showToast({ text: missing > 0
+        ? `Filled from list — ${missing} part${missing === 1 ? " has" : "s have"} no list price, fill by hand. Then Send quote.`
+        : `Filled from list: ${fmtR(total)} — check, then Send quote.` });
     } catch (e) {
       console.error(e);
       showToast({ text: e instanceof Error ? e.message : "Could not fill.", err: true });
     } finally {
       setSavingOrder(false);
     }
-  }, [showToast, loadOrders]);
+  }, [showToast]);
 
   // 0047: why a quote cannot be accepted yet, by order id — read when the
   // quote is ready so the button says so before anyone taps it.
@@ -1763,6 +1778,27 @@ const parseRand = (s: string): number => {
     </div>
   );
 
+  /** 23 Oct: with quotes as Zoho estimates, a priced quote is not "with the customer" until its
+   *  estimate exists — it stays in Needs pricing, where Send quote creates the estimate. */
+  const stageOf = (o: StaffOrder): string =>
+    estimatesOn && o.stage === "with_customer" && !o.zoho_estimate_id ? "to_price" : o.stage;
+  /** Lane headers say what is actually true of the orders in them (Ian, 23 Oct). */
+  const laneHint = (key: string, rows: StaffOrder[], fallback: string): string => {
+    if (key === "to_price") return rows.some((o) => estimatesOn && o.unpriced === 0) ? "price it, then Send quote (creates the Zoho estimate)" : fallback;
+    if (key === "with_customer") return estimatesOn ? "estimate in Zoho — accounts send it, then the customer accepts" : fallback;
+    if (key === "to_pick") {
+      const inv = rows.filter((o) => o.zoho_invoice_id).length;
+      return inv === rows.length ? "invoiced in Zoho — goods can go out" : inv === 0 ? "sales order in Zoho — waiting for accounts to invoice it" : "some invoiced in Zoho — see each order";
+    }
+    if (key === "fulfilled") {
+      const inv = rows.filter((o) => o.zoho_invoice_id || !o.zoho_salesorder_id).length;
+      const paid = rows.filter((o) => o.zoho_status === "paid").length;
+      return inv === rows.length ? (paid === rows.length ? "goods out, invoiced and paid in Zoho — close the order" : "goods out and invoiced in Zoho — close the order")
+        : inv === 0 ? "goods out — waiting for accounts to invoice in Zoho" : "goods out — some still waiting for the Zoho invoice";
+    }
+    return fallback;
+  };
+
   const ordersView = (
     <div className="mb-view">
       <div className="mb-top">
@@ -1864,11 +1900,11 @@ const parseRand = (s: string): number => {
           </div>
         )}
         {shown && STAGES.map((s) => {
-          const inStage = shown.filter((o) => o.stage === s.key);
+          const inStage = shown.filter((o) => stageOf(o) === s.key);
           if (inStage.length === 0) return null;
           return (
             <div key={s.key}>
-              <div className="mb-count">{s.label} · {inStage.length} — {s.hint}</div>
+              <div className="mb-count">{s.label} · {inStage.length} — {laneHint(s.key, inStage, s.hint)}</div>
               {inStage.map((o) => {
                 const open = openOrder === o.id;
                 return (
@@ -1898,7 +1934,7 @@ const parseRand = (s: string): number => {
                               <div className="mb-cname">{l.qty} × {l.name}</div>
                               <div className="mb-csku mb-mono">{l.sku}</div>
                             </span>
-                            {o.stage === "to_price" ? (
+                            {stageOf(o) === "to_price" ? (
                               <input className="mb-price-in" inputMode="decimal" placeholder="0.00"
                                 value={draftPrices[l.id] ?? (l.unit_price_minor > 0 ? String(l.unit_price_minor / 100) : "")}
                                 onChange={(e) => setDraftPrices((d) => ({ ...d, [l.id]: e.target.value }))} />
@@ -1907,7 +1943,7 @@ const parseRand = (s: string): number => {
                             )}
                           </div>
                         ))}
-                        {o.stage === "to_price" && (
+                        {stageOf(o) === "to_price" && (
                           o.lines.length === 0 ? (
                             <div className="mb-row">
                               <span className="mb-rk">Empty</span>
@@ -1926,7 +1962,7 @@ const parseRand = (s: string): number => {
                             </div>
                           )
                         )}
-                        {o.stage === "with_customer" && (
+                        {stageOf(o) === "with_customer" && (
                           <div className="mb-row">
                             <span className="mb-rk">Waiting</span>
                             <span className="mb-rv">{(estimatesOn || o.zoho_estimate_id) && !["sent", "accepted"].includes(o.zoho_estimate_status ?? "")
@@ -1981,20 +2017,26 @@ const parseRand = (s: string): number => {
                             )}
                           </>
                         )}
-                        {o.stage === "with_customer" && role === "admin" && (() => {
+                        {stageOf(o) === "with_customer" && role === "admin" && (() => {
                           // 0063: only once accounts have SENT the Zoho estimate
                           const notYet = (estimatesOn || !!o.zoho_estimate_id) && !(o.zoho_estimate_id && ["sent", "accepted"].includes(o.zoho_estimate_status ?? ""));
                           return (
                             <div className="mb-row">
                               <button className="mb-btn s" style={{ height: 46 }} disabled={savingOrder || notYet}
                                 title={notYet ? `Waiting for accounts to send estimate ${o.zoho_estimate_number ?? ""} from Zoho` : undefined}
-                                onClick={() => { void acceptOnBehalf(o); }}>
+                                onClick={() => setBehalf({ order: o, note: "" })}>
                                 {notYet ? `Accept on customer's behalf — waiting for accounts to send ${o.zoho_estimate_number ?? "the estimate"}` : "Accept on customer's behalf"}
                               </button>
                             </div>
                           );
                         })()}
-                        {o.stage !== "to_price" && (
+                        {o.staff_log && (
+                          <details className="mb-row" style={{ display: "block" }}>
+                            <summary className="mb-rk" style={{ cursor: "pointer" }}>History (staff only)</summary>
+                            <div className="mb-csku" style={{ whiteSpace: "pre-wrap", marginTop: 6 }}>{o.staff_log}</div>
+                          </details>
+                        )}
+                        {stageOf(o) !== "to_price" && (
                           <div className="mb-row">
                             <button className="mb-btn s" style={{ height: 46 }} onClick={() => { void printOrder(o); }}>
                               {docLabel(o)}
@@ -2095,7 +2137,7 @@ const parseRand = (s: string): number => {
             Hermans orders were on the phone and invisible. Same card as the
             lanes, newest first (the query's order), no actions. */}
         {shown && [false, true].map((cancelledGroup) => {
-          const done = shown.filter((o) => !STAGES.some((s) => s.key === o.stage)
+          const done = shown.filter((o) => !STAGES.some((s) => s.key === stageOf(o))
               && (o.status === "cancelled") === cancelledGroup)
             // Newest first by the time it was invoiced. Never by invoice_no:
             // the count is two digits by design, so as text '260914100' would
@@ -2164,6 +2206,12 @@ const parseRand = (s: string): number => {
                             <span className="mb-rk">Their note</span>
                             <span className="mb-rv">{o.notes}</span>
                           </div>
+                        )}
+                        {o.staff_log && (
+                          <details className="mb-row" style={{ display: "block" }}>
+                            <summary className="mb-rk" style={{ cursor: "pointer" }}>History (staff only)</summary>
+                            <div className="mb-csku" style={{ whiteSpace: "pre-wrap", marginTop: 6 }}>{o.staff_log}</div>
+                          </details>
                         )}
                         {o.lines.map((l) => (
                           <div className="mb-row" key={l.id}>
@@ -2770,6 +2818,26 @@ const parseRand = (s: string): number => {
         </div>
       )}
 
+      {behalf && (
+        <div className="mb-toast" role="dialog" aria-label="Accept on the customer's behalf"
+          style={{ display: "flex", flexDirection: "column", alignItems: "stretch", gap: 10 }}>
+          <span>Accept <b>{behalf.order.number}</b> for <b>{behalf.order.customer_name}</b>? This raises the confirmed sales order in Zoho from the estimate and holds the stock.</span>
+          <label style={{ fontSize: 13, fontWeight: 700 }}>Who confirmed it, and how? (required)
+            <input className="mb-of-q" style={{ marginTop: 6, padding: "0 12px" }} autoFocus value={behalf.note} maxLength={300}
+              placeholder="e.g. Confirmed by Denver via phone"
+              onChange={(e) => setBehalf((b) => b && { ...b, note: e.target.value })} />
+          </label>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button className="mb-chip" style={{ flex: 1 }} onClick={() => setBehalf(null)}>Cancel</button>
+            <button className="mb-chip on" style={{ flex: 1 }}
+              disabled={savingOrder || !/\w{2,}/.test(behalf.note.replace(/\b(confirmed|by|via|phone|email|e-mail)\b/gi, ""))}
+              onClick={() => { const b = behalf; setBehalf(null); void acceptOnBehalf(b.order, b.note.trim()); }}>
+              Accept for the customer
+            </button>
+          </div>
+        </div>
+      )}
+
       {pendingAct && (
         <div className="mb-toast"
           style={{ display: "flex", flexDirection: "column", alignItems: "stretch", gap: 10 }}>
@@ -2840,7 +2908,7 @@ const parseRand = (s: string): number => {
                 {/* Only what is waiting on US — a badge for someone else's
                     homework is noise you learn to ignore. */}
                 {(() => {
-                  const n = (orders ?? []).filter((o) => o.stage === "to_price" || o.stage === "to_pick").length;
+                  const n = (orders ?? []).filter((o) => stageOf(o) === "to_price" || stageOf(o) === "to_pick").length;
                   return n > 0 ? <span className="mb-tabbadge">{n}</span> : null;
                 })()}
               </span>
