@@ -1035,9 +1035,17 @@ const parseRand = (s: string): number => {
     }
     try {
       const r = await api.fulfilOrder<{ movements: number; already: boolean }>(o.id);
-      showToast({ text: r?.already
+      let zohoNote = "";
+      if (o.zoho_salesorder_id) {
+        // 24 Oct: CTP mode — mirror the goods-out in Zoho Inventory (package + shipment) so its physical
+        // stock moves too; Zoho's accounting stock moves with the invoice. Never a second CTP movement.
+        const z = await shipInZoho(o.id, true);
+        zohoNote = z.ok ? ` Zoho: package ${z.data.package_number}, shipment ${z.data.shipment_number}.` : ` Zoho shipment not created: ${z.message}`;
+      }
+      showToast({ text: (r?.already
         ? `${o.number} was already fulfilled — nothing changed.`
-        : `${o.number} fulfilled: ${r?.movements ?? 0} line${(r?.movements ?? 0) === 1 ? "" : "s"} taken out of stock.` });
+        : `${o.number} fulfilled: ${r?.movements ?? 0} line${(r?.movements ?? 0) === 1 ? "" : "s"} taken out of stock.`) + zohoNote,
+        err: zohoNote.startsWith(" Zoho shipment not created") });
       loadOrders();
     } catch (e) {
       const msg = e instanceof Error ? e.message.replace(/^\[CTP web\] could not fulfil: /, "") : "Could not fulfil.";

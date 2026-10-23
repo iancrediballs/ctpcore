@@ -37,6 +37,8 @@
 //                          with the status read-back)
 //   { "action": "ship", "order_id": 43 }        Fulfil: package + shipment from the confirmed SO (delivered),
 //                          then record_goods_out() — no CTP sale movement
+//   { "action": "ship", "order_id": 43, "mirror": true }   CTP mode: after CTP's own fulfil, the same package +
+//                          shipment so Inventory's physical stock follows (record_goods_out is then a no-op)
 //   { "action": "adjust", "part_id": 1001, "counted": 5, "reason"?: "…" }   count → Inventory adjustment
 //   { "action": "receive_list" }                open Zoho POs with lines
 //   { "action": "receive", "purchaseorder_id": "…", "lines": [{ "line_item_id", "quantity" }] }
@@ -845,7 +847,16 @@ Deno.serve(async (req: Request) => {
     if (body.action === "stock_sync") return json({ ok: true, ...(await stockSync(db, log, body.force === true)) });
     if (["ship", "adjust", "receive", "receive_list"].includes(body.action)) {
       if (body.action !== "receive_list") {
-        const no = await inventoryMayAct(db, who, body);
+        // 24 Oct: in CTP mode, Fulfil already moved the CTP ledger; a "mirror" ship then creates the Zoho
+        // package + shipment so Inventory's PHYSICAL stock follows (the invoice only moves accounting stock).
+        // Only for an order CTP has already fulfilled, so it can never deduct twice in CTP.
+        let mirrorOk = false;
+        if (body.action === "ship" && body.mirror === true) {
+          const { data: mo } = await db.from("sales_order").select("status").eq("id", Number(body.order_id)).maybeSingle();
+          mirrorOk = ["fulfilled", "invoiced"].includes(String(mo?.status));
+          if (!mirrorOk) return json({ ok: false, error: "Mirror shipping is only for an order CTP has already fulfilled." }, 409);
+        }
+        const no = mirrorOk ? null : await inventoryMayAct(db, who, body);
         if (no) return json({ ok: false, error: no }, 409);
       }
       try {

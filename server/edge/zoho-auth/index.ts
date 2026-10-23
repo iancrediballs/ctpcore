@@ -128,6 +128,57 @@ Deno.serve(async (req: Request) => {
 
   // READ-ONLY assessment for the Zoho-first plan (docs/06): plan, settings,
   // inventory tracking, and which endpoints the current token can read.
+  // 24 Oct: READ-ONLY stock trace for one part across Zoho Inventory, Zoho Books and documents.
+  //   { sku, so_number?, invoice_number? }
+  if (body.action === "item_trace") {
+    await zohoInit(db);
+    const tk = await zohoToken();
+    const org = env("ZOHO_ORG_ID");
+    const g = async (base: string, path: string) => {
+      const r = await fetch(`${base}${path}${path.includes("?") ? "&" : "?"}organization_id=${org}`, { headers: { Authorization: `Zoho-oauthtoken ${tk}` } });
+      const j = await r.json().catch(() => ({}));
+      return { status: r.status, j };
+    };
+    const B = "https://www.zohoapis.com/books/v3", I = "https://www.zohoapis.com/inventory/v1";
+    const sku = String(body.sku ?? "");
+    const { data: zi } = await db.from("zoho_item").select("zoho_item_id").eq("sku", sku).eq("status", "active").maybeSingle();
+    if (!zi) return json({ ok: false, error: "sku not linked" }, 404);
+    const pick = (o: Record<string, unknown> = {}) => Object.fromEntries(Object.entries(o).filter(([k]) => /stock|available|committed|on_hand|quantity|reorder|warehouse|location/i.test(k))
+      .map(([k, v]) => [k, typeof v === "object" ? JSON.stringify(v)?.slice(0, 300) : v]));
+    const inv = await g(I, `/items/${zi.zoho_item_id}`), books = await g(B, `/items/${zi.zoho_item_id}`);
+    const out: Record<string, unknown> = { zoho_item_id: zi.zoho_item_id, inventory_item: pick(inv.j.item), books_item: pick(books.j.item) };
+    if (body.so_number) {
+      const l = await g(B, `/salesorders?salesorder_number=${encodeURIComponent(String(body.so_number))}`);
+      const so0 = (l.j.salesorders ?? [])[0];
+      if (so0) {
+        const so = (await g(I, `/salesorders/${so0.salesorder_id}`)).j.salesorder ?? {};
+        out.salesorder = { number: so.salesorder_number, status: so.status, order_status: so.order_status, shipped_status: so.shipped_status, invoiced_status: so.invoiced_status,
+          // deno-lint-ignore no-explicit-any
+          packages: (so.packages ?? []).map((p: any) => `${p.package_number} ${p.status} ${p.shipment_number ?? ""}`),
+          // deno-lint-ignore no-explicit-any
+          lines: (so.line_items ?? []).map((x: any) => `${x.sku} qty ${x.quantity} packed ${x.quantity_packed ?? "-"} shipped ${x.quantity_shipped ?? "-"} invoiced ${x.quantity_invoiced ?? "-"}`) };
+      }
+    }
+    if (body.invoice_number) {
+      const l = await g(B, `/invoices?invoice_number=${encodeURIComponent(String(body.invoice_number))}`);
+      const i0 = (l.j.invoices ?? [])[0];
+      if (i0) {
+        const iv = (await g(B, `/invoices/${i0.invoice_id}`)).j.invoice ?? {};
+        out.invoice = { number: iv.invoice_number, status: iv.status, date: iv.date, total: iv.total, balance: iv.balance,
+          // deno-lint-ignore no-explicit-any
+          lines: (iv.line_items ?? []).map((x: any) => `${x.sku} qty ${x.quantity} @ ${x.rate} so_line ${x.salesorder_item_id ?? "-"} account ${x.account_name ?? ""}`) };
+        const probes: Record<string, unknown> = {};
+        for (const pth of [`/invoices/${i0.invoice_id}/journals`, `/invoices/${i0.invoice_id}/journal`, `/journals?entity_id=${i0.invoice_id}`,
+                           `/reports/accounttransactions?transaction_id=${i0.invoice_id}`, `/chartofaccounts/transactions?transaction_id=${i0.invoice_id}`]) {
+          const x = await g(B, pth);
+          probes[pth.replace(i0.invoice_id, "{id}")] = x.status === 200 ? JSON.stringify(x.j).slice(0, 1800) : `${x.status} ${x.j.code ?? ""} ${x.j.message ?? ""}`;
+        }
+        out.invoice_journal_probes = probes;
+      }
+    }
+    return json({ ok: true, ...out });
+  }
+
   // 23 Oct: Zoho items have an empty Unit, which blocks saving edits in Zoho's UI. Sets ONLY
   // `unit` on ACTIVE items whose unit is empty, then re-reads each item and checks the other
   // fields are unchanged. { unit: "pcs", dry?: true, limit?: n, ids?: [...] }

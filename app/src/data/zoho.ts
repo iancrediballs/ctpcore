@@ -105,7 +105,7 @@ async function inv<T>(body: Record<string, unknown>): Promise<InvResult<T>> {
 }
 export type ShipResult = { package_number: string; shipment_number: string; shipment_status: string; already?: boolean };
 /** Fulfil when Zoho holds the stock: package + shipment (delivered) from the order's Zoho SO. */
-export const shipInZoho = (orderId: number) => inv<ShipResult>({ action: "ship", order_id: orderId });
+export const shipInZoho = (orderId: number, mirror = false) => inv<ShipResult>({ action: "ship", order_id: orderId, ...(mirror ? { mirror: true } : {}) });
 export type AdjustResult = { sku: string; counted: number; zoho_before: number; delta: number; reference?: string; note?: string };
 /** A shelf count → Zoho Inventory adjustment (counted − Zoho's physical on hand). */
 export const countToZoho = (partId: number, counted: number, reason = "Stock count") =>

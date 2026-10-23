@@ -575,3 +575,42 @@ fulfilled/closed). Findings fixed:
 - docs/09: note for Michelle — Zoho's payment form ticks "Send a Thank you note" by default.
 - Tests: 0067 14/14 (+0066 10, 0065 20, 0064 15, 0063 24, 0061 19, 0059 26, orderFilter 33);
   tsc + build clean. Deployed: 0067 (dry run first), zoho-push, PWA SW v31.
+
+## 24 Oct — stock consistency across CTP, Zoho Inventory and Zoho Books (PWA v32)
+Traced part 2803052B1063 (E2E order RQ-261023-50 / SO-00018 / INV-000009) with the new read-only
+`zoho-auth {action:"item_trace", sku, so_number?, invoice_number?}`.
+- **Zoho keeps two stock figures in one org.**
+  - ACCOUNTING `stock_on_hand`: the SAME number in Books and Inventory. Moves when invoices and
+    bills are approved, and with adjustments.
+  - PHYSICAL `actual_available_stock`: Inventory only. Moves with shipments, purchase receives
+    and adjustments.
+  - Each document moves each figure once → **no double deduction inside Zoho**.
+- **Found:** in CTP mode, Fulfil moved only the CTP ledger. INV-000009 (approved) took accounting
+  13→12, but no package/shipment existed (SO shipped_status "pending"), so physical stayed 13
+  with 1 "committed". That was the 13 vs 12.
+- **Fix:** CTP-mode Fulfil on an SO-backed order now also calls zoho-push `ship` with
+  `mirror: true` (package + shipment, delivered). The mirror is allowed only for an order CTP has
+  already fulfilled, and `record_goods_out` is then a no-op → never a second CTP movement.
+  Zoho mode is unchanged: Ship creates package + shipment and CTP writes no sale.
+- **Movement (backfill of SO-00018 → PKG-00006 / SHP-00006):**
+
+  | | CTP ledger | Inventory physical | Inventory accounting | Books |
+  |---|---|---|---|---|
+  | before | 11 | 13 | 12 | 12 |
+  | after | 11 | 12 | 12 | 12 |
+
+  CTP sale movements on the order: still 1. App cache 12.
+- **CTP 11 vs Zoho 12** is the known pre-existing +1 from the reconciliation, settled by the
+  counts at cut-over:
+  - CTP's opening load missed PI000001's 3;
+  - CTP sold 3 that Zoho never invoiced;
+  - CTP adjustments/returns +5 never reached Zoho.
+- **COGS / inventory-asset journal for INV-000009: not readable** with our scopes
+  (`/journals`, `/chartofaccounts/transactions` → 401). It needs `ZohoBooks.accountants.READ` in a
+  future grant if Ian wants it verified by API. In Books+Inventory, COGS posts with the approved
+  invoice (accounting stock).
+- **Default:** stay on `stock_master = ctp` through the rehearsal (the counts and adjustments
+  stay frozen until the reconciliation is approved). Flip to `zoho` at cut-over.
+  Receiving/counts in CTP mode do not touch Zoho:
+  - Michelle's bills move Zoho accounting;
+  - Zoho physical moves only via phone Receive (Zoho mode) or Zoho's own purchase receive.
