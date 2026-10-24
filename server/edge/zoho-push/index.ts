@@ -503,6 +503,9 @@ async function refreshTerms(db: SupabaseClient, log: Logger, maxAge: number, onl
       await db.rpc("apply_zoho_contact_terms", { p_customer_id: c.id, p_c: {
         payment_terms: k.payment_terms, payment_terms_label: k.payment_terms_label, credit_limit: k.credit_limit,
         outstanding_receivable_amount: k.outstanding_receivable_amount, unused_credits_receivable_amount: k.unused_credits_receivable_amount } });
+      // 0071: the contact's Price List (rebate book) — CTP prices follow it
+      await db.from("customer").update({ zoho_pricebook_id: k.pricebook_id ? String(k.pricebook_id) : null,
+        zoho_pricebook_name: k.pricebook_name || null, zoho_pricebook_synced_at: new Date().toISOString() }).eq("id", c.id);
       n++;
     } catch (e) {
       await log({ doc_type: "contact", ctp_id: c.id, ctp_ref: c.code, action: "status_error", ok: false, message: e instanceof Error ? e.message : String(e) });
@@ -927,6 +930,39 @@ async function rebateBook(db: SupabaseClient, log: Logger, body: any) {
   return { applied: true, pricebook_id: id, created: !existing, verified_items: got.size, mismatches: mismatch, ...summary, rows };
 }
 
+// 0071: put ONE customer's Zoho contact on a scheme's price book. The book must exist and match the
+// scheme (re-verified first). Only pricebook_id is sent; the contact is read before and after and
+// every other field compared, so nothing else changes unnoticed. Then CTP's customer row follows.
+// deno-lint-ignore no-explicit-any
+async function assignPricebook(db: SupabaseClient, log: Logger, body: any) {
+  const code = String(body.customer_code ?? "");
+  const { data: sc } = await db.from("rebate_scheme").select("*").eq("name", String(body.scheme ?? "")).maybeSingle();
+  if (!sc?.zoho_pricebook_id) throw new Blocked(`No built price book for scheme "${body.scheme}"`);
+  const { data: c } = await db.from("customer").select("id, code, name, zoho_contact_id").eq("code", code).is("deleted_at", null).maybeSingle();
+  if (!c?.zoho_contact_id) throw new Blocked(`Customer ${code} is not linked to a Zoho contact`);
+  // the book is live and still matches the scheme
+  const pb = (await zoho("GET", `/pricebooks/${sc.zoho_pricebook_id}`)).pricebook;
+  // deno-lint-ignore no-explicit-any
+  const items = (pb?.pricebook_items ?? []) as any[];
+  const want = Number((sc.last_result as { in_book?: number } | null)?.in_book ?? 0);
+  if (!pb || pb.name !== sc.name || items.length !== want) throw new Blocked(`Price book check failed: ${pb?.name} has ${items.length} items, scheme says ${want}`);
+  const before = (await zoho("GET", `/contacts/${c.zoho_contact_id}`)).contact;
+  if (String(before.pricebook_id ?? "") !== String(sc.zoho_pricebook_id)) {
+    await zoho("PUT", `/contacts/${c.zoho_contact_id}`, {}, { contact_name: before.contact_name, pricebook_id: sc.zoho_pricebook_id });
+  }
+  const after = (await zoho("GET", `/contacts/${c.zoho_contact_id}`)).contact;
+  const skip = new Set(["pricebook_id", "pricebook_name", "last_modified_time", "price_precision"]);
+  const changed = Object.keys({ ...before, ...after }).filter((k) => !skip.has(k) && JSON.stringify(before[k]) !== JSON.stringify(after[k]));
+  const ok = String(after.pricebook_id ?? "") === String(sc.zoho_pricebook_id);
+  await db.from("customer").update({ zoho_pricebook_id: after.pricebook_id ? String(after.pricebook_id) : null,
+    zoho_pricebook_name: after.pricebook_name || null, zoho_pricebook_synced_at: new Date().toISOString() }).eq("id", c.id);
+  await log({ doc_type: "contact", ctp_id: c.id, ctp_ref: `customer:${c.code}`, action: "update", ok: ok && !changed.length, zoho_id: String(c.zoho_contact_id),
+              message: `${c.name}: Price List ${before.pricebook_name || "none"} → ${after.pricebook_name || after.pricebook_id || "none"}${changed.length ? ` — other fields changed: ${changed.join(", ")}` : ""}` });
+  return { customer: c.name, contact_id: String(c.zoho_contact_id), pricebook_before: before.pricebook_name || before.pricebook_id || null,
+           pricebook_after: after.pricebook_name || null, pricebook_id_after: after.pricebook_id ?? null, verified: ok,
+           book_items: items.length, other_fields_changed: changed };
+}
+
 // ── entry ────────────────────────────────────────────────────────────────────
 async function authorise(req: Request, db: SupabaseClient) {
   const syncToken = env("ZOHO_SYNC_TOKEN");
@@ -956,7 +992,7 @@ Deno.serve(async (req: Request) => {
   // invoice issued before go-live does not report a failure that isn't one.
   // (Status read-back is allowed while sending is off: documents already in
   // Zoho still change status there.)
-  if (!["test", "status", "so_sync", "hook", "stock_sync", "receive_list", "rebate_book"].includes(body.action) && (!cfg?.push_enabled || !cfg?.push_from)) {
+  if (!["test", "status", "so_sync", "hook", "stock_sync", "receive_list", "rebate_book", "assign_pricebook"].includes(body.action) && (!cfg?.push_enabled || !cfg?.push_from)) {
     return json({ ok: true, skipped: "Sending to Zoho is off (Settings → Zoho). Nothing was sent." });
   }
   await zohoInit(db);
@@ -1047,6 +1083,11 @@ Deno.serve(async (req: Request) => {
     if (body.action === "rebate_book") {
       if (who.actor && !who.admin) return json({ error: "Only an admin can build a rebate price book." }, 403);
       try { return json({ ok: true, ...(await rebateBook(db, log, body)) }); }
+      catch (e) { return json({ ok: false, error: e instanceof Error ? e.message : String(e) }, e instanceof Blocked ? 409 : 502); }
+    }
+    if (body.action === "assign_pricebook") {
+      if (who.actor && !who.admin) return json({ error: "Only an admin can assign a price book." }, 403);
+      try { return json({ ok: true, ...(await assignPricebook(db, log, body)) }); }
       catch (e) { return json({ ok: false, error: e instanceof Error ? e.message : String(e) }, e instanceof Blocked ? 409 : 502); }
     }
     if (body.action === "estimate_recreate") {

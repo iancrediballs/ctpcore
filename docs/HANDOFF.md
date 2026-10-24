@@ -784,3 +784,23 @@ settings reads and CTP's caches.
   `supabase functions deploy <fn> --use-api` (there is no supabase/functions in the repo).
 - Next: price-book-aware pricing (customer's pricebook_id, list price struck through + rebate price,
   staff margin, SO with pricebook_id) → public/walk-in RLS → catalogue fields → Zoho salespersons.
+
+## 24 Oct — "FAW JH6 – Rebate" assigned to Hermans (0071)
+- Ian: "apply to hermans". The Zoho contact **Hermans Panel Beaters** (1429405000000131019) now has
+  Price List = FAW JH6 – Rebate (1429405000000433001).
+- **Before writing,** the book was re-checked: it is live and has the scheme's 113 items.
+- **Verified after,** by reading the contact back:
+  - the price book is set;
+  - comparing every field before and after, only Zoho's own `last_modified_by_id` changed;
+  - only `pricebook_id` was sent, so the VAT number and everything else on the contact are as they
+    were (Michelle adds the VAT no.).
+- **No other contact was written to.**
+  - Note: the `/contacts` list doesn't return the Price List field, so the earlier "no contact has a
+    price list" check from the list was not conclusive. Use a per-contact GET instead.
+- **CTP picks it up:**
+  - 0071 adds `customer.zoho_pricebook_id / zoho_pricebook_name / zoho_pricebook_synced_at`;
+  - the assignment writes them, and refreshTerms (account terms read-back) now re-reads them, so a
+    change made in Zoho reaches CTP too;
+  - Hermans' row: pricebook 1429405000000433001 ✓.
+  - The pricing UI (sales price struck through, rebate price beside it) will read this column.
+- **Reusable:** zoho-push `{action:"assign_pricebook", scheme, customer_code}`, admin or server token.
