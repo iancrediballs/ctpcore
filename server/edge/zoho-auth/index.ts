@@ -128,6 +128,81 @@ Deno.serve(async (req: Request) => {
 
   // READ-ONLY assessment for the Zoho-first plan (docs/06): plan, settings,
   // inventory tracking, and which endpoints the current token can read.
+  // 24 Oct: READ-ONLY change audit (Ian: "what did Anton change in Zoho?"). GETs only, throttled.
+  //   { part: "settings" | "items" | "contacts" | "transactions" }
+  if (body.action === "audit") {
+    await zohoInit(db);
+    const tk = await zohoToken();
+    const org = env("ZOHO_ORG_ID");
+    const B = "https://www.zohoapis.com/books/v3", I = "https://www.zohoapis.com/inventory/v1";
+    const nap = () => new Promise((r) => setTimeout(r, 650));
+    const g = async (base: string, path: string) => {
+      const r = await fetch(`${base}${path}${path.includes("?") ? "&" : "?"}organization_id=${org}`, { headers: { Authorization: `Zoho-oauthtoken ${tk}` } });
+      const j = await r.json().catch(() => ({}));
+      await nap();
+      return r.status === 200 ? j : { _status: r.status, _code: j.code, _message: j.message };
+    };
+    // deno-lint-ignore no-explicit-any
+    const all = async (base: string, path: string, key: string): Promise<any> => {
+      // deno-lint-ignore no-explicit-any
+      const out: any[] = [];
+      for (let page = 1; page <= 15; page++) {
+        const j = await g(base, `${path}${path.includes("?") ? "&" : "?"}page=${page}&per_page=200`);
+        if (j._status) return j;
+        out.push(...(j[key] ?? []));
+        if (!j.page_context?.has_more_page) break;
+      }
+      return out;
+    };
+    const part = String(body.part ?? "");
+    if (part === "settings") {
+      const r: Record<string, unknown> = {};
+      for (const [k, base, path] of [
+        ["books_org", B, `/organizations/${org}`], ["books_preferences", B, "/settings/preferences"], ["inv_preferences", I, "/settings/preferences"],
+        ["taxes", B, "/settings/taxes"], ["tax_groups", B, "/settings/taxgroups"], ["currencies", B, "/settings/currencies"],
+        ["payment_terms", B, "/settings/paymentterms"], ["units", I, "/settings/units"], ["units_books", B, "/settings/units"],
+        ["locations", I, "/locations"], ["pricebooks", B, "/pricebooks"], ["inv_pricebooks", I, "/pricebooks"],
+        ["invoice_settings", B, "/settings/invoices"], ["estimate_settings", B, "/settings/estimates"], ["salesorder_settings", B, "/settings/salesorders"],
+        ["customfields_item", B, "/settings/fields?entity=item"], ["customfields", B, "/settings/customfields"],
+        ["invoice_templates", B, "/invoices/templates"], ["estimate_templates", B, "/estimates/templates"], ["so_templates", B, "/salesorders/templates"],
+        ["books_webhooks", B, "/settings/webhooks"], ["books_workflows", B, "/settings/workflows"],
+        ["inv_webhooks", I, "/settings/webhooks"], ["inv_workflows", I, "/settings/workflows"],
+        ["users", B, "/users?per_page=100"], ["roles", B, "/users/roles"], ["item_groups", I, "/itemgroups"], ["composite_items", I, "/compositeitems"],
+        ["categories", I, "/categories"], ["brands", I, "/brands"]] as const) {
+        r[k] = await g(base, path);
+      }
+      return json({ ok: true, read_at: new Date().toISOString(), settings: r });
+    }
+    if (part === "items") return json({ ok: true, read_at: new Date().toISOString(), items: await all(I, "/items?filter_by=Status.All", "items") });
+    if (part === "contacts") return json({ ok: true, read_at: new Date().toISOString(), contacts: await all(B, "/contacts?filter_by=Status.All", "contacts") });
+    if (part === "pricebook") {   // READ-ONLY: one price book with its item rates
+      const id = String(body.id ?? "");
+      if (!/^[0-9]+$/.test(id)) return json({ ok: false, error: "id" }, 400);
+      return json({ ok: true, pricebook: (await g(B, `/pricebooks/${id}`)) });
+    }
+    if (part === "contact_detail") {
+      const ids = (Array.isArray(body.ids) ? body.ids : []).map(String).filter((x: string) => /^\d+$/.test(x)).slice(0, 40);
+      const out: Record<string, unknown> = {};
+      for (const id of ids) out[id] = (await g(B, `/contacts/${id}`)).contact ?? null;
+      return json({ ok: true, contacts: out });
+    }
+    if (part === "transactions") {
+      const r: Record<string, unknown> = {};
+      for (const [k, base, path, key] of [
+        ["estimates", B, "/estimates", "estimates"], ["salesorders", B, "/salesorders", "salesorders"], ["invoices", B, "/invoices", "invoices"],
+        ["creditnotes", B, "/creditnotes", "creditnotes"], ["customerpayments", B, "/customerpayments", "customerpayments"],
+        ["bills", B, "/bills", "bills"], ["vendorpayments", B, "/vendorpayments", "vendorpayments"], ["purchaseorders", B, "/purchaseorders", "purchaseorders"],
+        ["inventoryadjustments", I, "/inventoryadjustments", "inventory_adjustments"], ["packages", I, "/packages", "packages"],
+        ["shipments", I, "/shipmentorders", "shipmentorders"], ["purchasereceives", I, "/purchasereceives", "purchasereceives"],
+        ["transferorders", I, "/transferorders", "transfer_orders"], ["salesreceipts", B, "/salesreceipts", "sales_receipts"],
+        ["expenses", B, "/expenses", "expenses"], ["journals", B, "/journals", "journals"]] as const) {
+        r[k] = await all(base, path, key);
+      }
+      return json({ ok: true, read_at: new Date().toISOString(), transactions: r });
+    }
+    return json({ ok: false, error: "part = settings | items | contacts | contact_detail | transactions" }, 400);
+  }
+
   // 24 Oct: READ-ONLY stock trace for one part across Zoho Inventory, Zoho Books and documents.
   //   { sku, so_number?, invoice_number? }
   if (body.action === "item_trace") {

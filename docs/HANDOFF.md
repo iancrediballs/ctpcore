@@ -637,3 +637,26 @@ PKG-00007/SHP-00007, stock 12→11 in Zoho).
   physical = accounting = Books 11.
 - Version shown in the app: **v33** (= the service-worker cache version, read at build time in
   vite.config.ts).
+
+## 24 Oct — read-only audit of Anton's Zoho changes after the demo (nothing changed)
+New read-only `zoho-auth {action:"audit", part: settings|items|contacts|transactions|pricebook|contact_detail}`.
+Compared with the 23 Oct item snapshot, the dry-run transaction list, the 23 Oct Inventory
+settings reads and CTP's caches.
+- **Unchanged:**
+  - org, preferences, location, 3 admin users, currencies, taxes (8 at 15%/0%; "Standard Rate"
+    is NOT flagged default — CTP matches it by name), templates;
+  - prefixes INV- / QT- / SO-;
+  - all 162 items (no new / renamed / deactivated; rates, purchase rates, unit, tracking same;
+    2801070-1063 saved at 16:40 with no tracked field changed);
+  - CTP's 8 Inventory webhooks + 8 workflow rules intact and active;
+  - no bills, POs, payments, adjustments, receives or packages since the demo.
+- **New or changed:**
+  - customer **Test Co 2** created from CTP Core (15:20, VAT 4670222333, contact Piet Pompies,
+    anton@supalift.co.za), edited in Zoho 15:39 → **credit limit R20,000** (CTP has it);
+  - CTP quotes **RQ-261023-52 → QT-000008** (R17,733.45, sent) and **RQ-261023-53 → QT-000009**
+    (R10,794.44) **accepted in Zoho at ~16:22** with no sales order — CTP still shows it as a quote;
+  - price book **"Rebate"** (per item, sales) created ~16:4x, 1 item (5704145CB45 at its normal
+    R527.21), assigned to nobody;
+  - invoice counter at INV-000012 while the newest invoice is INV-000010 → **INV-000011 was created
+    and deleted** after the demo (possibly a "convert to invoice" from QT-000009, then deleted).
+- Expenses / journals not readable with our scopes (401).
