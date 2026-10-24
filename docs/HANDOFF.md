@@ -1060,3 +1060,17 @@ correctly as you would see them on the truck, or in the diagram."
 - The customer view was not tested with a customer login, because the permission check
   blocked minting a customer session. It is type-checked and builds clean. Staff paths are
   unchanged.
+
+## 24 Oct — Fulfil needs a SENT invoice (0078, PWA v42)
+- Ian: account customers (Hermans) need a SENT Zoho invoice before Fulfil; a draft no longer counts.
+- **0078** (applied on live) redefines `fulfil_block_reason()` only: after "no invoice", an invoice in
+  Zoho status draft / pending_approval / approved blocks for everyone with
+  "Invoice INV-… is a draft in Zoho, ask Michelle to mark it sent." (or "approved but not sent" /
+  "waiting for approval"). Cash customers still need `paid`. `fulfilBlockReason()` in app/src/data/zoho.ts
+  mirrors it.
+- Checked on live: Hermans' INV-000005/INV-000006 (sent) still unlock; order 45 simulated as draft /
+  approved / pending_approval blocks, sent / overdue / partially_paid unlocks; RQ-261023-52 (INV-000013
+  draft) now shows the draft reason.
+- Same evening's diagnosis: the 3 stuck orders were Zoho steps, not a bug — SO-00022/SO-00023 not
+  invoiced; INV-000013 saved as Draft and unpaid (cash). zoho-readback cron 200 every 10 min;
+  8 Inventory webhooks + rules active; 0 hook errors.

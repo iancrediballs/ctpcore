@@ -138,6 +138,12 @@ export function fulfilBlockReason(o: {
   const st = o.zoho_so_status ?? "draft";
   if (st === "deleted" || st === "void") return `The Zoho sales order ${o.zoho_salesorder_number ?? ""} was ${st} in Zoho — ask accounts before taking stock out.`;
   if (!o.zoho_invoice_id || ["void", "deleted"].includes(o.zoho_status ?? "")) return "Waiting for accounts to invoice this sales order in Zoho.";
+  // 0078: the invoice must have been sent (account customers too)
+  const inv = o.zoho_status ?? "draft";
+  if (["draft", "pending_approval", "approved"].includes(inv)) {
+    const how = inv === "draft" ? "a draft" : inv === "approved" ? "approved but not sent" : "waiting for approval";
+    return `Invoice ${o.zoho_invoice_number ?? ""} is ${how} in Zoho, ask Michelle to mark it sent.`;
+  }
   if (o.zoho_so_readback_issue) return `The Zoho invoice has a line CTP cannot match: ${o.zoho_so_readback_issue}`;
   if (!o.cust_on_account && o.zoho_status !== "paid") {
     const due = (o.zoho_invoice_balance_minor ?? 0) > 0 ? `, R${((o.zoho_invoice_balance_minor ?? 0) / 100).toLocaleString("en-ZA", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} due` : "";
