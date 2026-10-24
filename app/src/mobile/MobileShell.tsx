@@ -2677,7 +2677,9 @@ const parseRand = (s: string): number => {
                             {(() => { const lp = minePrices[r.id]?.lines.find((x) => x.part_id === l.part_id);
                               const rb = rebateFor(l.part_id);   // 0076: on-device book when the server read is not back
                               const list = lp?.list_minor ?? rb?.list_minor ?? null, booked = lp?.book_minor ?? rb?.book_minor;
-                              return !z && list && booked != null && (l.unit_price_minor ?? 0) < list
+                              // 0078: a Zoho estimate line strikes the list too, against its net
+                              const paid = z ? z.net_minor : (l.unit_price_minor ?? 0) * l.qty;
+                              return list && booked != null && paid < list * l.qty
                                 ? <s className="mb-was">{fmtR(list * l.qty)}</s> : null; })()}
                             {fmtR(z ? z.net_minor : (l.unit_price_minor ?? 0) * l.qty)}
                             {pct > 0 && <div className="mb-csku">less {Math.round(pct * 100) / 100}%</div>}
@@ -2713,6 +2715,17 @@ const parseRand = (s: string): number => {
                       <span className="mb-rk">Total</span>
                       <span className="mb-rv">
                         <b>{fmtR(estInfo[r.id].total_minor)}</b> incl VAT
+                        {(() => {
+                          // 0078: their rebate on a Zoho quote — list vs Zoho's net, book lines only (excl VAT)
+                          let saving = 0;
+                          for (const l of lines) {
+                            const rb = rebateFor(l.part_id);
+                            if (!rb || rb.book_minor == null || rb.list_minor == null) continue;
+                            const z = estInfo[r.id]?.lines.find((x) => x.part_id === l.part_id);
+                            saving += Math.max(0, rb.list_minor * l.qty - (z ? z.net_minor : (l.unit_price_minor ?? 0) * l.qty));
+                          }
+                          return saving > 0 ? <div className="mb-csku mb-rbsum">you save {fmtR(saving)} excl VAT with your rebate</div> : null;
+                        })()}
                         <div className="mb-csku">Quote {estInfo[r.id].number}{estInfo[r.id].expiry ? ` · valid until ${String(estInfo[r.id].expiry).slice(0, 10)}` : ""}</div>
                       </span>
                     </div>

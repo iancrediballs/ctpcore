@@ -1048,3 +1048,15 @@ correctly as you would see them on the truck, or in the diagram."
   (`src/dev/live/fixture.<role>.json`, gitignored; regenerate with the scratch script pattern in
   this entry's session). `/shell-harness.html?role=customer|admin`, port 4175.
 - Sync rules: unchanged (v9 is fine for this).
+
+## Rebate on the customer's Zoho quotes (v41)
+- Resumed the Orders-tab rebate work on top of v40 (Aerokit, d901ec1). v39 already shows
+  staff a "rebate −R x / R y above rebate" line on every order card, plus a Rebate row inside
+  the order. Customers already saw the struck list total on orders priced in the app.
+- Gap fixed: a customer's quote backed by a Zoho estimate (most Hermans quotes) showed no
+  rebate. Now each line strikes the list price when Zoho's net is lower, and the incl-VAT
+  total adds "you save R x excl VAT with your rebate". The saving counts book lines only,
+  list minus Zoho net. Cost and floor are still staff-only.
+- The customer view was not tested with a customer login, because the permission check
+  blocked minting a customer session. It is type-checked and builds clean. Staff paths are
+  unchanged.
