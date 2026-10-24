@@ -887,3 +887,27 @@ settings reads and CTP's caches.
   item 7 follow Zoho (0070, v35); item 8 tax by id (0068).
 - **Tests:** tests_0074_local.js 51/51 (includes 0070 + 0072); deno at the 71 baseline; tsc + build
   clean.
+
+## 24 Oct — staff logins tidied, Michelle invited, in_stock reconciled (0049 + 0075 live)
+- **Staff (Ian approved):**
+  - Removed three `app_user` rows that had **no login**: two "Ian" admins (e852b1f0…, 42743bef…)
+    and "ian test customer" (711d7d75…).
+    - Nothing referenced them (orders, ledger, timeline, push log, people).
+    - A copy is in the session scratchpad (app_user_before_tidy.json).
+  - Kept **Ian = 7efb7f16… (iancrediblemusic@gmail.com)**, the account he signs in with (31 Zoho log
+    entries, 4 orders).
+  - Labelled the unnamed sales user ian@proton.me (signed in once, 7 Oct, nothing attached) as
+    "Ian (test login)". It was kept, not deleted.
+  - **Michelle Smith** (michelle@supalift.co.za) was invited the admin-users way (Supabase Auth
+    invite, redirect https://ctpcore.vercel.app). Role **manager**: she sees pricing, cost and
+    margins, and can do everything accounts needs in CTP. Admin-only actions (users, accept on
+    behalf, fulfil release) stay with Ian and Anton. Auth id ec87eadb…; Supabase accepted and sent
+    the invite.
+  - Staff now: Anton (admin), Ian (admin), Ian (test login) (sales), Michelle Smith (manager).
+- **in_stock:**
+  - 0049 (approved 20 Sep) had never been applied on live, though sync-streams.yaml and the
+    customer app read `part.in_stock`. It is applied now.
+  - 0075 grants the column under 0073's column grants.
+  - Live: 154 of 157 parts in stock, 0 mismatches against the ledger.
+  - Every table and column named in server/sync-streams.yaml exists on live (checked by query).
+    **The file is final for the dashboard paste.**
