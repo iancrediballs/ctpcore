@@ -995,3 +995,17 @@ Ian: "we are missing seeing the rebate visibility in the orders tab?"
 - Tested on the local build against live as staff (Ian test login) and as Hermans (Denver,
   one-time admin link, read only, signed out after).
 - Pricing/orders UI files only: MobileShell.tsx, mobile.css, sw.js.
+
+## 24 Oct ~15:00: "app not pulling items" check (no change made)
+- Supabase: part 162 rows (157 live), price_book 1, price_book_item 113 (no null ids). The
+  `powersync` publication is FOR ALL TABLES, so price_book and price_book_item are in it. The
+  replication slot is active with 0 bytes of lag.
+- Sync rules v9: the diff from v8 only adds tables (price_book and price_book_item for staff,
+  plus the new ctp_client_book bucket). The part queries are unchanged.
+- Live app v39, fresh staff sign-in (Ian test login): connected, every bucket synced at
+  15:00:21, 162 parts and 113 price-book rows on the device, catalogue grid shows 157 parts.
+- The customer-side sign-in test was blocked by the permission check and not run.
+- One transient CORS error on zoho-push in the console. The preflight is fine (204 with
+  CORS headers) when re-tested.
+- Conclusion: no server or rules fault, so no rollback needed. Ian's device is most likely
+  holding a stale session or local state. Fix: reopen the app, else sign out and back in.
