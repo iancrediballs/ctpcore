@@ -15,3 +15,6 @@ src/**/*.js
 
 .vercel
 .env*
+
+# live-data harness snapshots (copies of live rows; local only)
+src/dev/live/fixture.*.json

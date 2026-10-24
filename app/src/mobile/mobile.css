@@ -1,4 +1,7 @@
 /* CTP Core — mobile shell. Scoped under .mb-root; never loaded on desktop. */
+/* Photos follow their EXIF orientation tag (the browser default, stated so it stays that way).
+   The catalogue photos carry no tag; ones that were rotated are corrected in the files (24 Oct). */
+.mb-root img{image-orientation:from-image}
 .mb-root{
   --bg:#0B0D10;--surf:#151A20;--surf2:#1D242C;--line:#2B343F;
   --txt:#F4F7FA;--dim:#93A0AE;--dimmer:#7D8A99;
@@ -665,6 +668,11 @@ textarea.st-in{resize:vertical;line-height:1.45;font-size:15px}
 .dv-stack .dv-list{flex:1;border-top:1px solid var(--line)}
 .dv-stage{position:relative;min-width:0;min-height:0;display:flex;background:#fff}
 .dv-stage .dg-wrap{flex:1;background:#fff}
+/* The phone hint lives inside the stage, which is a flex ROW: as a flex item its one long
+   line took the whole width and squeezed the drawing to 0 px — every drawing blank on a phone
+   (Ian, 24 Oct: "Aerokit … diagram gone missing"). It is an overlay, never a column. */
+.dv-stage>.mb-lb-hint{position:absolute;left:0;right:0;bottom:0;z-index:2;padding:4px 8px 6px;
+  background:linear-gradient(transparent,rgba(255,255,255,.92) 40%);color:#5b6470;pointer-events:none}
 .dv-divider{cursor:col-resize;background:var(--line);position:relative;touch-action:none}
 .dv-divider::after{content:"";position:absolute;left:50%;top:50%;width:2px;height:36px;transform:translate(-50%,-50%);background:var(--dimmer);border-radius:2px}
 .dv-divider:hover,.dv-divider:active{background:var(--amber)}

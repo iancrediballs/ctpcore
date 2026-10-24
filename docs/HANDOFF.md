@@ -1009,3 +1009,42 @@ Ian: "we are missing seeing the rebate visibility in the orders tab?"
   CORS headers) when re-tested.
 - Conclusion: no server or rules fault, so no rollback needed. Ian's device is most likely
   holding a stale session or local state. Fix: reopen the app, else sign out and back in.
+
+## 24 Oct — Aerokit "gone missing" + photo orientation (PWA v40)
+Ian: "Aerokit parts, diagram etc. have gone missing??? A lot of the item images are not oriented
+correctly as you would see them on the truck, or in the diagram."
+- **Nothing was missing on the server.** Roof Deflector (DEF, category 115): 26 parts active and
+  linked to Zoho (all active there), section drawing SEC115 live, files in ctp-assets, photos,
+  xrefs (CTP-DEF-001…026) intact. Same under RLS as a staff and a customer user (rolled-back
+  `set local role` reads). Not sync rules, not 0073 grants, not Multicat removal, not deactivation.
+- **Cause: the drawing was 0 px wide on phones.** In DiagramView the "pinch… to zoom" hint
+  (`.mb-lb-hint`, shown when `!wide`) sits inside `.dv-stage`, a flex ROW; its one long line took
+  the whole width and squeezed `.dg-wrap` (flex-basis 0) to 0. Every section drawing was blank at
+  phone width since 18 Sep; tablet/desktop were fine, which is why earlier checks passed. Fix:
+  `.dv-stage>.mb-lb-hint` is an absolute overlay at the bottom of the drawing (mobile.css).
+- **2 Aerokit parts never had a marker** (the OEM drawing gives each L/H–R/H pair one callout):
+  5704145CB45 Adjustment Support Bracket L/H and 5704180CB45 Top Support Bracket R/H. Added on
+  live as hotspots 378 (B5) and 379 (B26), beside their pair. SEC115: 26 markers / 26 parts.
+  Still unmarked elsewhere: CBY CTP-CBY-001-C, CAB001; DOR 6105050-B45-C00.
+- **Photo orientation:** no catalogue photo carries an EXIF orientation tag (148 WebP, 4 JPEG,
+  3 PNG), so it was the pixels. Each marked part's photo was compared with its drawing crop.
+  22 rotated (8 sure, 14 "upright for sure, which end is up judged from the drawing"); list,
+  degrees and old→new paths in `docs/photos/orientation_2026-10-24.json`, contact sheet
+  `docs/photos/orientation_before_after_2026-10-24.jpg`.
+  - New files at NEW keys `<name>_r<deg>` (master + web variant, x-upsert false; the CDN and the
+    SW cache by key, so overwriting would never reach phones). Originals untouched.
+  - `part_image.path` updated on those 22 rows (guarded on the old path). Rollback = set the old path back.
+  - Zoho: `zoho-auth {action:"item_images", skus:[22]}` dry run clean, then run: 22 updated,
+    0 failed. Only item images touched; no prices or other fields.
+  - `.mb-root img{image-orientation:from-image}` stated explicitly for future EXIF-tagged photos.
+- **Not decided (need Ian's eye):** hinges/brackets/locks whose drawing is too small to say:
+  1136, 1137, 1142, 1143, 1144, 1160 (DEF); 1084, 1085, 1092, 1093, 1096–1099 (DOR); 1065, 1066,
+  1073, 1074 (FWL); 1104 (MRR); 1124 (WPR).
+- **Probably the wrong photo (not orientation):** 1145 Top Support Bracket L/H shows a hinge;
+  1146 Top Support Bracket R/H shows the adjustment-bracket arm; 1001/1002 Front Bumper L/H and
+  R/H look like the same photo. 3 parts have no photo.
+- **Live-data harness (dev):** `vite.livedata.config.ts` runs the REAL MobileShell and the REAL
+  backend.web.ts SQL over sql.js seeded from a role-shaped dump of live rows
+  (`src/dev/live/fixture.<role>.json`, gitignored; regenerate with the scratch script pattern in
+  this entry's session). `/shell-harness.html?role=customer|admin`, port 4175.
+- Sync rules: unchanged (v9 is fine for this).
