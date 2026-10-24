@@ -114,6 +114,8 @@ const sales_order = new Table({
   staff_log: column.text,
   // 0068: who did each step and when (JSON array; staff only)
   timeline: column.text,
+  // 0070: the customer's PO and the credit-limit warning at acceptance
+  po_number: column.text, po_file_path: column.text, po_file_name: column.text, credit_warning: column.text, accepted_via: column.text,
   // 0062 (Phase 2): the quote's Zoho estimate
   zoho_estimate_id: column.text, zoho_estimate_number: column.text, zoho_estimate_status: column.text,
   zoho_estimate_status_at: column.text, zoho_estimate_error: column.text, zoho_estimate_modified_at: column.text,

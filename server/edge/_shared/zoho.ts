@@ -115,6 +115,62 @@ export async function findByReference(kind: "invoices" | "bills" | "salesorders"
   return null;
 }
 
+/** "… order RQ-261024-1 …" names RQ-261024-1, not RQ-261024-12. */
+export function notesName(notes: unknown, ctpNumber: string): boolean {
+  const n = String(notes ?? ""), k = `order ${ctpNumber}`;
+  for (let i = n.indexOf(k); i >= 0; i = n.indexOf(k, i + 1)) if (!/[0-9A-Za-z-]/.test(n.charAt(i + k.length))) return true;
+  return false;
+}
+
+/** 0070: the reference is now the customer's PO, so OUR sales order is found by the CTP order
+ *  no. in its notes ("… order RQ-…"): the 20 Oct reference (= CTP no.) first, then every live SO
+ *  carrying this PO, read in full and checked. Never a false match; at worst a GET per candidate. */
+// deno-lint-ignore no-explicit-any
+export async function findOurSalesOrder(ctpNumber: string, po: string | null): Promise<any | null> {
+  const legacy = await findByReference("salesorders", ctpNumber);
+  if (legacy && !["void", "cancelled"].includes(String(legacy.status))) return legacy;
+  if (!po) return null;
+  for (const q of [{ reference_number: po }, { search_text: po }] as Record<string, string>[]) {
+    const rows = ((await zoho("GET", "/salesorders", { ...q, per_page: "200" })).salesorders ?? []) as Record<string, unknown>[];
+    for (const r of rows.filter((x) => String(x.reference_number ?? "") === po && !["void", "cancelled"].includes(String(x.status)))) {
+      const full = (await zoho("GET", `/salesorders/${r.salesorder_id}`)).salesorder;
+      if (notesName(full?.notes, ctpNumber)) return r;
+    }
+  }
+  return null;
+}
+
+/** 0070: attach a file (the customer's PO) to a Zoho sales order. Multipart, field "attachment". */
+export async function attachToSalesOrder(soId: string, file: Blob, filename: string) {
+  const u = new URL(`${BASE}/salesorders/${soId}/attachment`);
+  u.searchParams.set("organization_id", ORG);
+  const fd = new FormData();
+  fd.append("attachment", file, filename);
+  const r = await fetch(u, { method: "POST", headers: { Authorization: `Zoho-oauthtoken ${await zohoToken()}` }, body: fd });
+  const b = await r.json().catch(() => ({}));
+  if (!r.ok || (b.code !== undefined && b.code !== 0)) {
+    throw new Error(`Zoho attach to sales order failed (${r.status}, code ${b.code ?? "?"}): ${b.message ?? "no message"}`);
+  }
+}
+
+/** 0070 (docs/12 §8): Zoho outstanding + this order against the Zoho credit limit. Warns, never blocks.
+ *  Reads the contact live (falls back to CTP's cached terms). null = no limit set, or within it. */
+export async function creditCheck(db: SupabaseClient, customerId: number, orderMinor: number):
+    Promise<{ over: boolean; limit_minor: number; outstanding_minor: number; order_minor: number } | null> {
+  const { data: c } = await db.from("customer").select("zoho_contact_id, zoho_credit_limit_minor, zoho_outstanding_minor").eq("id", customerId).maybeSingle();
+  if (!c) return null;
+  let limit = Number(c.zoho_credit_limit_minor ?? 0), outstanding = Number(c.zoho_outstanding_minor ?? 0);
+  if (c.zoho_contact_id) {
+    try {
+      const k = (await zoho("GET", `/contacts/${c.zoho_contact_id}`)).contact ?? {};
+      limit = Math.round(Number(k.credit_limit ?? 0) * 100);
+      outstanding = Math.round(Number(k.outstanding_receivable_amount ?? 0) * 100);
+    } catch { /* cached figures */ }
+  }
+  if (!(limit > 0)) return null;
+  return { over: outstanding + orderMinor > limit, limit_minor: limit, outstanding_minor: outstanding, order_minor: orderMinor };
+}
+
 // ── contacts ─────────────────────────────────────────────────────────────────
 export type Party = { id: number; name: string; email: string | null; vat_no: string | null;
                zoho_contact_id: string | null; code: string };
@@ -211,7 +267,7 @@ export const rebateDiscount = (pct: unknown) => {
  *  reported, not hidden. Lines by SKU through zoho_item; any unlinked SKU
  *  blocks the whole order. VAT is the Standard Rate tax. */
 // deno-lint-ignore no-explicit-any
-export async function salesOrderFor(db: SupabaseClient, cfg: any, orderId: number, log: Logger): Promise<SalesOrderRef> {
+export async function salesOrderFor(db: SupabaseClient, cfg: any, orderId: number, log: Logger, po: string | null = null): Promise<SalesOrderRef> {
   const { data: o, error } = await db.from("sales_order")
     .select("id, number, tax_rate_bps, zoho_salesorder_id, zoho_salesorder_number, " +
             "customer:customer_id(id, code, name, email, vat_no, zoho_contact_id), " +
@@ -221,8 +277,8 @@ export async function salesOrderFor(db: SupabaseClient, cfg: any, orderId: numbe
   if (o.zoho_salesorder_id) {
     return { salesorder_id: o.zoho_salesorder_id, salesorder_number: o.zoho_salesorder_number ?? "", status: "existing", created: false };
   }
-  const existing = await findByReference("salesorders", o.number);
-  if (existing && !["void", "cancelled"].includes(String(existing.status))) {
+  const existing = await findOurSalesOrder(o.number, po);
+  if (existing) {
     await log({ doc_type: "salesorder", ctp_id: orderId, ctp_ref: o.number, action: "found_existing", ok: true,
                 zoho_id: String(existing.salesorder_id), message: `${o.number} → existing Zoho sales order ${existing.salesorder_number}` });
     let st = String(existing.status ?? "");
@@ -242,13 +298,13 @@ export async function salesOrderFor(db: SupabaseClient, cfg: any, orderId: numbe
   // deno-lint-ignore no-explicit-any
   const customerId = await resolveContact(db, "customer", o.customer as any, "customer", log);
   const b = await zoho("POST", "/salesorders", {}, {
-    customer_id: customerId, reference_number: o.number, date: jhbDate(new Date().toISOString()),
+    customer_id: customerId, reference_number: po ?? o.number, date: jhbDate(new Date().toISOString()),
     is_inclusive_tax: false,
     line_items: lines.map((l) => ({
       item_id: ids.get(l.part.id), quantity: l.qty, rate: rands(l.unit_price_minor),
       description: l.part.sku, ...(taxId ? { tax_id: taxId } : {}), ...rebateDiscount(l.rebate_pct),
     })),
-    notes: `Accepted in CTP Core · order ${o.number}`,
+    notes: `Accepted in CTP Core · order ${o.number}${po ? ` · customer PO ${po}` : ""}`,
   });
   const so = b.salesorder;
   // Ian, 21 Oct: sales orders are CONFIRMED (open) so they commit stock in Zoho.
@@ -425,7 +481,7 @@ export async function estimateFor(db: SupabaseClient, cfg: any, orderId: number,
  *  If CTP's transaction then fails the SO is deleted and the estimate stays
  *  accepted; a retry is allowed on an accepted estimate. Idempotent on the RQ no. */
 // deno-lint-ignore no-explicit-any
-export async function salesOrderFromEstimate(db: SupabaseClient, orderId: number, estimateId: string, log: Logger):
+export async function salesOrderFromEstimate(db: SupabaseClient, orderId: number, estimateId: string, log: Logger, po: string | null = null):
     Promise<SalesOrderRef & { estimate_status: string; estimate_number: string }> {
   const { data: o } = await db.from("sales_order").select("id, number, zoho_salesorder_id, zoho_salesorder_number").eq("id", orderId).single();
   if (!o) throw new Blocked(`Order ${orderId} not found`);
@@ -444,8 +500,11 @@ export async function salesOrderFromEstimate(db: SupabaseClient, orderId: number
     await log({ doc_type: "estimate", ctp_id: orderId, ctp_ref: o.number, action: "update", ok: true, zoho_id: estimateId,
                 message: `${o.number}: customer accepted Zoho estimate ${estimate_number} (sent → accepted)` });
   }
-  const existing = o.zoho_salesorder_id ? null : await findByReference("salesorders", o.number);
-  if (o.zoho_salesorder_id || (existing && !["void", "cancelled"].includes(String(existing.status)))) {
+  // 0070: accounts may already have converted the estimate in Zoho — link that SO, never a second
+  // deno-lint-ignore no-explicit-any
+  const converted = ((est.salesorders ?? []) as any[]).find((x) => !["void", "cancelled"].includes(String(x.status ?? x.order_status ?? "")));
+  const existing = o.zoho_salesorder_id ? null : converted ?? await findOurSalesOrder(o.number, po);
+  if (o.zoho_salesorder_id || existing) {
     const id = String(o.zoho_salesorder_id ?? existing!.salesorder_id);
     let st = existing ? String(existing.status ?? "") : "existing";
     if (st === "draft") { try { await zoho("POST", `/salesorders/${id}/status/open`); st = "open"; } catch { /* stays draft; shown */ } }
@@ -458,9 +517,9 @@ export async function salesOrderFromEstimate(db: SupabaseClient, orderId: number
     ...(l.tax_id ? { tax_id: l.tax_id } : {}),
     ...(l.discount !== undefined && l.discount !== null && String(l.discount) !== "0" && String(l.discount) !== "" ? { discount: l.discount } : {}),
   }));
-  const body = { customer_id: est.customer_id, reference_number: o.number, date: jhbDate(new Date().toISOString()),
+  const body = { customer_id: est.customer_id, reference_number: po ?? o.number, date: jhbDate(new Date().toISOString()),
     is_inclusive_tax: !!est.is_inclusive_tax, line_items, ...(est.discount ? { discount: est.discount, is_discount_before_tax: est.is_discount_before_tax } : {}),
-    notes: `Accepted in CTP Core · order ${o.number} · from estimate ${estimate_number}` };
+    notes: `Accepted in CTP Core · order ${o.number} · from estimate ${estimate_number}${po ? ` · customer PO ${po}` : ""}` };
   // deno-lint-ignore no-explicit-any
   let so: any;
   let linked = true;

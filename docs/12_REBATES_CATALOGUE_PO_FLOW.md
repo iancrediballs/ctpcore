@@ -96,7 +96,9 @@ are built now. Everything that changes Zoho data waits for confirmation.
   API (0067/0068 pattern).
 - **Effort:** 1 day (public RPC + my_prices + RLS + tests).
 
-## 5. Quote → customer PO → confirmed SO (Zoho estimate step skipped)
+## 5. Quote → customer PO → confirmed SO (Zoho estimate step skipped) — BUILT 24 Oct (0070, PWA v35)
+- Built as below, except: the CTP order no. goes in the SO **notes** (idempotency key), not a
+  "CTP order" custom field (Zoho has no public API to create one). The price book on the SO comes with item 1's pricing work.
 - Turn `estimates_enabled` **OFF** (switch kept; estimate code stays for later).
 - **Staff:** price → **Send quote**. The quote lives in CTP with book prices.
 - **Customer accepts in the app:** **PO number required**; PO **file (PDF/photo) required by

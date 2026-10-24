@@ -169,12 +169,15 @@ export const quoteAcceptCheck = (orderId: number) =>
   call<{ ok: boolean; blockers: AcceptBlocker[]; estimate?: EstimateInfo | null }>("quote_accept_check", { orderId });
 /** Accept a quote: raises the sales order in Zoho Books AND reserves the stock,
  *  both or neither (the accept-quote edge function, 0047). */
-export type AcceptResult = { ok: true; already: boolean; number: string; zoho_salesorder_number: string; reserved_lines: number };
-export const acceptQuote = (orderId: number) => call<AcceptResult>("accept_quote", { orderId });
+export type AcceptResult = { ok: true; already: boolean; number: string; zoho_salesorder_number: string; reserved_lines: number;
+  po_number?: string; credit_warning?: string | null; attach_warning?: string | null };
+/** 0070: the customer's PO goes with the acceptance (number required; file per setting). */
+export type AcceptPo = { po_number: string; po_file?: string | null; po_file_name?: string | null };
+export const acceptQuote = (orderId: number, po: AcceptPo) => call<AcceptResult>("accept_quote", { orderId, po });
 /** 0058: an admin accepts for the customer (confirmed by phone/email). Same
  *  Zoho sales order + stock hold; the admin and the note go on the order. */
-export const acceptQuoteOnBehalf = (orderId: number, note: string) =>
-  call<AcceptResult & { zoho?: string }>("accept_quote", { orderId, onBehalfNote: note });
+export const acceptQuoteOnBehalf = (orderId: number, note: string, po: AcceptPo) =>
+  call<AcceptResult & { zoho?: string }>("accept_quote", { orderId, onBehalfNote: note, po });
 
 // ─── sales ───────────────────────────────────────────────────────────────
 export const listCustomers = <T>() => call<T>("list_customers");

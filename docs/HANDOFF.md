@@ -723,3 +723,64 @@ settings reads and CTP's caches.
   - re-run it whenever prices or costs change. It never changes item rates or customers.
 - JS rounds half-up and the Python dry run rounds half-even. This gave 9 one-cent differences against
   docs/rebates/rebate_dryrun_2026-10-24.csv. Zoho has the JS values.
+
+## 24 Oct — PO flow LIVE: quote → customer PO → confirmed SO, estimates OFF (0070, PWA v35)
+- **Estimates are switched off** (`zoho_config.estimates_enabled = false`). The switch and the code
+  are kept.
+  - Quotes already sent as a Zoho estimate still finish through that estimate: RQ-261023-52
+    (QT-000008, sent).
+- **Accept needs the customer's PO** (accept-quote):
+  - A PO number is required (50 characters at most).
+  - A PO file (PDF or photo) is required for customers and optional on behalf. The settings are
+    `zoho_config.po_file_required` and `po_file_required_behalf` (SQL only, no UI yet).
+  - The file goes to the private bucket **po-docs** `<customer id>/<order id>/…`:
+    - a customer can write and read only their own folder;
+    - staff read everything;
+    - nobody can update or delete;
+    - the limit is 10 MB, PDF or image.
+  - The accept checks the file belongs to the order, then saves `po_number`, `po_file_path`,
+    `po_file_name` and `credit_warning` on the order.
+- **Zoho SO:**
+  - `reference_number` = the PO;
+  - the notes read "Accepted in CTP Core · order RQ-… · customer PO …";
+  - the PO file is attached (`/salesorders/{id}/attachment`; if this fails it is logged and shown,
+    and the order stands).
+- **Idempotency:** `findOurSalesOrder` tries the old reference (= CTP no.) first, then every live SO
+  carrying that PO, read in full, matched on "order RQ-…" in its notes (exact match:
+  RQ-…-1 ≠ RQ-…-12).
+  - Default taken: the CTP order no. is in the notes, not in a "CTP order" custom field. Zoho has no
+    public API to create custom fields; Anton can add one later and CTP will fill it.
+- **Credit limit:** `{order_id, check:true}` is a read-only precheck, shown when the accept / on-behalf
+  dialog opens.
+  - It compares Zoho outstanding + this order (incl. VAT) against the Zoho credit limit, read live.
+  - It only warns, never blocks. The customer sees "accounts will review"; staff see the figures,
+    and the warning is kept on the order.
+- **Quotes accepted or converted in Zoho are followed** (zoho-push status read-back,
+  `followZohoAccept` → `accept_quote_from_zoho`):
+  - estimate converted to an SO in Zoho → that SO is linked, never a second one;
+  - estimate newly accepted → its SO is raised from it;
+  - converted straight to an invoice → the invoice is linked;
+  - then the order is confirmed, the stock held, and the timeline shows "Accepted in Zoho" by
+    Zoho (accounts);
+  - skipped while a customer's own accept is in flight (the PO was written less than 3 minutes ago).
+  - RQ-261023-53 (QT-000009, accepted in Zoho on 23 Oct, no SO) is NOT auto-accepted: it was already
+    "accepted" before this shipped. Its test customer is Test Co 2, so the desk should tidy it by hand
+    if wanted.
+- **Phone:**
+  - "Accept quote" opens a PO step: PO no., file, and the credit note if there is one.
+  - The on-behalf dialog has a PO no. and a file.
+  - Staff cards show "Customer PO …", "View PO" (a 5-minute signed link) and the credit warning.
+  - The timeline shows "· PO …" on the accepted step.
+- **Tests:**
+  - tests_0070_local.js 19/19 (0068 18/18, 0067 14/14);
+  - deno check at the 71-error baseline (no new errors);
+  - tsc and build clean;
+  - live `zoho-auth {action:"po_test"}` on TESTACC: SO-00020 was created with ref = PO, found again by
+    its notes (a prefix of the number was not), and the PO PDF attached. The test SO was then deleted,
+    leaving a gap in the SO numbering.
+- **Not yet tested end to end with a real customer login.** The first real accept is Hermans
+  (account customer): check that the SO shows the PO and that the attachment is there.
+- **Deploying edge functions:** `server/edge` is staged as `supabase/functions` in a temp folder, then
+  `supabase functions deploy <fn> --use-api` (there is no supabase/functions in the repo).
+- Next: price-book-aware pricing (customer's pricebook_id, list price struck through + rebate price,
+  staff margin, SO with pricebook_id) → public/walk-in RLS → catalogue fields → Zoho salespersons.

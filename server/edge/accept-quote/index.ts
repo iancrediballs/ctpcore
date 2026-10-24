@@ -1,5 +1,13 @@
 // CTP Core — a customer accepts a quote.
 //
+// 2026-10-24 (0070, docs/12 §5): the customer's PO. Accepting needs a PO number, and a PO file
+// unless zoho_config says otherwise (customers: required by default; on behalf: optional). The
+// app uploads the file to po-docs/<customer id>/<order id>/… first; this function checks it is
+// theirs, puts the PO on the order, raises the SO with reference = PO (CTP no. in its notes) and
+// attaches the file to it. { order_id, check: true } is the read-only precheck the app shows
+// before accepting: what is required, and the credit-limit warning (a warning, never a block).
+// Quotes are no longer Zoho estimates; one already sent as an estimate still finishes that way.
+//
 // 2026-10-23 (0062, Phase 2): when quotes are Zoho estimates (zoho_config.
 // estimates_enabled) and this quote has one, accepting marks the ESTIMATE
 // accepted and raises the confirmed sales order from the estimate's lines
@@ -47,7 +55,7 @@
 // a hold without a document would be a real one.
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
-import { zohoInit, zohoMissing, salesOrderFor, salesOrderFromEstimate, markEstimateAccepted, deleteSalesOrder, Blocked, type Logger } from "../_shared/zoho.ts";
+import { zohoInit, zohoMissing, salesOrderFor, salesOrderFromEstimate, markEstimateAccepted, deleteSalesOrder, attachToSalesOrder, creditCheck, rands, Blocked, type Logger } from "../_shared/zoho.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -74,7 +82,7 @@ Deno.serve(async (req: Request) => {
   if (callerErr || !caller?.user) return json({ error: "Not signed in" }, 401);
   const uid = caller.user.id;
 
-  let body: { order_id?: unknown; on_behalf_note?: unknown };
+  let body: { order_id?: unknown; on_behalf_note?: unknown; po_number?: unknown; po_file?: unknown; po_file_name?: unknown; check?: unknown };
   try { body = await req.json(); } catch { return json({ error: "Bad request" }, 400); }
   const orderId = Number(body.order_id);
   if (!Number.isInteger(orderId) || orderId <= 0) return json({ error: "order_id is required" }, 400);
@@ -102,6 +110,29 @@ Deno.serve(async (req: Request) => {
     if (!cust || Number(mine) !== Number(o.customer_id)) return json({ error: "That order belongs to a different customer" }, 403);
   } else if (!cust) return json({ error: "That order has no customer" }, 409);
 
+  // ── 0070: the PO rules and the credit check ────────────────────────────────
+  const { data: cfg } = await db.from("zoho_config").select("*").eq("id", 1).maybeSingle();
+  const live = !!(cfg?.push_enabled && cfg?.push_from && new Date(cfg.push_from) <= new Date());
+  const fileRequired = onBehalf ? !!cfg?.po_file_required_behalf : cfg?.po_file_required !== false;
+  const credit = async () => {
+    if (!live) return null;
+    const { data: ls } = await db.from("sales_line").select("qty, unit_price_minor, line_net_minor").eq("order_id", orderId).is("deleted_at", null);
+    const { data: t } = await db.from("sales_order").select("tax_rate_bps").eq("id", orderId).maybeSingle();
+    const net = (ls ?? []).reduce((a, l) => a + Number(l.line_net_minor ?? Number(l.qty) * Number(l.unit_price_minor)), 0);
+    const gross = Math.round(net * (1 + Number(t?.tax_rate_bps ?? 0) / 10000));
+    try { await zohoInit(db); return zohoMissing().length ? null : await creditCheck(db, Number(o.customer_id), gross); } catch { return null; }
+  };
+  const R = (m: number) => `R ${rands(m).toLocaleString("en-ZA", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const creditText = (c: { limit_minor: number; outstanding_minor: number; order_minor: number }) => ({
+    customer: "This order takes your account over its credit limit — our accounts team will review it before it goes out.",
+    staff: `Over credit limit: ${R(c.outstanding_minor)} outstanding + this order ${R(c.order_minor)} > limit ${R(c.limit_minor)} — accounts will review.`,
+  });
+  if (body.check === true) {
+    const c = o.status === "quote" ? await credit() : null;
+    return json({ ok: true, order_id: orderId, customer_id: o.customer_id, po_number_required: true, po_file_required: fileRequired,
+                  credit: c?.over ? { ...c, ...creditText(c) } : null });
+  }
+
   // already done (a retry after the response was lost)
   if (o.status === "confirmed") {
     return json({ ok: true, already: true, order_id: o.id, number: o.number, zoho_salesorder_number: o.zoho_salesorder_number });
@@ -117,14 +148,34 @@ Deno.serve(async (req: Request) => {
     return json({ error: "This quote cannot be accepted yet.", blockers, message: blockers.map((b) => b.message).join(" ") }, 409);
   }
 
+  // ── 2b. 0070: the customer's PO — number always, file per setting, and it must be theirs ──
+  const po = String(body.po_number ?? "").trim().replace(/\s+/g, " ");
+  const bad = (m: string) => json({ error: m, message: m }, 400);
+  if (!po) return bad("Enter your purchase order (PO) number.");
+  if (po.length > 50) return bad("The PO number is too long (50 characters at most).");
+  const poFile = String(body.po_file ?? "").trim() || null;
+  const poName = (String(body.po_file_name ?? "").trim() || (poFile ? poFile.split("/").pop()! : "")).slice(0, 120) || null;
+  if (fileRequired && !poFile) return bad("Attach your PO (PDF or photo).");
+  let poBlob: Blob | null = null;
+  if (poFile) {
+    if (!poFile.startsWith(`${o.customer_id}/${orderId}/`) || poFile.includes("..")) return bad("That PO file does not belong to this order.");
+    const { data: f, error: fErr } = await db.storage.from("po-docs").download(poFile);
+    if (fErr || !f) return bad("The PO file did not upload — please attach it again.");
+    poBlob = f;
+  }
+  const cr = await credit();
+  const creditMsg = cr?.over ? creditText(cr) : null;
+  await db.from("sales_order").update({ po_number: po, po_file_path: poFile, po_file_name: poName,
+    credit_warning: creditMsg?.staff ?? null }).eq("id", orderId);
+
   // ── 3. Zoho, only from go-live on ─────────────────────────────────────────
-  const { data: cfg } = await db.from("zoho_config").select("*").eq("id", 1).maybeSingle();
-  const live = !!(cfg?.push_enabled && cfg?.push_from && new Date(cfg.push_from) <= new Date());
   const log: Logger = async (r) => { await db.from("zoho_push_log").insert({ ...r, actor: uid }); };
 
   let so: { salesorder_id: string; salesorder_number: string; status: string; created: boolean; warning?: string } | null = null;
-  // 0062: accept through the quote's Zoho estimate when there is one
-  const viaEstimate = !!(live && cfg?.estimates_enabled);
+  // 0062: accept through the quote's Zoho estimate when there is one. 0070: estimates are off for new
+  // quotes; one already sent (or accepted) in Zoho still finishes through its estimate.
+  const inFlight = !!o.zoho_estimate_id && ["sent", "accepted"].includes(String(o.zoho_estimate_status ?? ""));
+  const viaEstimate = !!(live && (cfg?.estimates_enabled || inFlight));
   if (viaEstimate && (!o.zoho_estimate_id || o.zoho_estimate_status === "deleted")) {
     const m = "Your quote is being finalised by our accounts team.";
     return json({ error: m, blockers: [{ kind: "estimate", message: m }], message: m }, 409);
@@ -140,9 +191,9 @@ Deno.serve(async (req: Request) => {
     }
     try {
       if (viaEstimate) {
-        const r = await salesOrderFromEstimate(db, orderId, o.zoho_estimate_id!, log);
+        const r = await salesOrderFromEstimate(db, orderId, o.zoho_estimate_id!, log, po);
         so = r; est = { status: r.estimate_status, number: r.estimate_number };
-      } else so = await salesOrderFor(db, cfg, orderId, log);
+      } else so = await salesOrderFor(db, cfg, orderId, log, po);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       await log({ doc_type: "salesorder", ctp_id: orderId, ctp_ref: o.number, action: e instanceof Blocked ? "blocked" : "error", ok: false, message: msg });
@@ -194,7 +245,22 @@ Deno.serve(async (req: Request) => {
       ...(est ? { zoho_estimate_status: est.status, zoho_estimate_status_at: new Date().toISOString(), zoho_estimate_error: null } : {}) }).eq("id", orderId);
   }
 
-  return json({ ok: true, already: acc?.already ?? false, order_id: orderId, number: o.number,
+  // 0070: the PO file on the Zoho SO (a failure is logged and shown; the order stands)
+  let attachWarning: string | null = null;
+  if (so && poBlob && !acc?.already) {
+    try {
+      await attachToSalesOrder(so.salesorder_id, poBlob, poName ?? "PO.pdf");
+      await log({ doc_type: "salesorder", ctp_id: orderId, ctp_ref: o.number, action: "update", ok: true, zoho_id: so.salesorder_id,
+                  message: `${o.number}: customer PO ${po} attached to ${so.salesorder_number}` });
+    } catch (e) {
+      attachWarning = `PO ${po} is on the order, but attaching the file to ${so.salesorder_number} failed: ${e instanceof Error ? e.message : String(e)}`;
+      await log({ doc_type: "salesorder", ctp_id: orderId, ctp_ref: o.number, action: "error", ok: false, zoho_id: so.salesorder_id, message: attachWarning });
+      await db.from("sales_order").update({ zoho_so_error: attachWarning }).eq("id", orderId);
+    }
+  }
+
+  return json({ ok: true, already: acc?.already ?? false, order_id: orderId, number: o.number, po_number: po,
+                credit_warning: creditMsg ? (onBehalf ? creditMsg.staff : creditMsg.customer) : null, attach_warning: attachWarning,
                 zoho_salesorder_id: so?.salesorder_id ?? null, zoho_salesorder_number: so?.salesorder_number ?? null,
                 zoho: live ? `sales order raised (${so?.status === "open" ? "confirmed" : so?.status ?? "draft"})` : "not sent: Zoho sending is off or before the go-live date",
                 reserved_lines: acc?.reserved_lines ?? 0 });

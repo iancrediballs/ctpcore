@@ -59,7 +59,7 @@ import { createClient, type SupabaseClient } from "jsr:@supabase/supabase-js@2";
 
 import { env, zohoInit, zohoMissing, Blocked, zoho, rands, jhbDate, findByReference, resolveContact, itemIds, taxIdFor,
          rebateDiscount, linkToSalesOrder, salesOrderFor, deleteSalesOrder, estimateFor, estimatePayload, findLiveEstimate,
-         zohoInv, type Logger } from "../_shared/zoho.ts";
+         zohoInv, salesOrderFromEstimate, type Logger } from "../_shared/zoho.ts";
 
 
 const CORS = {
@@ -283,7 +283,7 @@ async function refreshStatus(db: SupabaseClient, log: Logger, force: boolean) {
   const changes: { doc: string; ref: string; from: string | null; to: string }[] = [];
   let checked = 0;
   for (const k of kinds) {
-    const extra = k.table === "sales_order" ? ", number, status, client_response, zoho_salesorder_id, zoho_invoice_id, deleted_at" : "";
+    const extra = k.table === "sales_order" ? ", number, status, client_response, zoho_salesorder_id, zoho_invoice_id, deleted_at, po_number, updated_at" : "";
     const { data: rows, error } = await db.from(k.table)
       .select(`id, ${k.ref}, ${k.idCol}, ${k.numCol}, ${k.stCol}${extra}`)
       .not(k.idCol, "is", null).limit(200);
@@ -293,7 +293,9 @@ async function refreshStatus(db: SupabaseClient, log: Logger, force: boolean) {
       const was: string | null = r[k.stCol];
       // 0061: an invoiced SO is still read until accounts' invoice is linked onto the order
       if (FINAL.includes(was ?? "") && !(k.doc === "salesorder" && !r.zoho_invoice_id && !r.deleted_at && was === "invoiced")) continue;
-      if (k.doc === "estimate" && ["accepted", "declined", "expired"].includes(was ?? "")) continue;
+      if (k.doc === "estimate" && ["declined", "expired"].includes(was ?? "")) continue;
+      // 0070: an accepted estimate is still read while its CTP order is a quote (accounts may convert it in Zoho)
+      if (k.doc === "estimate" && was === "accepted" && (r.status !== "quote" || r.deleted_at)) continue;
       checked++;
       let status: string, number: string | null = r[k.numCol];
       try {
@@ -310,6 +312,11 @@ async function refreshStatus(db: SupabaseClient, log: Logger, force: boolean) {
           await zoho("POST", `/estimates/${r[k.idCol]}/status/declined`);
           status = "declined";
           b.estimate.status = "declined";
+        }
+        // 0070: accepted / converted in Zoho (Anton's test) → CTP accepts too, linking what Zoho has
+        if (k.doc === "estimate" && r.status === "quote" && !r.deleted_at) {
+          const f = await followZohoAccept(db, log, r, b.estimate, was);
+          if (f) changes.push({ doc: "order", ref: r.number, from: "quote", to: f });
         }
         // 0063: Zoho leads the quote — lines, prices, discounts, total, expiry, status
         if (k.doc === "estimate") {
@@ -344,6 +351,59 @@ async function refreshStatus(db: SupabaseClient, log: Logger, force: boolean) {
   }
   const terms = await refreshTerms(db, log, force ? 10 * 60_000 : 6 * 3600_000);
   return { checked, changed: changes.length, changes, terms };
+}
+
+// ── 0070: a quote accepted or converted in Zoho ──────────────────────────────
+// Accounts can accept the estimate, convert it to a sales order, or straight to an invoice, in
+// Zoho. CTP follows: the SO Zoho already has is linked (never a second one); an estimate only
+// accepted gets its SO raised from it (as when the customer accepts); an invoice-only conversion
+// is linked as the invoice. Then accept_quote_from_zoho() — status, holds, "Accepted in Zoho".
+// Not while the customer's own accept is in flight (accept-quote writes the PO first).
+// deno-lint-ignore no-explicit-any
+async function followZohoAccept(db: SupabaseClient, log: Logger, r: any, est: any, was: string | null): Promise<string | null> {
+  const st = String(est?.status ?? "");
+  // deno-lint-ignore no-explicit-any
+  const soConv = ((est?.salesorders ?? []) as any[]).find((x) => !["void", "cancelled"].includes(String(x.status ?? x.order_status ?? "")));
+  const invIds = ((est?.invoice_ids ?? []) as unknown[]).map(String).filter(Boolean);
+  const newlyAccepted = st === "accepted" && was !== "accepted";
+  if (!soConv && !invIds.length && !newlyAccepted && st !== "invoiced") return null;
+  if (r.po_number && r.updated_at && Date.now() - new Date(r.updated_at).getTime() < 3 * 60_000) return null;   // customer accepting now
+  const num = String(est.estimate_number ?? "");
+  let so: { salesorder_id: string; salesorder_number: string; created: boolean } | null = null;
+  let how: string;
+  try {
+    if (soConv) {
+      so = { salesorder_id: String(soConv.salesorder_id), salesorder_number: String(soConv.salesorder_number ?? ""), created: false };
+      how = `Estimate ${num} converted to ${so.salesorder_number} in Zoho`;
+    } else if (invIds.length) {
+      how = `Estimate ${num} invoiced in Zoho`;
+    } else {
+      const made = await salesOrderFromEstimate(db, r.id, String(est.estimate_id), log, r.po_number ?? null);
+      so = { salesorder_id: made.salesorder_id, salesorder_number: made.salesorder_number, created: made.created };
+      how = `Estimate ${num} accepted in Zoho`;
+    }
+  } catch (e) {
+    await log({ doc_type: "estimate", ctp_id: r.id, ctp_ref: r.number, action: "error", ok: false, zoho_id: String(est.estimate_id),
+                message: `${r.number}: ${num} is ${st} in Zoho, but CTP could not follow: ${e instanceof Error ? e.message : String(e)}` });
+    return null;
+  }
+  const { data: acc, error } = await db.rpc("accept_quote_from_zoho", { order_id: r.id, p_zoho_salesorder_id: so?.salesorder_id ?? null,
+    p_zoho_salesorder_number: so?.salesorder_number ?? null, p_how: how });
+  if (error) {
+    if (so?.created) { try { await deleteSalesOrder(so.salesorder_id); } catch { /* logged below */ } }
+    await log({ doc_type: "estimate", ctp_id: r.id, ctp_ref: r.number, action: "error", ok: false, zoho_id: String(est.estimate_id),
+                message: `${r.number}: ${how}, but accepting in CTP failed (${error.message})${so?.created ? `; ${so.salesorder_number} removed again` : ""}` });
+    return null;
+  }
+  if (invIds.length) {
+    // deno-lint-ignore no-explicit-any
+    const invs: any[] = [];
+    for (const id of invIds) { try { invs.push((await zoho("GET", `/invoices/${id}`)).invoice); } catch { /* next read */ } }
+    if (invs.length) await linkInvoices(db, r.id, r.number, invs, log);
+  }
+  await log({ doc_type: "estimate", ctp_id: r.id, ctp_ref: r.number, action: "update", ok: true, zoho_id: String(est.estimate_id),
+              message: `${r.number}: ${how} — accepted in CTP, ${acc?.reserved_lines ?? 0} line(s) held` });
+  return "accepted in Zoho";
 }
 
 // ── 0059/0061: read-back of one sales order (Michelle's edits, her invoice) ──

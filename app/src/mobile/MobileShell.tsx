@@ -17,7 +17,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useStatus } from "@powersync/react";
 import * as api from "../data/api";
 import { refreshZohoStatus, zohoStatusLabel, syncSalesOrder, syncEstimate, recreateEstimate, overrideFulfilGate, fulfilBlockReason, setCustomerOnAccount,
-         shipInZoho, countToZoho, openPurchaseOrders, receiveInZoho, type OpenPO } from "../data/zoho";
+         shipInZoho, countToZoho, openPurchaseOrders, receiveInZoho, type OpenPO,
+         acceptPrecheck, uploadPo, poFileUrl } from "../data/zoho";
 import AddCustomer from "../admin/AddCustomer";
 import { assetUrl, photoWebUrl } from "../assets";
 import { DiagramCanvas, Marker, loadMarkerScale, saveMarkerScale, markerRadius, MARKER_SCALE_MIN, MARKER_SCALE_MAX, type CanvasApi, type Frame, type Pt } from "./DiagramCanvas";
@@ -121,6 +122,7 @@ type StaffOrder = {
   zoho_estimate_status?: string | null; zoho_estimate_error?: string | null;
   zoho_estimate_total_minor?: number | null; zoho_estimate_expiry?: string | null;
   staff_log?: string | null;   // 0067: internal history, staff only
+  po_number?: string | null; po_file_path?: string | null; po_file_name?: string | null; credit_warning?: string | null;   // 0070
   timeline?: { at: string; kind: string; label: string; by: string; detail?: Record<string, unknown> }[];   // 0068
   unpriced: number; total_minor: number;
   stage: "to_price" | "with_customer" | "to_pick" | "fulfilled" | string;
@@ -934,8 +936,15 @@ const parseRand = (s: string): number => {
   /** 0058: admin accepts for a customer who confirmed by phone/email. Same path
    *  as the customer's accept (confirmed Zoho sales order + stock hold); the
    *  admin and the note are recorded on the order. */
-  const [behalf, setBehalf] = useState<{ order: StaffOrder; note: string } | null>(null);
-  const acceptOnBehalf = useCallback(async (o: StaffOrder, note: string) => {
+  const [behalf, setBehalf] = useState<{ order: StaffOrder; note: string; po: string; file: File | null;
+    need: boolean | null; credit: string | null } | null>(null);
+  // 0070: what accepting needs (PO file per setting) and the credit warning, read when the dialog opens
+  const openBehalf = useCallback((o: StaffOrder) => {
+    setBehalf({ order: o, note: "", po: "", file: null, need: null, credit: null });
+    void acceptPrecheck(o.id, true).then((c) => setBehalf((b) => b && b.order.id === o.id
+      ? { ...b, need: c ? c.po_file_required : false, credit: c?.credit?.staff ?? null } : b));
+  }, []);
+  const acceptOnBehalf = useCallback(async (o: StaffOrder, note: string, poNo: string, file: File | null) => {
     // the old prefill ("Confirmed by  via phone") was saved once with no name in it
     if (!/\w{2,}/.test(note.replace(/\b(confirmed|by|via|phone|email|e-mail)\b/gi, ""))) {
       showToast({ text: "Say who confirmed it, e.g. \"Confirmed by Denver via phone\".", err: true });
@@ -943,10 +952,12 @@ const parseRand = (s: string): number => {
     }
     setSavingOrder(true);
     try {
-      const r = await api.acceptQuoteOnBehalf(o.id, note);
+      const path = file && o.customer_id ? await uploadPo(o.customer_id, o.id, file) : null;
+      const r = await api.acceptQuoteOnBehalf(o.id, note, { po_number: poNo, po_file: path, po_file_name: file?.name ?? null });
       showToast({ text: r?.already
         ? `${o.number} was already accepted — nothing changed.`
-        : `${o.number} accepted for ${o.customer_name}${r?.zoho_salesorder_number ? ` · Zoho sales order ${r.zoho_salesorder_number}` : ""} · ${r?.reserved_lines ?? 0} line${(r?.reserved_lines ?? 0) === 1 ? "" : "s"} held.` });
+        : `${o.number} accepted for ${o.customer_name} · PO ${poNo}${r?.zoho_salesorder_number ? ` · Zoho sales order ${r.zoho_salesorder_number}` : ""} · ${r?.reserved_lines ?? 0} line${(r?.reserved_lines ?? 0) === 1 ? "" : "s"} held.`
+          + (r?.credit_warning ? ` ⚠ ${r.credit_warning}` : "") + (r?.attach_warning ? ` ⚠ ${r.attach_warning}` : ""), err: !!r?.attach_warning });
       loadOrders();
     } catch (e) { showToast({ text: e instanceof Error ? e.message.replace(/^\[CTP web\] could not accept: /, "") : "Could not accept.", err: true }); }
     finally { setSavingOrder(false); }
@@ -1183,15 +1194,25 @@ const parseRand = (s: string): number => {
     }
   }, [showToast, loadMine]);
 
-  const answerQuote = useCallback(async (r: MyRequest, accept: boolean) => {
+  // 0070: accepting asks for the customer's PO (number; file unless the setting says otherwise)
+  const [poStep, setPoStep] = useState<{ r: MyRequest; po: string; file: File | null; need: boolean | null; credit: string | null; customerId: number | null } | null>(null);
+  const openPoStep = useCallback((r: MyRequest) => {
+    setPoStep({ r, po: "", file: null, need: null, credit: null, customerId: null });
+    void acceptPrecheck(r.id).then((c) => setPoStep((p) => p && p.r.id === r.id
+      ? { ...p, need: c ? c.po_file_required : true, credit: c?.credit?.customer ?? null, customerId: c?.customer_id ?? null } : p));
+  }, []);
+
+  const answerQuote = useCallback(async (r: MyRequest, accept: boolean, po?: { po: string; file: File | null; customerId: number | null }) => {
     setAnswering(r.id);
     try {
       if (accept) {
         // Zoho sales order + stock hold, both or neither (accept-quote function).
-        const res = await api.acceptQuote(r.id);
-        showToast({ text: res.zoho_salesorder_number
-          ? `${r.number} accepted — sales order ${res.zoho_salesorder_number} raised. We'll be in touch with the proforma.`
-          : `${r.number} accepted — your parts are reserved. We'll be in touch.` });
+        const path = po?.file && po.customerId ? await uploadPo(po.customerId, r.id, po.file) : null;
+        const res = await api.acceptQuote(r.id, { po_number: po?.po ?? "", po_file: path, po_file_name: po?.file?.name ?? null });
+        showToast({ text: (res.zoho_salesorder_number
+          ? `${r.number} accepted with your PO ${res.po_number ?? po?.po ?? ""} — sales order ${res.zoho_salesorder_number} raised. We'll be in touch with the proforma.`
+          : `${r.number} accepted with your PO ${res.po_number ?? po?.po ?? ""} — your parts are reserved. We'll be in touch.`)
+          + (res.credit_warning ? ` ${res.credit_warning}` : "") });
       } else {
         await api.respondToQuote(r.id, false);
         showToast({ text: `${r.number} declined.` });
@@ -2070,12 +2091,20 @@ const parseRand = (s: string): number => {
                             <div className="mb-row">
                               <button className="mb-btn s" style={{ height: 46 }} disabled={savingOrder || notYet}
                                 title={notYet ? `Waiting for accounts to send estimate ${o.zoho_estimate_number ?? ""} from Zoho` : undefined}
-                                onClick={() => setBehalf({ order: o, note: "" })}>
+                                onClick={() => openBehalf(o)}>
                                 {notYet ? `Accept on customer's behalf — waiting for accounts to send ${o.zoho_estimate_number ?? "the estimate"}` : "Accept on customer's behalf"}
                               </button>
                             </div>
                           );
                         })()}
+                        {(o.po_number || o.credit_warning) && (
+                          <div className="mb-row" style={{ display: "block" }}>
+                            {o.po_number && <span className="mb-rk">Customer PO <b className="mb-mono">{o.po_number}</b></span>}
+                            {o.po_file_path && <> · <button className="mb-chip" onClick={() => { void poFileUrl(o.po_file_path!).then((u) => window.open(u, "_blank", "noopener"))
+                              .catch((e) => showToast({ text: e instanceof Error ? e.message : "Could not open the PO.", err: true })); }}>View PO{o.po_file_name ? ` (${o.po_file_name})` : ""}</button></>}
+                            {o.credit_warning && <div className="mb-note" style={{ margin: "6px 0 0" }}>⚠ {o.credit_warning}</div>}
+                          </div>
+                        )}
                         {(o.timeline?.length ?? 0) > 0 && (
                           <details className="mb-row" style={{ display: "block" }} open={o.stage !== "invoiced" && o.status !== "cancelled"}>
                             <summary className="mb-rk" style={{ cursor: "pointer" }}>Timeline</summary>
@@ -2083,7 +2112,7 @@ const parseRand = (s: string): number => {
                               {o.timeline!.map((e, i) => (
                                 <li key={i}>
                                   <span className="mb-tl-when">{new Date(e.at).toLocaleString("en-ZA", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}</span>
-                                  <span className="mb-tl-what">{e.label}{e.detail && typeof e.detail.note === "string" ? ` — “${e.detail.note}”` : ""}</span>
+                                  <span className="mb-tl-what">{e.label}{e.detail && typeof e.detail.po === "string" ? ` · PO ${e.detail.po}` : ""}{e.detail && typeof e.detail.note === "string" ? ` — “${e.detail.note}”` : ""}</span>
                                   <span className="mb-tl-who">{e.by}</span>
                                 </li>
                               ))}
@@ -2268,6 +2297,14 @@ const parseRand = (s: string): number => {
                             <span className="mb-rv">{o.notes}</span>
                           </div>
                         )}
+                        {(o.po_number || o.credit_warning) && (
+                          <div className="mb-row" style={{ display: "block" }}>
+                            {o.po_number && <span className="mb-rk">Customer PO <b className="mb-mono">{o.po_number}</b></span>}
+                            {o.po_file_path && <> · <button className="mb-chip" onClick={() => { void poFileUrl(o.po_file_path!).then((u) => window.open(u, "_blank", "noopener"))
+                              .catch((e) => showToast({ text: e instanceof Error ? e.message : "Could not open the PO.", err: true })); }}>View PO{o.po_file_name ? ` (${o.po_file_name})` : ""}</button></>}
+                            {o.credit_warning && <div className="mb-note" style={{ margin: "6px 0 0" }}>⚠ {o.credit_warning}</div>}
+                          </div>
+                        )}
                         {(o.timeline?.length ?? 0) > 0 && (
                           <details className="mb-row" style={{ display: "block" }} open={o.stage !== "invoiced" && o.status !== "cancelled"}>
                             <summary className="mb-rk" style={{ cursor: "pointer" }}>Timeline</summary>
@@ -2275,7 +2312,7 @@ const parseRand = (s: string): number => {
                               {o.timeline!.map((e, i) => (
                                 <li key={i}>
                                   <span className="mb-tl-when">{new Date(e.at).toLocaleString("en-ZA", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}</span>
-                                  <span className="mb-tl-what">{e.label}{e.detail && typeof e.detail.note === "string" ? ` — “${e.detail.note}”` : ""}</span>
+                                  <span className="mb-tl-what">{e.label}{e.detail && typeof e.detail.po === "string" ? ` · PO ${e.detail.po}` : ""}{e.detail && typeof e.detail.note === "string" ? ` — “${e.detail.note}”` : ""}</span>
                                   <span className="mb-tl-who">{e.by}</span>
                                 </li>
                               ))}
@@ -2497,7 +2534,7 @@ const parseRand = (s: string): number => {
                         onClick={() => { void answerQuote(r, false); }}>Decline</button>
                       <button className="mb-btn p" style={{ height: 46 }}
                         disabled={answering === r.id || (blockers[r.id]?.length ?? 0) > 0}
-                        onClick={() => { void answerQuote(r, true); }}>
+                        onClick={() => openPoStep(r)}>
                         {answering === r.id ? "Raising the sales order…" : "Accept quote"}
                       </button>
                     </div>
@@ -2900,20 +2937,55 @@ const parseRand = (s: string): number => {
         </div>
       )}
 
+      {poStep && (
+        <div className="mb-toast" role="dialog" aria-label="Accept with your PO"
+          style={{ display: "flex", flexDirection: "column", alignItems: "stretch", gap: 10 }}>
+          <span>Accept <b>{poStep.r.number}</b>? We raise your sales order with your purchase order and reserve the parts.</span>
+          <label style={{ fontSize: 13, fontWeight: 700 }}>Your PO number (required)
+            <input className="mb-of-q" style={{ marginTop: 6, padding: "0 12px" }} autoFocus value={poStep.po} maxLength={50}
+              placeholder="e.g. PO-4471" onChange={(e) => setPoStep((p) => p && { ...p, po: e.target.value })} />
+          </label>
+          <label style={{ fontSize: 13, fontWeight: 700 }}>Your PO (PDF or photo){poStep.need === false ? " (optional)" : " (required)"}
+            <input type="file" accept="application/pdf,image/*" style={{ marginTop: 6, display: "block" }}
+              onChange={(e) => { const f = e.target.files?.[0] ?? null; setPoStep((p) => p && { ...p, file: f }); }} />
+          </label>
+          {poStep.credit && <div className="mb-note" style={{ margin: 0 }}>{poStep.credit}</div>}
+          <div style={{ display: "flex", gap: 8 }}>
+            <button className="mb-chip" style={{ flex: 1 }} onClick={() => setPoStep(null)}>Cancel</button>
+            <button className="mb-chip on" style={{ flex: 1 }}
+              disabled={answering === poStep.r.id || poStep.need === null || !poStep.po.trim() || (poStep.need && !poStep.file)
+                || (!!poStep.file && !poStep.customerId)}
+              onClick={() => { const p = poStep; setPoStep(null); void answerQuote(p.r, true, { po: p.po.trim(), file: p.file, customerId: p.customerId }); }}>
+              Accept quote
+            </button>
+          </div>
+        </div>
+      )}
+
       {behalf && (
         <div className="mb-toast" role="dialog" aria-label="Accept on the customer's behalf"
           style={{ display: "flex", flexDirection: "column", alignItems: "stretch", gap: 10 }}>
-          <span>Accept <b>{behalf.order.number}</b> for <b>{behalf.order.customer_name}</b>? This raises the confirmed sales order in Zoho from the estimate and holds the stock.</span>
+          <span>Accept <b>{behalf.order.number}</b> for <b>{behalf.order.customer_name}</b>? This raises the confirmed sales order in Zoho with the customer's PO and holds the stock.</span>
           <label style={{ fontSize: 13, fontWeight: 700 }}>Who confirmed it, and how? (required)
             <input className="mb-of-q" style={{ marginTop: 6, padding: "0 12px" }} autoFocus value={behalf.note} maxLength={300}
               placeholder="e.g. Confirmed by Denver via phone"
               onChange={(e) => setBehalf((b) => b && { ...b, note: e.target.value })} />
           </label>
+          <label style={{ fontSize: 13, fontWeight: 700 }}>Customer's PO number (required)
+            <input className="mb-of-q" style={{ marginTop: 6, padding: "0 12px" }} value={behalf.po} maxLength={50}
+              placeholder="e.g. PO-4471" onChange={(e) => setBehalf((b) => b && { ...b, po: e.target.value })} />
+          </label>
+          <label style={{ fontSize: 13, fontWeight: 700 }}>PO file (PDF or photo){behalf.need ? " (required)" : " (optional)"}
+            <input type="file" accept="application/pdf,image/*" style={{ marginTop: 6, display: "block" }}
+              onChange={(e) => { const f = e.target.files?.[0] ?? null; setBehalf((b) => b && { ...b, file: f }); }} />
+          </label>
+          {behalf.credit && <div className="mb-note" style={{ margin: 0 }}>⚠ {behalf.credit}</div>}
           <div style={{ display: "flex", gap: 8 }}>
             <button className="mb-chip" style={{ flex: 1 }} onClick={() => setBehalf(null)}>Cancel</button>
             <button className="mb-chip on" style={{ flex: 1 }}
-              disabled={savingOrder || !/\w{2,}/.test(behalf.note.replace(/\b(confirmed|by|via|phone|email|e-mail)\b/gi, ""))}
-              onClick={() => { const b = behalf; setBehalf(null); void acceptOnBehalf(b.order, b.note.trim()); }}>
+              disabled={savingOrder || behalf.need === null || !behalf.po.trim() || (behalf.need && !behalf.file)
+                || !/\w{2,}/.test(behalf.note.replace(/\b(confirmed|by|via|phone|email|e-mail)\b/gi, ""))}
+              onClick={() => { const b = behalf; setBehalf(null); void acceptOnBehalf(b.order, b.note.trim(), b.po.trim(), b.file); }}>
               Accept for the customer
             </button>
           </div>

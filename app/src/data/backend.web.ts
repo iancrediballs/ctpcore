@@ -816,6 +816,7 @@ async function staffOrders(): Promise<unknown[]> {
             so.zoho_invoice_payments, so.zoho_invoice_count,
             so.zoho_estimate_id, so.zoho_estimate_number, so.zoho_estimate_status, so.zoho_estimate_error,
             so.zoho_estimate_total_minor, so.zoho_estimate_expiry, so.staff_log, so.timeline,
+            so.po_number, so.po_file_path, so.po_file_name, so.credit_warning, so.accepted_via,
             c.name AS customer_name, c.contact AS customer_contact,
             c.phone AS customer_phone, c.email AS customer_email,
             (SELECT l.code FROM location l WHERE l.id = so.location_id) AS location_code
@@ -913,6 +914,8 @@ async function staffOrders(): Promise<unknown[]> {
       zoho_estimate_status: nstr(o["zoho_estimate_status"]),
       zoho_estimate_error: nstr(o["zoho_estimate_error"]),
       staff_log: nstr(o["staff_log"]),
+      po_number: nstr(o["po_number"]), po_file_path: nstr(o["po_file_path"]), po_file_name: nstr(o["po_file_name"]),
+      credit_warning: nstr(o["credit_warning"]),
       timeline: (() => { try { const t = JSON.parse(String(o["timeline"] ?? "[]")); return Array.isArray(t) ? t : []; } catch { return []; } })(),
       zoho_estimate_total_minor: o["zoho_estimate_total_minor"] == null ? null : Number(o["zoho_estimate_total_minor"]),
       zoho_estimate_expiry: nstr(o["zoho_estimate_expiry"]),
@@ -1033,7 +1036,9 @@ async function acceptQuote(a: Record<string, unknown>): Promise<unknown> {
   const orderId = numId(a["orderId"], "orderId");
   // 0058: an admin accepting for the customer passes the note (who confirmed, how)
   const note = a["onBehalfNote"];
-  const body = typeof note === "string" ? { order_id: orderId, on_behalf_note: note } : { order_id: orderId };
+  const po = (a["po"] ?? {}) as Record<string, unknown>;   // 0070: the customer's PO
+  const body = { order_id: orderId, ...(typeof note === "string" ? { on_behalf_note: note } : {}),
+                 po_number: po["po_number"] ?? null, po_file: po["po_file"] ?? null, po_file_name: po["po_file_name"] ?? null };
   const { data, error } = await supabase.functions.invoke("accept-quote", { body });
   if (error) {
     // the function's own JSON body carries the reason; the SDK wraps non-2xx as an error

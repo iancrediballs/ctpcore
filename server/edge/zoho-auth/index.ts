@@ -14,7 +14,7 @@
 // POST { "action": "status" } says whether a token is stored, nothing more.
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient, type SupabaseClient } from "jsr:@supabase/supabase-js@2";
-import { zohoInit, zohoToken, zoho, zohoInv, findByReference } from "../_shared/zoho.ts";
+import { zohoInit, zohoToken, zoho, zohoInv, findByReference, findOurSalesOrder, attachToSalesOrder, creditCheck } from "../_shared/zoho.ts";
 
 const env = (k: string) => Deno.env.get(k) ?? "";
 const json = (b: unknown, status = 200) =>
@@ -750,6 +750,45 @@ Deno.serve(async (req: Request) => {
     return json({ ok: true, number: now.estimate_number, status: now.status, reference: now.reference_number, total: now.total });
   }
 
+  // 0070: live test of the PO flow's Zoho side on the TEST contact — SO with reference = PO and the
+  // CTP no. in its notes, found again by findOurSalesOrder, a PO file attached, the credit read. Self-cleaning.
+  if (body.action === "po_test") {
+    await zohoInit(db);
+    const { data: link } = await db.from("zoho_item").select("zoho_item_id, sku").eq("status", "active").not("part_id", "is", null).limit(1).single();
+    const { data: tc } = await db.from("customer").select("id, zoho_contact_id").eq("code", "TESTACC").maybeSingle();
+    if (!link || !tc?.zoho_contact_id) return json({ ok: false, error: "no test item/contact" }, 412);
+    const stamp = new Date().toISOString().replace(/[-:T]/g, "").slice(0, 12);
+    const ctp = `RQ-TEST-${stamp}`, po = `PO-TEST-${stamp}`;
+    const out: Record<string, unknown> = { ctp, po };
+    // deno-lint-ignore no-explicit-any
+    let so: any = null;
+    try {
+      so = (await zoho("POST", "/salesorders", {}, { customer_id: tc.zoho_contact_id, reference_number: po,
+        line_items: [{ item_id: link.zoho_item_id, quantity: 1, rate: 1, description: `TEST ${link.sku}` }],
+        notes: `Accepted in CTP Core · order ${ctp} · customer PO ${po} · CTP CORE TEST - DELETE ME` })).salesorder;
+      out.created = `${so.salesorder_number} ref=${so.reference_number}`;
+      const hit = await findOurSalesOrder(ctp, po);
+      out.found_by_notes = hit ? String(hit.salesorder_number) : null;
+      out.not_found_for_prefix = (await findOurSalesOrder(ctp.slice(0, -1), po)) === null;
+      const pdf = new Blob([new TextEncoder().encode(["%PDF-1.1", "1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj 2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj 3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 200 200]>>endobj",
+        "trailer<</Root 1 0 R>>", "%%EOF"].join(String.fromCharCode(10)))], { type: "application/pdf" });
+      await attachToSalesOrder(String(so.salesorder_id), pdf, `${po}.pdf`);
+      const back = (await zoho("GET", `/salesorders/${so.salesorder_id}`)).salesorder;
+      // deno-lint-ignore no-explicit-any
+      out.documents = (back?.documents ?? []).map((d: any) => d.file_name);
+      out.credit = await creditCheck(db, tc.id, 100);
+    } catch (e) {
+      out.error = e instanceof Error ? e.message : String(e);
+    } finally {
+      if (so?.salesorder_id) {
+        try { await zoho("DELETE", `/salesorders/${so.salesorder_id}`); out.removed = "deleted"; }
+        catch { try { await zoho("POST", `/salesorders/${so.salesorder_id}/status/void`); out.removed = "voided"; } catch (e2) { out.removed = "FAILED: " + String(e2); } }
+      }
+    }
+    return json({ ok: !out.error && out.found_by_notes === so?.salesorder_number && out.not_found_for_prefix === true
+      && (out.documents as string[] | undefined)?.includes(`${po}.pdf`) && out.removed === "deleted", ...out });
+  }
+
   if (body.action === "so_test") {
     await zohoInit(db);
     const { data: link } = await db.from("zoho_item").select("zoho_item_id, sku").eq("status", "active").not("part_id", "is", null).limit(1).single();
@@ -797,7 +836,7 @@ Deno.serve(async (req: Request) => {
         // deno-lint-ignore no-explicit-any
         salesreceipts: { status: recs.status, msg: recs.j.message, rows: (recs.j.sales_receipts ?? recs.j.salesreceipts ?? []).map((s: any) => `${s.receipt_number ?? s.sales_receipt_number} ${s.date} ${s.total}`) } });
     }
-    if (!["salesorders", "invoices", "contacts"].includes(body.kind) || !/^\d+$/.test(String(body.id ?? ""))) {
+    if (!["salesorders", "invoices", "contacts", "estimates"].includes(body.kind) || !/^\d+$/.test(String(body.id ?? ""))) {
       return json({ ok: false, error: "kind/id" }, 400);
     }
     await zohoInit(db);
@@ -805,10 +844,12 @@ Deno.serve(async (req: Request) => {
     const r = await fetch(`https://www.zohoapis.com/books/v3/${body.kind}/${body.id}?organization_id=${env("ZOHO_ORG_ID")}`,
       { headers: { Authorization: `Zoho-oauthtoken ${tk}` } });
     const j = await r.json().catch(() => ({}));
-    const d = j.salesorder ?? j.invoice ?? j.contact;
+    const d = j.salesorder ?? j.invoice ?? j.contact ?? j.estimate;
     if (!d) return json({ ok: false, status: r.status, error: j.message }, 502);
     return json({ ok: true, doc: {
-      number: d.salesorder_number ?? d.invoice_number ?? d.contact_name, status: d.status, customer: d.customer_name,
+      number: d.salesorder_number ?? d.invoice_number ?? d.estimate_number ?? d.contact_name,
+      // deno-lint-ignore no-explicit-any
+      links: body.kind === "estimates" ? Object.keys(d).filter((k) => /salesorder|invoice|convert|accept/i.test(k)).map((k) => `${k}=${JSON.stringify((d as any)[k])?.slice(0, 300)}`) : undefined, status: d.status, customer: d.customer_name,
       customer_id: d.customer_id, reference: d.reference_number, date: d.date, sub_total: d.sub_total, tax_total: d.tax_total, total: d.total,
       is_inclusive_tax: d.is_inclusive_tax, contact_type: d.contact_type, email: d.email,
       // deno-lint-ignore no-explicit-any

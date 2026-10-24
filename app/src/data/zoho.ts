@@ -206,3 +206,34 @@ export async function sendReceiptToCloud(payload: Record<string, unknown>): Prom
   if (!id) return { ok: false, message: "NOT sent to Zoho: the cloud did not return a receipt id" };
   return pushToZoho("bill", id);
 }
+
+// ── 0070: the customer's PO on acceptance ───────────────────────────────────
+export type PoInput = { po_number: string; po_file?: string | null; po_file_name?: string | null };
+export type AcceptPrecheck = { po_file_required: boolean; customer_id: number;
+  credit: { customer: string; staff: string; limit_minor: number; outstanding_minor: number; order_minor: number } | null };
+
+/** What accepting this quote needs (PO file or not) and the credit-limit warning. Read-only. */
+export async function acceptPrecheck(orderId: number, onBehalf = false): Promise<AcceptPrecheck | null> {
+  try {
+    const { data, error } = await supabase.functions.invoke("accept-quote",
+      { body: { order_id: orderId, check: true, ...(onBehalf ? { on_behalf_note: "precheck" } : {}) } });
+    if (error || !data?.ok) return null;
+    return data as AcceptPrecheck;
+  } catch { return null; }
+}
+
+/** Upload the PO (PDF / photo) to po-docs/<customer>/<order>/…; returns the stored path. */
+export async function uploadPo(customerId: number, orderId: number, file: File): Promise<string> {
+  const safe = file.name.replace(/[^A-Za-z0-9._-]+/g, "_").slice(-80) || "po";
+  const path = `${customerId}/${orderId}/${Date.now()}-${safe}`;
+  const { error } = await supabase.storage.from("po-docs").upload(path, file, { contentType: file.type || undefined, upsert: false });
+  if (error) throw new Error(`The PO file did not upload: ${error.message}`);
+  return path;
+}
+
+/** Staff: a 5-minute link to a stored PO file. */
+export async function poFileUrl(path: string): Promise<string> {
+  const { data, error } = await supabase.storage.from("po-docs").createSignedUrl(path, 300);
+  if (error || !data?.signedUrl) throw new Error(`Could not open the PO: ${error?.message ?? "no link"}`);
+  return data.signedUrl;
+}
