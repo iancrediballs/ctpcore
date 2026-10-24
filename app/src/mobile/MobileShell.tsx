@@ -14,11 +14,12 @@
 // so assetUrl() always resolves to Supabase Storage here, and PowerSync is
 // always the data source underneath.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useStatus } from "@powersync/react";
+import { useQuery, useStatus } from "@powersync/react";
 import * as api from "../data/api";
 import { refreshZohoStatus, zohoStatusLabel, syncSalesOrder, syncEstimate, recreateEstimate, overrideFulfilGate, fulfilBlockReason, setCustomerOnAccount,
          shipInZoho, countToZoho, openPurchaseOrders, receiveInZoho, type OpenPO,
-         acceptPrecheck, uploadPo, poFileUrl, orderPrices, myPrices, type OrderPrices, type LinePrice } from "../data/zoho";
+         acceptPrecheck, uploadPo, poFileUrl, orderPrices, myPrices, type OrderPrices, type LinePrice,
+         remoteBookPrices, bookLabel, type BookPrice, type BookCustomer } from "../data/zoho";
 import AddCustomer from "../admin/AddCustomer";
 import { assetUrl, photoWebUrl } from "../assets";
 import { DiagramCanvas, Marker, loadMarkerScale, saveMarkerScale, markerRadius, MARKER_SCALE_MIN, MARKER_SCALE_MAX, type CanvasApi, type Frame, type Pt } from "./DiagramCanvas";
@@ -367,6 +368,20 @@ function CartButton({ count, bump, label, onOpen }: {
   );
 }
 
+/** 0076: a part's rebate — list struck through, then the book price, its −% and whose it is. */
+type Rebate = { book_minor: number; list_minor: number | null; label: string };
+function RebateTag({ r, big }: { r: Rebate | null; big?: boolean }) {
+  if (!r) return null;
+  const off = r.list_minor != null && r.book_minor < r.list_minor ? Math.round((1 - r.book_minor / r.list_minor) * 1000) / 10 : null;
+  return (
+    <span className={"mb-rebate" + (big ? " big" : "")}>
+      {off != null && <s className="mb-was">{fmtR(r.list_minor)}</s>}
+      <b>{fmtR(r.book_minor)}</b>{off != null ? ` −${off}%` : ""}
+      <span className="mb-rlabel">{r.label}</span>
+    </span>
+  );
+}
+
 // ─── the shell ───────────────────────────────────────────────────────────────
 
 /** 0072: one line's price, book-aware. Customers: ~~list~~ their price. Staff also see cost,
@@ -562,6 +577,61 @@ export default function MobileShell() {
   // legitimately be missing.
   const role = tokenRole(session?.access_token) ?? dbRole;
   const isClient = role == null || role === "customer";
+
+  // ── 0076: price books (Zoho's rebate rates) on the device ──
+  // Staff hold every book (ctp_staff); a customer holds only their own (ctp_client_book). Until
+  // those streams are deployed, or while a first sync runs, the same rows are read online once.
+  const { data: bookLocal } = useQuery<BookPrice>(
+    `SELECT i.pricebook_id, b.name, CAST(i.part_id AS INTEGER) AS part_id, i.rate_minor AS book_minor, i.list_minor
+       FROM price_book_item i LEFT JOIN price_book b ON b.id = i.pricebook_id
+      WHERE i.part_id IS NOT NULL`);
+  const { data: bookCustLocal } = useQuery<BookCustomer>(
+    `SELECT CAST(id AS INTEGER) AS id, name, zoho_pricebook_id AS book FROM customer
+      WHERE zoho_pricebook_id IS NOT NULL AND deleted_at IS NULL`);
+  const [bookRemote, setBookRemote] = useState<{ rows: BookPrice[]; customers: BookCustomer[] } | null>(null);
+  const uid = session?.user?.id;
+  useEffect(() => {
+    if (!uid) return;
+    let live = true;
+    void remoteBookPrices(isClient).then((r) => { if (live) setBookRemote(r); });
+    return () => { live = false; };
+  }, [uid, isClient]);
+  const book = useMemo(() => {
+    const rows = bookLocal.length ? bookLocal : bookRemote?.rows ?? [];
+    const customers = bookCustLocal.length ? bookCustLocal : bookRemote?.customers ?? [];
+    const byPart = new Map<number, BookPrice[]>();
+    for (const r of rows) { const k = Number(r.part_id); byPart.set(k, [...(byPart.get(k) ?? []), r]); }
+    return { byPart, customers };
+  }, [bookLocal, bookCustLocal, bookRemote]);
+  // Whose prices staff are looking at: the counter sale's customer, else the open order's.
+  const ctxCustomer = isClient ? null : (counterCustomer ?? orders?.find((o) => o.id === openOrder)?.customer_id ?? null);
+  /** The rebate to show for a part. A customer: their own book. Staff: the given customer's book
+   *  (`who`), else the context customer's, else (no customer picked) the book labelled with its
+   *  owner ("Hermans rebate"). A customer with no book gets nothing. */
+  const rebateFor = useCallback((partId: number, who?: { customerId: number | null }): Rebate | null => {
+    const rows = book.byPart.get(Number(partId)) ?? [];
+    if (!rows.length) return null;
+    if (isClient) return { book_minor: rows[0].book_minor, list_minor: rows[0].list_minor, label: "your price" };
+    const cid = who ? who.customerId : ctxCustomer;
+    if (cid != null) {
+      const c = book.customers.find((x) => x.id === Number(cid));
+      const r = c && rows.find((x) => x.pricebook_id === c.book);
+      return c && r ? { book_minor: r.book_minor, list_minor: r.list_minor, label: `${c.name.split(/\s+/)[0]} rebate` } : null;
+    }
+    if (who) return null;
+    return { book_minor: rows[0].book_minor, list_minor: rows[0].list_minor, label: bookLabel(rows[0].pricebook_id, book.customers, rows[0].name) };
+  }, [book, isClient, ctxCustomer]);
+  /** An order line's prices: the server's (list, book, cost, floor), with the on-device book
+   *  filling any gap so the rebate shows even before order_prices answers. */
+  const lpFor = useCallback((o: { id: number; customer_id?: number | null }, l: { id: number; part_id: number }): LinePrice => {
+    const lp = prices[o.id]?.lines.find((x) => x.line_id === l.id);
+    const rb = rebateFor(l.part_id, { customerId: o.customer_id ?? null });
+    return { line_id: l.id, part_id: l.part_id, ...lp,
+      book_minor: lp?.book_minor ?? rb?.book_minor, list_minor: lp?.list_minor ?? rb?.list_minor ?? undefined };
+  }, [prices, rebateFor]);
+  /** What an unpriced line's price box starts at: the customer's rebate price, if they have one. */
+  const defaultMinor = useCallback((o: StaffOrder, l: StaffOrder["lines"][number]) =>
+    l.unit_price_minor > 0 ? l.unit_price_minor : (lpFor(o, l).book_minor ?? 0), [lpFor]);
 
   // ── data loads (all local SQLite via PowerSync — cheap to re-run) ──
   const refresh = useCallback(() => {
@@ -901,7 +971,7 @@ const parseRand = (s: string): number => {
     const resolved = o.lines.map((l) => {
       const typed = draftPrices[l.id];
       const rand = typed == null || typed === ""
-        ? l.unit_price_minor / 100
+        ? defaultMinor(o, l) / 100      // 0076: an unpriced line goes at the customer's rebate price
         : parseRand(typed);
       return { line: l, minor: Number.isFinite(rand) ? Math.round(rand * 100) : 0 };
     });
@@ -958,7 +1028,7 @@ const parseRand = (s: string): number => {
     } finally {
       setSavingOrder(false);
     }
-  }, [draftPrices, showToast, loadOrders]);
+  }, [draftPrices, showToast, loadOrders, defaultMinor]);
 
   /** Stock out. One server transaction (0042): refuses if any line is short,
    *  names the shortfall, writes nothing in that case. Idempotent on retry. */
@@ -1529,6 +1599,7 @@ const parseRand = (s: string): number => {
             <span className="mb-cbody">
               <span className="mb-cname">{p.name}</span>
               <span className="mb-csku mb-mono">{p.sku}</span>
+              <RebateTag r={rebateFor(p.id)} />
               {/* A client's device holds no bins and no stock movements, so
                   these would not merely be private — they would be WRONG
                   (every count would read zero). Omitted, not blanked. What a
@@ -2065,12 +2136,12 @@ const parseRand = (s: string): number => {
                             <span style={{ flex: 1, minWidth: 0 }}>
                               <div className="mb-cname">{l.qty} × {l.name}</div>
                               <div className="mb-csku mb-mono">{l.sku}</div>
-                              <PriceInfo lp={prices[o.id]?.lines.find((x) => x.line_id === l.id)} qty={l.qty} staff
-                                priceMinor={draftPrices[l.id] != null && draftPrices[l.id] !== "" ? Math.round(Number(draftPrices[l.id]) * 100) || 0 : l.unit_price_minor} />
+                              <PriceInfo lp={lpFor(o, l)} qty={l.qty} staff
+                                priceMinor={draftPrices[l.id] != null && draftPrices[l.id] !== "" ? Math.round(Number(draftPrices[l.id]) * 100) || 0 : defaultMinor(o, l)} />
                             </span>
                             {stageOf(o) === "to_price" ? (
                               <input className="mb-price-in" inputMode="decimal" placeholder="0.00"
-                                value={draftPrices[l.id] ?? (l.unit_price_minor > 0 ? String(l.unit_price_minor / 100) : "")}
+                                value={draftPrices[l.id] ?? (defaultMinor(o, l) > 0 ? (defaultMinor(o, l) / 100).toFixed(2) : "")}
                                 onChange={(e) => setDraftPrices((d) => ({ ...d, [l.id]: e.target.value }))} />
                             ) : (
                               <span className="mb-rv">{fmtR(l.unit_price_minor * l.qty)}</span>
@@ -2397,7 +2468,7 @@ const parseRand = (s: string): number => {
                             <span style={{ flex: 1, minWidth: 0 }}>
                               <div className="mb-cname">{l.qty} × {l.name}</div>
                               <div className="mb-csku mb-mono">{l.sku}</div>
-                              <PriceInfo lp={prices[o.id]?.lines.find((x) => x.line_id === l.id)} qty={l.qty} staff priceMinor={l.unit_price_minor} />
+                              <PriceInfo lp={lpFor(o, l)} qty={l.qty} staff priceMinor={l.unit_price_minor} />
                             </span>
                             <span className="mb-rv">{fmtR(l.unit_price_minor * l.qty)}</span>
                           </div>
@@ -2476,6 +2547,7 @@ const parseRand = (s: string): number => {
                   <span style={{ flex: 1, minWidth: 0 }}>
                     <div className="mb-cname">{c.name}</div>
                     <div className="mb-csku mb-mono">{c.sku}</div>
+                    <RebateTag r={rebateFor(c.id)} />
                   </span>
                   <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
                     <button className="mb-chip" onClick={() => setCartQty(c.id, c.qty - 1)}>−</button>
@@ -2539,6 +2611,7 @@ const parseRand = (s: string): number => {
                       <span style={{ flex: 1, minWidth: 0 }}>
                         <div className="mb-cname">{l.qty} × {l.name}</div>
                         <div className="mb-csku mb-mono">{l.sku}</div>
+                        {(l.unit_price_minor ?? 0) <= 0 && <RebateTag r={rebateFor(l.part_id)} />}
                       </span>
                       {/* Only ever their OWN quoted price — never the price list.
                           0063: a Zoho estimate's line shows Zoho's discount and net. */}
@@ -2548,8 +2621,10 @@ const parseRand = (s: string): number => {
                         return (
                           <span className="mb-rv">
                             {(() => { const lp = minePrices[r.id]?.lines.find((x) => x.part_id === l.part_id);
-                              return !z && lp?.list_minor && lp.book_minor != null && (l.unit_price_minor ?? 0) < lp.list_minor
-                                ? <s className="mb-was">{fmtR(lp.list_minor * l.qty)}</s> : null; })()}
+                              const rb = rebateFor(l.part_id);   // 0076: on-device book when the server read is not back
+                              const list = lp?.list_minor ?? rb?.list_minor ?? null, booked = lp?.book_minor ?? rb?.book_minor;
+                              return !z && list && booked != null && (l.unit_price_minor ?? 0) < list
+                                ? <s className="mb-was">{fmtR(list * l.qty)}</s> : null; })()}
                             {fmtR(z ? z.net_minor : (l.unit_price_minor ?? 0) * l.qty)}
                             {pct > 0 && <div className="mb-csku">less {Math.round(pct * 100) / 100}%</div>}
                           </span>
@@ -2757,17 +2832,21 @@ const parseRand = (s: string): number => {
                   <div className="mb-v mono-pn">{d.catalogue_pn ?? d.sku}</div>
                   <div className="mb-sub">Add it to your request and we'll quote you</div>
                 </div>
-                {myPrice && myPrice.part_id === d.id && (
-                  <div className="mb-box" style={{ marginTop: 8 }}>
-                    <div className="mb-k">Your price (excl VAT)</div>
-                    <div className="mb-v" style={{ fontSize: 20 }}>
-                      {myPrice.list_minor != null && myPrice.list_minor > myPrice.book_minor && <s className="mb-was">{fmtR(myPrice.list_minor)}</s>}
-                      {fmtR(myPrice.book_minor)}
+                {(() => {
+                  // 0076: on-device book first; the 0072 online read covers a device mid-sync
+                  const rb = rebateFor(d.id) ?? (myPrice && myPrice.part_id === d.id ? { ...myPrice, label: "your price" } : null);
+                  return rb && (
+                    <div className="mb-box" style={{ marginTop: 8 }}>
+                      <div className="mb-k">Your price (excl VAT)</div>
+                      <div className="mb-v" style={{ fontSize: 20 }}>
+                        {rb.list_minor != null && rb.list_minor > rb.book_minor && <s className="mb-was">{fmtR(rb.list_minor)}</s>}
+                        {fmtR(rb.book_minor)}
+                      </div>
+                      {rb.list_minor != null && rb.list_minor > rb.book_minor &&
+                        <div className="mb-sub">{Math.round((1 - rb.book_minor / rb.list_minor) * 1000) / 10}% rebate on your account</div>}
                     </div>
-                    {myPrice.list_minor != null && myPrice.list_minor > myPrice.book_minor &&
-                      <div className="mb-sub">{Math.round((1 - myPrice.book_minor / myPrice.list_minor) * 1000) / 10}% rebate on your account</div>}
-                  </div>
-                )}
+                  );
+                })()}
                 {/* 0050: availability without the number. Stacked, not beside
                     the part number — a long OEM number needs the width. */}
                 {d.in_stock != null && (
@@ -2790,6 +2869,12 @@ const parseRand = (s: string): number => {
                   <div className={"mb-v" + (d.total_on_hand <= 0 ? " z" : " g")}>{d.total_on_hand}</div>
                   <div className="mb-sub">{fmtR(d.price_cents)} list</div>
                 </div>
+              </div>
+            )}
+            {!isClient && rebateFor(d.id) && (
+              <div className="mb-box" style={{ marginTop: 8 }}>
+                <div className="mb-k">Price book (excl VAT)</div>
+                <RebateTag r={rebateFor(d.id)} big />
               </div>
             )}
 

@@ -254,3 +254,36 @@ export async function myPrices(partIds: number[]): Promise<Record<string, { list
   if (error) { console.error(error); return {}; }
   return (data ?? {}) as Record<string, { list_minor: number | null; book_minor: number }>;
 }
+
+// ── 0076: price books on the device ─────────────────────────────────────────
+/** One part's rate in one Zoho price book, with the part's list price for the strikethrough. */
+export type BookPrice = { pricebook_id: string; name: string | null; part_id: number; book_minor: number; list_minor: number | null };
+/** A customer on a price book (staff only — a customer's device holds no customer rows). */
+export type BookCustomer = { id: number; name: string; book: string };
+/** Online read of the same rows the sync streams carry, for before the streams are deployed or
+ *  while a first sync is still running. Staff: every book (RLS: staff only). A customer: only
+ *  their own book, resolved from the login by my_price_book(). */
+export async function remoteBookPrices(isClient: boolean): Promise<{ rows: BookPrice[]; customers: BookCustomer[] }> {
+  if (isClient) {
+    const { data, error } = await supabase.rpc("my_price_book");
+    if (error) { console.error(error); return { rows: [], customers: [] }; }
+    return { rows: (data ?? []) as BookPrice[], customers: [] };
+  }
+  const [items, books, custs] = await Promise.all([
+    supabase.from("price_book_item").select("pricebook_id, part_id, rate_minor, list_minor").not("part_id", "is", null),
+    supabase.from("price_book").select("pricebook_id, name"),
+    supabase.from("customer").select("id, name, zoho_pricebook_id").not("zoho_pricebook_id", "is", null).is("deleted_at", null),
+  ]);
+  for (const r of [items, books, custs]) if (r.error) console.error(r.error);
+  const names = new Map((books.data ?? []).map((b) => [String(b.pricebook_id), String(b.name)]));
+  return {
+    rows: (items.data ?? []).map((i) => ({ pricebook_id: String(i.pricebook_id), name: names.get(String(i.pricebook_id)) ?? null,
+      part_id: Number(i.part_id), book_minor: Number(i.rate_minor), list_minor: i.list_minor == null ? null : Number(i.list_minor) })),
+    customers: (custs.data ?? []).map((c) => ({ id: Number(c.id), name: String(c.name), book: String(c.zoho_pricebook_id) })),
+  };
+}
+/** "Hermans Panel Beaters" → "Hermans rebate": the label staff see on a part when no customer is picked. */
+export const bookLabel = (book: string, customers: BookCustomer[], name: string | null) => {
+  const on = customers.filter((c) => c.book === book);
+  return on.length === 1 ? `${on[0].name.split(/\s+/)[0]} rebate` : (name ?? "Price book");
+};

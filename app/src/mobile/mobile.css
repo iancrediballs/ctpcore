@@ -787,3 +787,10 @@ textarea.st-in{resize:vertical;line-height:1.45;font-size:15px}
 .mb-pinfo s,.mb-was{color:var(--dim);font-weight:600;margin-right:6px}
 .mb-pinfo b{color:var(--txt)}
 .mb-pm.ok{color:var(--pm-ok)} .mb-pm.warn{color:var(--pm-warn)} .mb-pm.bad{color:var(--pm-bad)}
+
+/* 0076 — the rebate on part cards, the part sheet and the cart: ~~list~~ rebate −x% · label */
+.mb-rebate{display:block;margin-top:3px;font-size:13px;font-weight:700;color:var(--dim)}
+.mb-rebate b{color:var(--pm-ok)}
+.mb-rebate .mb-rlabel{font-weight:600;margin-left:6px}
+.mb-rebate.big{font-size:20px;margin-top:0}
+.mb-rebate.big .mb-rlabel{display:block;font-size:12.5px;margin:4px 0 0}

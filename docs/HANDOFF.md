@@ -928,3 +928,43 @@ local PowerSync DB was read in the browser after hasSynced, then cleared and sig
   company carries our own invoice details (bank, VAT no.), which is intended.
 - Caveat: sales_order.notes is the customer's own order note, but past staff test runs appended
   text to it (e.g. "DELETE ME"). Staff should not write internal remarks there.
+
+## 24 Oct — rebate prices everywhere (0076, v38)
+Ian: "List, Cost and Floor on an order line, but no rebate and no strikethrough."
+- **Why it happened:** the rebate data was fine on the server: book "FAW JH6 – Rebate", 113 rates,
+  all matched to parts, assigned to Hermans only. The app only read it online, once per open
+  order (order_prices) or once per opened part (customers only). The order Ian looked at was a
+  test customer's (CTP TEST - Ian / Test Co 2), and neither is on a book, so there was no rebate
+  to show. Search, browse, the part page for staff and the cart never showed rebates at all.
+  Nothing was synced locally (0 price_book rows on any device).
+- **0076** (applied on live, additive):
+  - price_book and price_book_item each get a sync `id`. Book rows also carry `list_minor`, the
+    part's list price, kept current by a trigger on `price`, because customers never get the
+    price table.
+  - New RPC `my_price_book()`: the caller's own book only.
+  - Live: 113 rows, all with list_minor; 112 cheaper than list, 1 not.
+- **Sync rules (server/sync-streams.yaml), awaiting dashboard deploy:**
+  - `ctp_staff` also syncs `price_book` and `price_book_item` (all books).
+  - New bucket `ctp_client_book`, keyed on the customer row linked to the login
+    (`zoho_pricebook_id` not null). It holds only that book's rows: id, pricebook_id, name,
+    zoho_item_id, part_id, rate_minor, list_minor. No cost or floor.
+- **App (v38):**
+  - Every part card, staff part page, customer basket and unpriced customer order line shows the
+    list price struck through, the rebate price, "−x%" and a label.
+  - Staff labels follow context: the counter-sale customer, else the open order's customer
+    ("Hermans rebate"). A customer with no book shows nothing. With no customer picked, staff
+    see "Hermans rebate".
+  - Staff order lines fill gaps from the on-device book. An unpriced line's price box now starts
+    at the customer's rebate price, and Send quote uses it.
+  - Until the new rules are deployed the app reads the same rows online once (staff: tables
+    under RLS; customer: my_price_book()). After the deploy it reads them from the device and
+    works offline.
+- **Tested** on the local build against live:
+  - Staff (Ian test login): 113 cards show "Hermans rebate"; counter customer CTP TEST →
+    none; Hermans → 113; part page "Price book" box; RQ-261022-45 lines show
+    strike/rebate/−25% plus cost/margin/floor.
+  - Hermans login (Denver, via a one-time admin link; no email sent, read only, signed out
+    after): 113 cards "your price", part page "Your price … 25% rebate on your account", basket
+    shows the rebate, no cost/margin/floor/bin anywhere. Direct table read returns 0 rows; the
+    customer list holds only Hermans; my_price_book returns 113 rows.
+- Zoho prices untouched.

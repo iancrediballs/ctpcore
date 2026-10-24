@@ -39,7 +39,8 @@
 #     await powerSync.getAll("SELECT count(*) n FROM price")        -- expect 0
 #     await powerSync.getAll("SELECT count(*) n FROM stock_policy") -- expect 0
 #     await powerSync.getAll("SELECT count(*) n FROM sales_order")  -- expect 0
-#     await powerSync.getAll("SELECT count(*) n FROM part")         -- expect 161
+#     await powerSync.getAll("SELECT count(*) n FROM part")         -- expect every part row, live + soft-deleted (162 on 24 Oct)
+#     await powerSync.getAll("SELECT count(*) n FROM price_book_item") -- 0, or only THEIR book's rows (Hermans: 113)
 # Do that BEFORE anyone outside the business is given a password.
 
 bucket_definitions:
@@ -89,6 +90,10 @@ bucket_definitions:
       - SELECT * FROM part_cost
       - SELECT * FROM price_tier
       - SELECT * FROM part_alias
+      # 0076: every customer price book (Zoho's rebate rates), so staff see the rebate in
+      # search, on the part and on order lines without a round trip.
+      - SELECT * FROM price_book
+      - SELECT * FROM price_book_item
 
   # ══ CLIENT ══════════════════════════════════════════════════════════════
   # What a customer's phone may hold. Columns are listed ONE BY ONE on purpose:
@@ -157,3 +162,23 @@ bucket_definitions:
                rev, updated_at, deleted_at
           FROM sales_line
          WHERE customer_id = bucket.customer_id
+
+  # ══ CLIENT — their own price book (0076) ════════════════════════════════
+  # A customer on a Zoho price book (Hermans: "FAW JH6 – Rebate") gets THAT book's rows and no
+  # other: the bucket is keyed on the book id read from the customer row that points at this
+  # login. No book on the customer row → the parameter query returns nothing → no bucket.
+  # list_minor is the part's list price, carried on the row for the strikethrough, because a
+  # customer never gets the `price` table. No cost, no floor, no other customer's book.
+  ctp_client_book:
+    parameters: |
+      SELECT zoho_pricebook_id AS book FROM customer
+       WHERE auth_user_id = request.user_id()
+         AND zoho_pricebook_id IS NOT NULL
+         AND deleted_at IS NULL
+    data:
+      - SELECT id, pricebook_id, name, synced_at
+          FROM price_book
+         WHERE pricebook_id = bucket.book
+      - SELECT id, pricebook_id, zoho_item_id, part_id, rate_minor, list_minor, synced_at
+          FROM price_book_item
+         WHERE pricebook_id = bucket.book

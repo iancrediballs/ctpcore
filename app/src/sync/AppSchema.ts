@@ -85,6 +85,8 @@ const customer = new Table({
   zoho_unused_credit_minor: column.integer, zoho_credit_limit_minor: column.integer, zoho_terms_synced_at: column.text,
   // 0061: account (fulfil after invoice) or cash (fulfil after payment), set by an admin
   on_account: column.integer,
+  // 0071: the Zoho price book (rebate) this customer is on
+  zoho_pricebook_id: column.text, zoho_pricebook_name: column.text,
 }, { indexes: { auth: ["auth_user_id"] } });
 
 const sales_order = new Table({
@@ -199,11 +201,22 @@ const part_alias = new Table({
   rev: column.integer, updated_at: column.text, deleted_at: column.text, origin: column.text,
 }, { indexes: { phrase: ["phrase_norm"], part: ["part_id"] } });
 
+// 0076: Zoho price books (rebate rates). Staff get every book (ctp_staff); a customer on a
+// book gets only theirs (ctp_client_book). list_minor is the part's list price, for the
+// strikethrough — a customer has no `price` table.
+const price_book = new Table({
+  pricebook_id: column.text, name: column.text, synced_at: column.text,
+});
+const price_book_item = new Table({
+  pricebook_id: column.text, zoho_item_id: column.text, part_id: column.text,
+  rate_minor: column.integer, list_minor: column.integer, synced_at: column.text,
+}, { indexes: { part: ["part_id"], book: ["pricebook_id"] } });
+
 export const AppSchema = new Schema({
   category, brand, part, part_xref, vehicle_model, part_fitment, location,
   stock_movement, stock_policy, price, customer, sales_order, sales_line,
   company, diagram, part_diagram_callout, part_image, part_model, hotspot,
-  part_cost, price_tier, part_alias,
+  part_cost, price_tier, part_alias, price_book, price_book_item,
 });
 
 export type Database = (typeof AppSchema)["types"];
