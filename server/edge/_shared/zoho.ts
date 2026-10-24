@@ -297,9 +297,13 @@ export async function salesOrderFor(db: SupabaseClient, cfg: any, orderId: numbe
   const taxId = await taxIdFor(o.tax_rate_bps ?? 0, cfg?.tax_id ?? null);
   // deno-lint-ignore no-explicit-any
   const customerId = await resolveContact(db, "customer", o.customer as any, "customer", log);
+  const { data: pbc } = await db.from("customer").select("zoho_pricebook_id").eq("zoho_contact_id", customerId).limit(1).maybeSingle();
+  const pricebookId = pbc?.zoho_pricebook_id ?? null;
   const b = await zoho("POST", "/salesorders", {}, {
     customer_id: customerId, reference_number: po ?? o.number, date: jhbDate(new Date().toISOString()),
     is_inclusive_tax: false,
+    // 0072: the customer's price book on the SO (rates stay explicit — they ARE the book rates)
+    ...(pricebookId ? { pricebook_id: pricebookId } : {}),
     line_items: lines.map((l) => ({
       item_id: ids.get(l.part.id), quantity: l.qty, rate: rands(l.unit_price_minor),
       description: l.part.sku, ...(taxId ? { tax_id: taxId } : {}), ...rebateDiscount(l.rebate_pct),

@@ -237,3 +237,20 @@ export async function poFileUrl(path: string): Promise<string> {
   if (error || !data?.signedUrl) throw new Error(`Could not open the PO: ${error?.message ?? "no link"}`);
   return data.signedUrl;
 }
+
+// ── 0072: price books (Zoho stays the source) ───────────────────────────────
+/** Per order line: list + the customer's book rate; staff also get cost and the margin floor. */
+export type LinePrice = { line_id: number; part_id: number; list_minor?: number; book_minor?: number; cost_minor?: number; floor_minor?: number };
+export type OrderPrices = { order_id: number; pricebook: string | null; lines: LinePrice[] };
+export async function orderPrices(orderId: number): Promise<OrderPrices | null> {
+  const { data, error } = await supabase.rpc("order_prices", { p_order_id: orderId });
+  if (error) { console.error(error); return null; }
+  return data as OrderPrices;
+}
+/** A logged-in customer on a price book: list + their rebate price, keyed by part id. */
+export async function myPrices(partIds: number[]): Promise<Record<string, { list_minor: number | null; book_minor: number }>> {
+  if (!partIds.length) return {};
+  const { data, error } = await supabase.rpc("my_prices", { p_part_ids: partIds });
+  if (error) { console.error(error); return {}; }
+  return (data ?? {}) as Record<string, { list_minor: number | null; book_minor: number }>;
+}

@@ -350,7 +350,8 @@ async function refreshStatus(db: SupabaseClient, log: Logger, force: boolean) {
     }
   }
   const terms = await refreshTerms(db, log, force ? 10 * 60_000 : 6 * 3600_000);
-  return { checked, changed: changes.length, changes, terms };
+  const books = await pricebookSync(db, log, false);
+  return { checked, changed: changes.length, changes, terms, books: books.length };
 }
 
 // ── 0070: a quote accepted or converted in Zoho ──────────────────────────────
@@ -927,7 +928,35 @@ async function rebateBook(db: SupabaseClient, log: Logger, body: any) {
   // deno-lint-ignore no-explicit-any
   const got = new Map(((back?.pricebook_items ?? []) as any[]).map((x) => [String(x.item_id), Number(x.pricebook_rate)]));
   const mismatch = inBook.filter((r) => Math.abs((got.get(r.item_id) ?? NaN) - r.rebate_price) > 0.005).map((r) => `${r.sku}: want ${r.rebate_price}, Zoho ${got.get(r.item_id)}`);
-  return { applied: true, pricebook_id: id, created: !existing, verified_items: got.size, mismatches: mismatch, ...summary, rows };
+  const cache = await pricebookSync(db, log, true);
+  return { applied: true, pricebook_id: id, created: !existing, verified_items: got.size, mismatches: mismatch, cache, ...summary, rows };
+}
+
+// 0072: the price books customers are on (and the schemes' books) → CTP's staff-only cache.
+// One GET per book; hourly with the status read-back, at once after a build or an assignment.
+async function pricebookSync(db: SupabaseClient, log: Logger, force: boolean) {
+  const { data: cs } = await db.from("customer").select("zoho_pricebook_id").not("zoho_pricebook_id", "is", null).is("deleted_at", null);
+  const { data: sch } = await db.from("rebate_scheme").select("zoho_pricebook_id").not("zoho_pricebook_id", "is", null);
+  const ids = [...new Set([...(cs ?? []), ...(sch ?? [])].map((r) => String(r.zoho_pricebook_id)))];
+  const { data: have } = await db.from("price_book").select("pricebook_id, synced_at");
+  const at = new Map((have ?? []).map((r) => [String(r.pricebook_id), new Date(r.synced_at).getTime()]));
+  const out: { pricebook_id: string; items?: number; error?: string }[] = [];
+  for (const id of ids) {
+    if (!force && Date.now() - (at.get(id) ?? 0) < 3600_000) continue;
+    try {
+      const pb = (await zoho("GET", `/pricebooks/${id}`)).pricebook;
+      const { data, error } = await db.rpc("apply_price_book", { p: { pricebook_id: id, name: pb?.name,
+        // deno-lint-ignore no-explicit-any
+        pricebook_items: ((pb?.pricebook_items ?? []) as any[]).map((x) => ({ item_id: String(x.item_id), pricebook_rate: x.pricebook_rate })) } });
+      if (error) throw new Error(error.message);
+      out.push({ pricebook_id: id, items: data?.items });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      out.push({ pricebook_id: id, error: msg });
+      await log({ doc_type: "config", action: "readback_error", ok: false, zoho_id: id, message: `Price book ${id}: ${msg}` });
+    }
+  }
+  return out;
 }
 
 // 0071: put ONE customer's Zoho contact on a scheme's price book. The book must exist and match the
@@ -958,7 +987,8 @@ async function assignPricebook(db: SupabaseClient, log: Logger, body: any) {
     zoho_pricebook_name: after.pricebook_name || null, zoho_pricebook_synced_at: new Date().toISOString() }).eq("id", c.id);
   await log({ doc_type: "contact", ctp_id: c.id, ctp_ref: `customer:${c.code}`, action: "update", ok: ok && !changed.length, zoho_id: String(c.zoho_contact_id),
               message: `${c.name}: Price List ${before.pricebook_name || "none"} → ${after.pricebook_name || after.pricebook_id || "none"}${changed.length ? ` — other fields changed: ${changed.join(", ")}` : ""}` });
-  return { customer: c.name, contact_id: String(c.zoho_contact_id), pricebook_before: before.pricebook_name || before.pricebook_id || null,
+  const cache = await pricebookSync(db, log, true);
+  return { cache, customer: c.name, contact_id: String(c.zoho_contact_id), pricebook_before: before.pricebook_name || before.pricebook_id || null,
            pricebook_after: after.pricebook_name || null, pricebook_id_after: after.pricebook_id ?? null, verified: ok,
            book_items: items.length, other_fields_changed: changed };
 }
@@ -992,7 +1022,7 @@ Deno.serve(async (req: Request) => {
   // invoice issued before go-live does not report a failure that isn't one.
   // (Status read-back is allowed while sending is off: documents already in
   // Zoho still change status there.)
-  if (!["test", "status", "so_sync", "hook", "stock_sync", "receive_list", "rebate_book", "assign_pricebook"].includes(body.action) && (!cfg?.push_enabled || !cfg?.push_from)) {
+  if (!["test", "status", "so_sync", "hook", "stock_sync", "receive_list", "rebate_book", "assign_pricebook", "pricebook_sync"].includes(body.action) && (!cfg?.push_enabled || !cfg?.push_from)) {
     return json({ ok: true, skipped: "Sending to Zoho is off (Settings → Zoho). Nothing was sent." });
   }
   await zohoInit(db);
@@ -1084,6 +1114,9 @@ Deno.serve(async (req: Request) => {
       if (who.actor && !who.admin) return json({ error: "Only an admin can build a rebate price book." }, 403);
       try { return json({ ok: true, ...(await rebateBook(db, log, body)) }); }
       catch (e) { return json({ ok: false, error: e instanceof Error ? e.message : String(e) }, e instanceof Blocked ? 409 : 502); }
+    }
+    if (body.action === "pricebook_sync") {
+      return json({ ok: true, books: await pricebookSync(db, log, body.force === true) });
     }
     if (body.action === "assign_pricebook") {
       if (who.actor && !who.admin) return json({ error: "Only an admin can assign a price book." }, 403);

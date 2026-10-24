@@ -18,7 +18,7 @@ import { useStatus } from "@powersync/react";
 import * as api from "../data/api";
 import { refreshZohoStatus, zohoStatusLabel, syncSalesOrder, syncEstimate, recreateEstimate, overrideFulfilGate, fulfilBlockReason, setCustomerOnAccount,
          shipInZoho, countToZoho, openPurchaseOrders, receiveInZoho, type OpenPO,
-         acceptPrecheck, uploadPo, poFileUrl } from "../data/zoho";
+         acceptPrecheck, uploadPo, poFileUrl, orderPrices, myPrices, type OrderPrices, type LinePrice } from "../data/zoho";
 import AddCustomer from "../admin/AddCustomer";
 import { assetUrl, photoWebUrl } from "../assets";
 import { DiagramCanvas, Marker, loadMarkerScale, saveMarkerScale, markerRadius, MARKER_SCALE_MIN, MARKER_SCALE_MAX, type CanvasApi, type Frame, type Pt } from "./DiagramCanvas";
@@ -366,6 +366,30 @@ function CartButton({ count, bump, label, onOpen }: {
 
 // ─── the shell ───────────────────────────────────────────────────────────────
 
+/** 0072: one line's price, book-aware. Customers: ~~list~~ their price. Staff also see cost,
+ *  margin (R and %) and the 0041 floor, coloured against it. */
+function PriceInfo({ lp, priceMinor, qty, staff }: { lp?: LinePrice; priceMinor: number; qty: number; staff: boolean }) {
+  if (!lp) return null;
+  const list = lp.list_minor ?? null, book = lp.book_minor ?? null;
+  const pct = list && book != null && book < list ? Math.round((1 - book / list) * 1000) / 10 : null;
+  const cost = staff ? lp.cost_minor ?? null : null, floor = staff ? lp.floor_minor ?? null : null;
+  const m = cost != null && priceMinor > 0 ? priceMinor - cost : null;
+  const mPct = m != null ? Math.round((m / priceMinor) * 1000) / 10 : null;
+  const cls = floor == null || priceMinor <= 0 ? "" : priceMinor < floor ? " bad" : priceMinor < floor * 1.05 ? " warn" : " ok";
+  return (
+    <div className="mb-pinfo">
+      {list != null && book != null && book < list
+        ? <span><s>{fmtR(list)}</s> <b>{fmtR(book)}</b> each · −{pct}% rebate</span>
+        : staff && list != null ? <span>List {fmtR(list)} each</span> : null}
+      {staff && cost != null && (
+        <span className={"mb-pm" + cls}>
+          Cost {fmtR(cost)}{m != null ? ` · margin ${fmtR(m * qty)} (${mPct}%)` : ""}{floor != null ? ` · floor ${fmtR(floor)}` : ""}
+        </span>
+      )}
+    </div>
+  );
+}
+
 export default function MobileShell() {
   const status = useStatus();
   const { session, role: dbRole, signOut } = useAuth();
@@ -419,6 +443,10 @@ export default function MobileShell() {
   const [addingCustomer, setAddingCustomer] = useState(false);   // Phase 1: Zoho-first add customer
   const [audit, setAudit] = useState<{ table: string; rows: number }[] | null>(null);
   const [mine, setMine] = useState<MyRequest[] | null>(null);
+  // 0072: their own quotes, book-aware (list struck through + their price); never cost
+  const [minePrices, setMinePrices] = useState<Record<number, OrderPrices>>({});
+  // 0072: the part sheet — a customer on a price book sees list struck through + their price
+  const [myPrice, setMyPrice] = useState<{ part_id: number; list_minor: number | null; book_minor: number } | null>(null);
   const [answering, setAnswering] = useState<number | null>(null);
   const [orders, setOrders] = useState<StaffOrder[] | null>(null);
   // A load that fails must say so. Before this, a rejected promise left `orders`
@@ -448,6 +476,14 @@ export default function MobileShell() {
   const [ordersErr, setOrdersErr] = useState<string | null>(null);
   const [mineErr, setMineErr] = useState<string | null>(null);
   const [openOrder, setOpenOrder] = useState<number | null>(null);
+  // 0072: book-aware prices of the open order (staff: + cost / margin / floor)
+  const [prices, setPrices] = useState<Record<number, OrderPrices>>({});
+  useEffect(() => {
+    if (openOrder == null) return;
+    let live = true;
+    void orderPrices(openOrder).then((p) => { if (live && p) setPrices((x) => ({ ...x, [openOrder]: p })); });
+    return () => { live = false; };
+  }, [openOrder]);
   // A blocked save is held here until the person chooses. Clearing it is the
   // only way past, so the choice cannot be missed by looking away.
   const [floorBlock, setFloorBlock] = useState<{ order: StaffOrder; message: string } | null>(null);
@@ -1109,10 +1145,15 @@ const parseRand = (s: string): number => {
     setSavingOrder(true);
     try {
       const lp = await api.listPrices(o.lines.map((l) => l.part_id));
+      // 0072: the customer's Zoho price book rate wins over the list price
+      const op = await orderPrices(o.id);
+      if (op) setPrices((x) => ({ ...x, [o.id]: op }));
+      const book = new Map((op?.lines ?? []).filter((x) => x.book_minor != null).map((x) => [x.line_id, x.book_minor!]));
       const next: Record<number, string> = {};
-      let missing = 0, total = 0;
+      let missing = 0, total = 0, booked = 0;
       for (const l of o.lines) {
-        const c = lp[String(l.part_id)];
+        const c = book.get(l.id) ?? lp[String(l.part_id)];
+        if (book.has(l.id)) booked++;
         if (c != null && c > 0) { next[l.id] = (c / 100).toFixed(2); total += c * l.qty; }
         else if (l.unit_price_minor > 0) total += l.unit_price_minor * l.qty;
         else missing++;
@@ -1120,7 +1161,7 @@ const parseRand = (s: string): number => {
       setDraftPrices((d) => ({ ...d, ...next }));
       showToast({ text: missing > 0
         ? `Filled from list — ${missing} part${missing === 1 ? " has" : "s have"} no list price, fill by hand. Then Send quote.`
-        : `Filled from list: ${fmtR(total)} — check, then Send quote.` });
+        : `Filled ${booked ? `(${booked} at ${op?.pricebook ?? "their price book"} rates) ` : "from list"}: ${fmtR(total)} — check, then Send quote.` });
     } catch (e) {
       console.error(e);
       showToast({ text: e instanceof Error ? e.message : "Could not fill.", err: true });
@@ -1995,11 +2036,14 @@ const parseRand = (s: string): number => {
                             <span className="mb-rv">{o.notes}</span>
                           </div>
                         )}
+                        {prices[o.id]?.pricebook && <div className="mb-row"><span className="mb-rk">Price book</span><span className="mb-rv">{prices[o.id].pricebook}</span></div>}
                         {o.lines.map((l) => (
                           <div className="mb-row" key={l.id}>
                             <span style={{ flex: 1, minWidth: 0 }}>
                               <div className="mb-cname">{l.qty} × {l.name}</div>
                               <div className="mb-csku mb-mono">{l.sku}</div>
+                              <PriceInfo lp={prices[o.id]?.lines.find((x) => x.line_id === l.id)} qty={l.qty} staff
+                                priceMinor={draftPrices[l.id] != null && draftPrices[l.id] !== "" ? Math.round(Number(draftPrices[l.id]) * 100) || 0 : l.unit_price_minor} />
                             </span>
                             {stageOf(o) === "to_price" ? (
                               <input className="mb-price-in" inputMode="decimal" placeholder="0.00"
@@ -2330,6 +2374,7 @@ const parseRand = (s: string): number => {
                             <span style={{ flex: 1, minWidth: 0 }}>
                               <div className="mb-cname">{l.qty} × {l.name}</div>
                               <div className="mb-csku mb-mono">{l.sku}</div>
+                              <PriceInfo lp={prices[o.id]?.lines.find((x) => x.line_id === l.id)} qty={l.qty} staff priceMinor={l.unit_price_minor} />
                             </span>
                             <span className="mb-rv">{fmtR(l.unit_price_minor * l.qty)}</span>
                           </div>
@@ -2479,6 +2524,9 @@ const parseRand = (s: string): number => {
                         const pct = Number(z?.discount_pct ?? 0);
                         return (
                           <span className="mb-rv">
+                            {(() => { const lp = minePrices[r.id]?.lines.find((x) => x.part_id === l.part_id);
+                              return !z && lp?.list_minor && lp.book_minor != null && (l.unit_price_minor ?? 0) < lp.list_minor
+                                ? <s className="mb-was">{fmtR(lp.list_minor * l.qty)}</s> : null; })()}
                             {fmtR(z ? z.net_minor : (l.unit_price_minor ?? 0) * l.qty)}
                             {pct > 0 && <div className="mb-csku">less {Math.round(pct * 100) / 100}%</div>}
                           </span>
@@ -2560,6 +2608,23 @@ const parseRand = (s: string): number => {
   // ─── part sheet ────────────────────────────────────────────────────────────
 
   const d = detail;
+  // 0072: their own quotes, book-aware
+  useEffect(() => {
+    if (!mine || role !== "customer") return;
+    let live = true;
+    for (const r of mine.filter((x) => x.priced && ["quote", "confirmed"].includes(x.status))) {
+      void orderPrices(r.id).then((p) => { if (live && p) setMinePrices((x) => ({ ...x, [r.id]: p })); });
+    }
+    return () => { live = false; };
+  }, [mine, role]);
+  // 0072: read when a customer opens a part (server resolves the book from their login)
+  useEffect(() => {
+    if (role !== "customer" || !detail) return;
+    let live = true;
+    const id = detail.id;
+    void myPrices([id]).then((m) => { if (!live) return; const v = m[String(id)]; setMyPrice(v ? { part_id: id, ...v } : null); });
+    return () => { live = false; };
+  }, [detail, role]);
   // The part's photos, primary first — the order the carousel walks and the
   // order the lightbox inherits, so "photo 2 of 4" means the same thing in both.
   const photos = useMemo(() => {
@@ -2664,6 +2729,17 @@ const parseRand = (s: string): number => {
                   <div className="mb-v mono-pn">{d.catalogue_pn ?? d.sku}</div>
                   <div className="mb-sub">Add it to your request and we'll quote you</div>
                 </div>
+                {myPrice && myPrice.part_id === d.id && (
+                  <div className="mb-box" style={{ marginTop: 8 }}>
+                    <div className="mb-k">Your price (excl VAT)</div>
+                    <div className="mb-v" style={{ fontSize: 20 }}>
+                      {myPrice.list_minor != null && myPrice.list_minor > myPrice.book_minor && <s className="mb-was">{fmtR(myPrice.list_minor)}</s>}
+                      {fmtR(myPrice.book_minor)}
+                    </div>
+                    {myPrice.list_minor != null && myPrice.list_minor > myPrice.book_minor &&
+                      <div className="mb-sub">{Math.round((1 - myPrice.book_minor / myPrice.list_minor) * 1000) / 10}% rebate on your account</div>}
+                  </div>
+                )}
                 {/* 0050: availability without the number. Stacked, not beside
                     the part number — a long OEM number needs the width. */}
                 {d.in_stock != null && (

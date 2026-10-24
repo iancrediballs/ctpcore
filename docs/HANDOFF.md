@@ -804,3 +804,33 @@ settings reads and CTP's caches.
   - Hermans' row: pricebook 1429405000000433001 ✓.
   - The pricing UI (sales price struck through, rebate price beside it) will read this column.
 - **Reusable:** zoho-push `{action:"assign_pricebook", scheme, customer_code}`, admin or server token.
+
+## 24 Oct — price-book-aware pricing LIVE (0072, PWA v36) — docs/12 items 1 + 3
+- **Cache:** `price_book` / `price_book_item` is a staff-only cache of the Zoho books customers are on
+  (RLS `is_staff()`; anon has no grant).
+  - Filled by zoho-push `pricebook_sync`: at once after `rebate_book` apply or `assign_pricebook`,
+    hourly with the status read-back, or on demand `{action:"pricebook_sync", force:true}`.
+  - Live: FAW JH6 – Rebate, 113 items, all linked to CTP parts. A part dropped from the book is
+    removed from the cache.
+- **`order_prices(order)`:**
+  - per line, list price + the customer's book rate;
+  - staff also get cost (`part_current_cost`) and the 0041 floor;
+  - a customer gets only list + their own book rate, and only on their own order.
+- **`my_prices(part_ids)`:** a logged-in customer ON A BOOK gets list + their rebate price for book
+  parts. Customers without a book get nothing: they are quoted, as before. That is my default:
+  prices in the catalogue are shown only to customers on a rebate book.
+- **Phone:**
+  - **Staff, quote lines:** "~~list~~ **rebate** each · −25% rebate" (or "List R…"), then
+    "Cost · margin R (x%) · floor", coloured against the floor: green is clear, amber is within 5%,
+    red is below. "Price book" is shown on the order.
+  - **Fill from list** now uses the customer's book rate first; the toast says how many lines.
+  - **Customers (Hermans):** the part sheet shows "Your price (excl VAT) ~~R list~~ R rebate · x%
+    rebate on your account". Their quote lines show the list total struck through next to their
+    price.
+- **Zoho SO:** raised with the customer's `pricebook_id`. Line rates stay explicit (they are the book
+  rates).
+- **Tests:**
+  - tests_0072_local.js 30/30 (includes the 0070 checks);
+  - deno at the 71 baseline; tsc + build clean;
+  - live SQL as the Hermans login: my_prices returns 5/5 book parts, cache rows visible 0, and an
+    order line shows list 4 642.52 / book 3 481.89 with no cost. As TESTACC (no book): 0 / 0.

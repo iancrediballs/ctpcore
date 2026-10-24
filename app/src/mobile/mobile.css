@@ -778,3 +778,12 @@ textarea.st-in{resize:vertical;line-height:1.45;font-size:15px}
 .mb-tl-when{color:var(--dim);font-weight:700;white-space:nowrap}
 .mb-tl-what{color:var(--txt);font-weight:700}
 .mb-tl-who{grid-column:2;color:var(--dim);font-size:12.5px}
+
+/* 0072 — book-aware prices. Struck-through list + the customer's price; staff margin line coloured
+   against the 0041 floor. Every colour is >= 4.5:1 on the card surface in its theme. */
+.mb-root{--pm-ok:#31D07C;--pm-warn:#FFB347;--pm-bad:#FF7A66}
+.mb-root.light{--pm-ok:#12703F;--pm-warn:#A85600;--pm-bad:#B42318}
+.mb-pinfo{display:flex;flex-direction:column;gap:2px;margin-top:3px;font-size:12.5px;font-weight:700;color:var(--dim)}
+.mb-pinfo s,.mb-was{color:var(--dim);font-weight:600;margin-right:6px}
+.mb-pinfo b{color:var(--txt)}
+.mb-pm.ok{color:var(--pm-ok)} .mb-pm.warn{color:var(--pm-warn)} .mb-pm.bad{color:var(--pm-bad)}
