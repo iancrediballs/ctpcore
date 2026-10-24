@@ -175,6 +175,22 @@ Deno.serve(async (req: Request) => {
     }
     if (part === "items") return json({ ok: true, read_at: new Date().toISOString(), items: await all(I, "/items?filter_by=Status.All", "items") });
     if (part === "contacts") return json({ ok: true, read_at: new Date().toISOString(), contacts: await all(B, "/contacts?filter_by=Status.All", "contacts") });
+    if (part === "design") {   // READ-ONLY probes for docs/12 (rebates, catalogue, audit, PO flow)
+      const r: Record<string, unknown> = {};
+      const so = await g(B, "/salesorders?salesorder_number=SO-00019");
+      const soId = so?.salesorders?.[0]?.salesorder_id;
+      for (const [k, base, path] of [
+        ["fields_item", B, "/settings/fields?entity=item"], ["fields_salesorder", B, "/settings/fields?entity=salesorder"],
+        ["fields_invoice", B, "/settings/fields?entity=invoice"], ["fields_contact", B, "/settings/fields?entity=contact"],
+        ["inv_fields_item", I, "/settings/fields?entity=item"], ["salespersons", B, "/salespersons"], ["salespersons_settings", B, "/settings/salespersons"],
+        ["inv_salespersons", I, "/salespersons"], ["categories", I, "/categories"], ["brands", I, "/brands"], ["manufacturers", I, "/manufacturers"],
+        ["so_attachment", B, `/salesorders/${soId}/attachment`], ["so_detail", B, `/salesorders/${soId}`],
+        ["contacts_with_pricebook", B, "/contacts?per_page=5"]] as const) {
+        const j = await g(base, path);
+        r[k] = JSON.stringify(j).slice(0, k === "so_detail" ? 600 : 1500);
+      }
+      return json({ ok: true, probes: r });
+    }
     if (part === "pricebook") {   // READ-ONLY: one price book with its item rates
       const id = String(body.id ?? "");
       if (!/^[0-9]+$/.test(id)) return json({ ok: false, error: "id" }, 400);

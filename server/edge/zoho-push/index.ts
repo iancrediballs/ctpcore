@@ -647,7 +647,9 @@ async function shipOrder(db: SupabaseClient, log: Logger, who: any, orderId: num
     await log({ doc_type: "package", ctp_id: orderId, ctp_ref: o.number, action: "create", ok: true, zoho_id: String(pkg.package_id),
                 message: `${o.number} → Zoho package ${pkg.package_number} (${lines.length} line(s))` });
   }
+  let createdShipment = false;
   if (!shipment) {
+    createdShipment = true;
     const ship = { date: jhbToday(), delivery_method: String(body.delivery_method ?? "Collection"),
       tracking_number: String(body.tracking_number ?? o.number), reference_number: o.number, notes: `CTP Core goods out · ${o.number}` };
     // deno-lint-ignore no-explicit-any
@@ -670,7 +672,7 @@ async function shipOrder(db: SupabaseClient, log: Logger, who: any, orderId: num
   if (error) throw new Error(`Shipped in Zoho (${shipment.number}), but recording goods out in CTP failed: ${error.message}`);
   // deno-lint-ignore no-explicit-any
   const stock = await stockOne(db, ((so.line_items ?? []) as any[]).map((l) => String(l.item_id)));
-  return { package_number: pkg.package_number, shipment_number: shipment.number, shipment_status: shipment.status, ...rec, stock };
+  return { package_number: pkg.package_number, shipment_number: shipment.number, shipment_status: shipment.status, created_shipment: createdShipment, ...rec, stock };
 }
 
 /** A count from the phone → an Inventory quantity adjustment (counted − Zoho on hand). */
@@ -863,7 +865,13 @@ Deno.serve(async (req: Request) => {
         if (body.action === "ship") {
           const id = Number(body.order_id);
           if (!Number.isInteger(id) || id <= 0) return json({ error: "order_id is required" }, 400);
-          return json({ ok: true, ...(await shipOrder(db, log, who, id, body)) });
+          const shipped = await shipOrder(db, log, who, id, body);
+          // 0068: CTP-mode mirror — CTP's own fulfil was the goods-out step; record the Zoho shipment beside it
+          if (body.mirror === true && shipped.created_shipment) {
+            await db.rpc("append_order_event", { p_order_id: id, p_kind: "shipped", p_label: `Zoho package ${shipped.package_number} / shipment ${shipped.shipment_number}`,
+              p_actor: who.actor, p_detail: { package: shipped.package_number, shipment: shipped.shipment_number } });
+          }
+          return json({ ok: true, ...shipped });
         }
         if (body.action === "adjust") return json({ ok: true, ...(await adjustFromCount(db, log, who, body)) });
         if (body.action === "receive") return json({ ok: true, ...(await receiveGoods(db, log, who, body)) });
@@ -889,6 +897,11 @@ Deno.serve(async (req: Request) => {
         const est = await estimateFor(db, cfg, id, log);
         const { data: ap, error: apErr } = await db.rpc("apply_zoho_estimate", { p_order_id: id, p_est: estimatePayload(est.estimate) });
         if (apErr) throw new Error(`Estimate ${est.estimate_number} is in Zoho, but linking it failed: ${apErr.message}`);
+        // 0068: the timeline names who sent the quote to Zoho
+        if (est.action === "created" || est.action === "found") {
+          await db.rpc("append_order_event", { p_order_id: id, p_kind: "quoted", p_label: `Quote sent to Zoho as ${est.estimate_number} (draft for accounts)`,
+            p_actor: who.actor, p_detail: { estimate: est.estimate_number } });
+        }
         const { estimate: _e, ...ref } = est;
         return json({ ok: true, ...ref, changes: ap?.changes ?? [], warnings: ap?.warnings ?? [] });
       } catch (e) {

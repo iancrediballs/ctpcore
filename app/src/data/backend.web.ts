@@ -815,7 +815,7 @@ async function staffOrders(): Promise<unknown[]> {
             so.zoho_invoice_id, so.zoho_invoice_total_minor, so.zoho_invoice_balance_minor, so.zoho_invoice_paid_minor,
             so.zoho_invoice_payments, so.zoho_invoice_count,
             so.zoho_estimate_id, so.zoho_estimate_number, so.zoho_estimate_status, so.zoho_estimate_error,
-            so.zoho_estimate_total_minor, so.zoho_estimate_expiry, so.staff_log,
+            so.zoho_estimate_total_minor, so.zoho_estimate_expiry, so.staff_log, so.timeline,
             c.name AS customer_name, c.contact AS customer_contact,
             c.phone AS customer_phone, c.email AS customer_email,
             (SELECT l.code FROM location l WHERE l.id = so.location_id) AS location_code
@@ -913,6 +913,7 @@ async function staffOrders(): Promise<unknown[]> {
       zoho_estimate_status: nstr(o["zoho_estimate_status"]),
       zoho_estimate_error: nstr(o["zoho_estimate_error"]),
       staff_log: nstr(o["staff_log"]),
+      timeline: (() => { try { const t = JSON.parse(String(o["timeline"] ?? "[]")); return Array.isArray(t) ? t : []; } catch { return []; } })(),
       zoho_estimate_total_minor: o["zoho_estimate_total_minor"] == null ? null : Number(o["zoho_estimate_total_minor"]),
       zoho_estimate_expiry: nstr(o["zoho_estimate_expiry"]),
       unpriced,

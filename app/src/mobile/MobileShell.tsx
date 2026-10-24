@@ -121,6 +121,7 @@ type StaffOrder = {
   zoho_estimate_status?: string | null; zoho_estimate_error?: string | null;
   zoho_estimate_total_minor?: number | null; zoho_estimate_expiry?: string | null;
   staff_log?: string | null;   // 0067: internal history, staff only
+  timeline?: { at: string; kind: string; label: string; by: string; detail?: Record<string, unknown> }[];   // 0068
   unpriced: number; total_minor: number;
   stage: "to_price" | "with_customer" | "to_pick" | "fulfilled" | string;
   lines: StaffLine[];
@@ -1804,6 +1805,22 @@ const parseRand = (s: string): number => {
    *  estimate exists — it stays in Needs pricing, where Send quote creates the estimate. */
   const stageOf = (o: StaffOrder): string =>
     estimatesOn && o.stage === "with_customer" && !o.zoho_estimate_id ? "to_price" : o.stage;
+  /** 24 Oct: one colour per in-process stage (Orders tab), muted once done. Always with a label. */
+  const orderStage = (o: StaffOrder): { cls: string; label: string } => {
+    if (o.status === "cancelled") return { cls: "st-muted", label: o.client_response === "declined" ? "Declined" : "Cancelled" };
+    if (o.status === "invoiced") return { cls: "st-muted", label: "Completed" };
+    const sg = stageOf(o);
+    if (sg === "to_price") return { cls: "st-pricing", label: "Needs pricing" };
+    if (sg === "with_customer") return { cls: "st-quote", label: "Quote sent" };
+    if (sg === "to_pick") return o.zoho_invoice_id || !o.zoho_salesorder_id
+      ? { cls: "st-invoiced", label: o.zoho_invoice_id ? "Invoiced — ready to fulfil" : "Accepted — ready to fulfil" }
+      : { cls: "st-accepted", label: "Accepted — awaiting invoice" };
+    if (sg === "fulfilled") return { cls: "st-out", label: "Goods out — close it" };
+    return { cls: "st-muted", label: o.status };
+  };
+  const STAGE_LEGEND: [string, string][] = [["st-pricing", "Needs pricing"], ["st-quote", "Quote sent"], ["st-accepted", "Awaiting invoice"],
+    ["st-invoiced", "Ready to fulfil"], ["st-out", "Goods out — close"], ["st-muted", "Completed / cancelled"]];
+
   /** Lane headers say what is actually true of the orders in them (Ian, 23 Oct). */
   const laneHint = (key: string, rows: StaffOrder[], fallback: string): string => {
     if (key === "to_price") return rows.some((o) => estimatesOn && o.unpriced === 0) ? "price it, then Send quote (creates the Zoho estimate)" : fallback;
@@ -1903,6 +1920,11 @@ const parseRand = (s: string): number => {
         )}
 
         {orderFilterBar}
+        {orders && orders.length > 0 && (
+          <div className="mb-legend" aria-label="Order stage colours">
+            {STAGE_LEGEND.map(([c, l]) => <span key={c} className={"mb-ord " + c}><span className="mb-stpill">{l}</span></span>)}
+          </div>
+        )}
         {orders === null && !ordersErr && <div className="mb-count">Loading…</div>}
         {ordersErr && (
           <div className="mb-empty">
@@ -1929,13 +1951,15 @@ const parseRand = (s: string): number => {
               <div className="mb-count">{s.label} · {inStage.length} — {laneHint(s.key, inStage, s.hint)}</div>
               {inStage.map((o) => {
                 const open = openOrder === o.id;
+                const st = orderStage(o);
                 return (
-                  <div className="mb-rows" key={o.id} style={{ marginBottom: 12 }}>
+                  <div className={"mb-rows mb-ord " + st.cls} key={o.id} style={{ marginBottom: 12 }}>
                     <button className="mb-row" style={{ width: "100%", background: "none", border: 0, textAlign: "left" }}
                       onClick={() => { setOpenOrder(open ? null : o.id); setDraftPrices({}); if (!open) void syncOrderFromZoho(o); }}>
                       <span style={{ flex: 1, minWidth: 0 }}>
                         <div className="mb-cname">{o.customer_name}</div>
                         <div className="mb-csku mb-mono">{o.number} · {o.lines.length} line{o.lines.length === 1 ? "" : "s"}</div>
+                        <span className="mb-stpill">{st.label}</span>
                       </span>
                       <span className="mb-rv">
                         {o.total_minor > 0 ? fmtR(o.total_minor) : <span style={{ color: "var(--warn)" }}>no price</span>}
@@ -2052,6 +2076,20 @@ const parseRand = (s: string): number => {
                             </div>
                           );
                         })()}
+                        {(o.timeline?.length ?? 0) > 0 && (
+                          <details className="mb-row" style={{ display: "block" }} open={o.stage !== "invoiced" && o.status !== "cancelled"}>
+                            <summary className="mb-rk" style={{ cursor: "pointer" }}>Timeline</summary>
+                            <ol className="mb-tl">
+                              {o.timeline!.map((e, i) => (
+                                <li key={i}>
+                                  <span className="mb-tl-when">{new Date(e.at).toLocaleString("en-ZA", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}</span>
+                                  <span className="mb-tl-what">{e.label}{e.detail && typeof e.detail.note === "string" ? ` — “${e.detail.note}”` : ""}</span>
+                                  <span className="mb-tl-who">{e.by}</span>
+                                </li>
+                              ))}
+                            </ol>
+                          </details>
+                        )}
                         {o.staff_log && (
                           <details className="mb-row" style={{ display: "block" }}>
                             <summary className="mb-rk" style={{ cursor: "pointer" }}>History (staff only)</summary>
@@ -2176,8 +2214,9 @@ const parseRand = (s: string): number => {
               {done.map((o) => {
                 const open = openOrder === o.id;
                 const when = o.invoiced_at ?? o.fulfilled_at ?? o.created_at;
+                const st = orderStage(o);
                 return (
-                  <div className="mb-rows" key={o.id} style={{ marginBottom: 12 }}>
+                  <div className={"mb-rows mb-ord " + st.cls} key={o.id} style={{ marginBottom: 12 }}>
                     <button className="mb-row" style={{ width: "100%", background: "none", border: 0, textAlign: "left" }}
                       onClick={() => { setOpenOrder(open ? null : o.id); setDraftPrices({}); if (!open) void syncOrderFromZoho(o); }}>
                       <span style={{ flex: 1, minWidth: 0 }}>
@@ -2228,6 +2267,20 @@ const parseRand = (s: string): number => {
                             <span className="mb-rk">Their note</span>
                             <span className="mb-rv">{o.notes}</span>
                           </div>
+                        )}
+                        {(o.timeline?.length ?? 0) > 0 && (
+                          <details className="mb-row" style={{ display: "block" }} open={o.stage !== "invoiced" && o.status !== "cancelled"}>
+                            <summary className="mb-rk" style={{ cursor: "pointer" }}>Timeline</summary>
+                            <ol className="mb-tl">
+                              {o.timeline!.map((e, i) => (
+                                <li key={i}>
+                                  <span className="mb-tl-when">{new Date(e.at).toLocaleString("en-ZA", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}</span>
+                                  <span className="mb-tl-what">{e.label}{e.detail && typeof e.detail.note === "string" ? ` — “${e.detail.note}”` : ""}</span>
+                                  <span className="mb-tl-who">{e.by}</span>
+                                </li>
+                              ))}
+                            </ol>
+                          </details>
                         )}
                         {o.staff_log && (
                           <details className="mb-row" style={{ display: "block" }}>

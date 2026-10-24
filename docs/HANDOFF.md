@@ -660,3 +660,40 @@ settings reads and CTP's caches.
   - invoice counter at INV-000012 while the newest invoice is INV-000010 → **INV-000011 was created
     and deleted** after the demo (possibly a "convert to invoice" from QT-000009, then deleted).
 - Expenses / journals not readable with our scopes (401).
+
+## 24 Oct — new direction (docs/12): rebates via price books, catalogue, PO acceptance; items 6–7 built (0068, PWA v34)
+- **docs/12_REBATES_CATALOGUE_PO_FLOW.md** = the design for confirmation.
+  Read-only API checks:
+  - contacts have a "Price List" (`pricebook_id`) field;
+  - per-item price books are writable;
+  - `/salespersons` is empty;
+  - SO attachments endpoint exists;
+  - Anton created Manufacturer **FAW** + Brand **JH6** (set on 2801070-1063) and made item
+    **Brand MANDATORY** (Zoho UI saves of other items need a brand) — corrects the earlier audit;
+  - categories empty.
+  
+  No Zoho data changed.
+- **Built — item 6, audit trail (0068, live):**
+  - `sales_order.timeline` (jsonb, staff-only: not in customers' stream, not granted over the
+    Data API — verified "permission denied");
+  - a trigger records created / priced / estimate sent·accepted·… / accepted (customer or on
+    behalf + note) / SO raised / invoiced / paid / released / fulfilled·shipped / closed /
+    cancelled·declined;
+  - actor from the session, accepted_by / fulfil_override_by / raised_by, the customer login, or
+    a one-shot `event_actor` (set by `record_goods_out`); Zoho read-backs = "Zoho (accounts)";
+  - `append_order_event()` (server) for edge steps: "Quote sent to Zoho as QT-…" (zoho-push
+    estimate) and the CTP-mode mirror shipment;
+  - existing orders back-filled ("reconstructed");
+  - phone: "Timeline" on each order.
+
+  Zoho side (salesperson + "CTP user" field) waits for confirmation.
+- **Built — item 7, Orders colours:**
+  - Needs pricing amber · Quote sent blue · Awaiting invoice purple · Ready to fulfil teal ·
+    Goods out green · completed/cancelled muted;
+  - left bar + labelled pill + legend;
+  - AA measured: dark 6.6–9.9:1, light 5.3–6.7:1.
+- **Item 8 part:** `zoho_config.tax_id` = 1429405000000095109 ("Standard Rate" 15%) — pushes use the
+  id, so a rename can't break invoicing.
+- Tests: tests_0068_local.js 18/18 (+0067 14, 0065 20); deno at baseline; tsc + build clean.
+- Waiting on Ian/Anton: confirm docs/12 (then: PO flow with estimates OFF → rebates (needs the
+  spreadsheet) → staff pricing view → public/walk-in RLS → catalogue fields → Zoho salespersons).

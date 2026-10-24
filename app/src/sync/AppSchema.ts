@@ -112,6 +112,8 @@ const sales_order = new Table({
   zoho_invoice_payments: column.text, zoho_invoice_count: column.integer, zoho_invoice_linked_at: column.text,
   // 0067: internal staff-only history (customers' stream never carries it)
   staff_log: column.text,
+  // 0068: who did each step and when (JSON array; staff only)
+  timeline: column.text,
   // 0062 (Phase 2): the quote's Zoho estimate
   zoho_estimate_id: column.text, zoho_estimate_number: column.text, zoho_estimate_status: column.text,
   zoho_estimate_status_at: column.text, zoho_estimate_error: column.text, zoho_estimate_modified_at: column.text,
