@@ -967,4 +967,5 @@ Ian: "List, Cost and Floor on an order line, but no rebate and no strikethrough.
     after): 113 cards "your price", part page "Your price … 25% rebate on your account", basket
     shows the rebate, no cost/margin/floor/bin anywhere. Direct table read returns 0 rows; the
     customer list holds only Hermans; my_price_book returns 113 rows.
+- Deployed to production with `vercel --prod` (a git push alone does not deploy); live sw.js is ctp-core-v38.
 - Zoho prices untouched.
