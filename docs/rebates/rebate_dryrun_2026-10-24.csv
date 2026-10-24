@@ -1,0 +1,155 @@
+sku,name,zoho_rate,zoho_cost,sheet_pct,sheet_rebate_rate,policy_pct,policy_rebate_rate,differs
+2801070-1063,Front Crossmember Upper,6834.42,1008.5,0.25,5125.82,0.25,5125.82,False
+2801090-1066,Front Crossmember Spring Bracket,3759.29,289.57,0.25,2819.47,0.25,2819.47,False
+2803010B1063-DQ,Front Bumper Centre Assembly,4642.52,1501.92,0.25,3481.89,0.25,3481.89,False
+2803015B1063-G,Front Bumper Intake Grille Assembl,4647.05,223.21,0.25,3485.29,0.25,3485.29,False
+2803018B1063,Front Bumper Bug Shield,303.98,72.35,0.25,227.99,0.25,227.99,False
+2803031B1063-G,Front Bumper L/H Decorative Panel,634.53,63.91,0.25,475.9,0.25,475.9,False
+2803032B1063-G,Front Bumper R/H Decorative Panel,302.91,65.03,0.25,227.18,0.25,227.18,False
+2803035B1063-DQ,Front Bumper L/H,2162.96,1206.82,0.25,1622.22,0.15,1838.52,True
+2803040B1063-DQ,Front Bumper R/H,3600.0,1215.69,0.25,2700.0,0.25,2700.0,False
+2803052B1063,Front Bumper Primary Step,107.57,39.63,0.25,80.68,0.25,80.68,False
+2803091B1063-G,Front Bumper Lower Tow Hook Cover,496.49,6.61,0.25,372.37,0.25,372.37,False
+2803381B1063,Front Bumper Centre Lower L/H Deco,14.36,8.76,0.1,12.92,0.0,14.36,True
+2803382B1063,Front Bumper Centre Lower R/H Deco,85.0,8.76,0.1,76.5,0.25,63.75,True
+2803645B1063,Front Bumper L/H Bracket Assembly,1440.0,1032.46,0.25,1080.0,0.0,1440.0,True
+2803650B1063,Front Bumper R/H Bracket Assembly,1862.56,1039.2,0.25,1396.92,0.15,1583.18,True
+2803721B1063-G,Front Bumper L/H Spoiler,753.44,76.35,0.25,565.08,0.25,565.08,False
+2803722B1063-G,Front Bumper R/H Spoiler,738.61,77.01,0.25,553.96,0.25,553.96,False
+2803731B1063-G,Front Bumper Centre Spoiler,463.08,144.4,0.25,347.31,0.25,347.31,False
+2803761B1063,Spoiler L/H Connecting Bracket,207.62,19.97,0.25,155.72,0.25,155.72,False
+2803762B1063,Spoiler R/H Connecting Bracket,896.16,19.97,0.25,672.12,0.25,672.12,False
+2803763B1063,Spoiler Centre Connecting Bracket,115.65,9.99,0.25,86.74,0.25,86.74,False
+2803821B1063,Front Bumper Centre Mesh Screen,365.43,70.97,0.25,274.07,0.25,274.07,False
+2803831B1063,Front Bumper Upper Mesh Screen,431.88,156.84,0.25,323.91,0.25,323.91,False
+3711015-1544,Front Combination Lamp L/H,3374.33,1115.54,0.25,2530.75,0.25,2530.75,False
+3711020-1544,Front Combination Lamp R/H,3929.84,1115.54,0.25,2947.38,0.25,2947.38,False
+3732015-1063-C00,Front Fog Lamp L/H,1156.0,427.36,0.25,867.0,0.25,867.0,False
+3732020-1063-C00,Front Fog Lamp R/H,1140.13,427.36,0.25,855.1,0.25,855.1,False
+5001010CB45,Cab Front Suspension,5527.04,3865.06,0.25,4145.28,0.0,5527.04,True
+5001315-1063A-C00,Rear Suspension Air Spring & Shock,1877.09,1312.65,0.25,1407.82,0.0,1877.09,True
+5001315B1063-C00,Rear Suspension Air Spring & Shock,1710.88,1196.42,0.25,1283.16,0.0,1710.88,True
+5004055-1063-C00,Cab Hydraulic Lock Assembly R/H,753.26,526.42,0.25,564.94,0.0,753.26,True
+5004055-79H-C00,Cab Hydraulic Lock Assembly L/H,2739.64,455.72,0.25,2054.73,0.25,2054.73,False
+5103010-1544,Front Lower Protection & Step Brac,14167.44,2534.35,0.25,10625.58,0.25,10625.58,False
+5103021-1544-G,Step Decorative Cover L/H,1359.3,296.02,0.25,1019.47,0.25,1019.47,False
+5103022-1544-G,Step Decorative Cover R/H,1187.62,297.81,0.25,890.71,0.25,890.71,False
+5103031-1063,Primary Step L/H or R/H,657.05,87.87,0.25,492.79,0.25,492.79,False
+5103052-1063-G,Step Decorative Cover Small Door,198.39,7.55,0.25,148.79,0.25,148.79,False
+5103053-1063,Step Decorative Cover Small Door F,40.82,9.84,0.25,30.62,0.25,30.62,False
+5103061-1063,Step Decorative Cover Small Door L,9.6,3.37,0.25,7.2,0.25,7.2,False
+5103121-H02-G,Front Fender L/H,4427.21,1680.27,0.2,3541.77,0.25,3320.41,True
+5103122-B45-G,Front Fender R/H,2767.28,670.75,0.25,2075.46,0.25,2075.46,False
+5103131-B45-G,Steering Axle Rear Fender L/H,186.94,130.73,0.25,140.2,0.0,186.94,True
+5103132-B45-G,Steering Axle Rear Fender R/H,1170.04,131.68,0.25,877.53,0.25,877.53,False
+5103135-B45,Front Fender Support Bracket L/H o,278.16,99.54,0.25,208.62,0.25,208.62,False
+5103161-H02,Front Wheel Upper Splash Shield L/,919.86,255.62,0.25,689.89,0.25,689.89,False
+5103162AB83,Front Wheel Upper Splash Shield R/,679.3,212.68,0.25,509.47,0.25,509.47,False
+5103181-B45,Second Step,658.52,238.88,0.25,493.89,0.25,493.89,False
+5103191-B45,Third Step,1258.76,295.41,0.25,944.07,0.25,944.07,False
+5103211-B45,Upper Splash Shield Small Door,32.58,11.06,0.25,24.43,0.25,24.43,False
+5103361A1600,Steering Axle Rear Mudguard L/H,975.43,176.05,0.25,731.57,0.25,731.57,False
+5103362A1600,Steering Axle Rear Mudguard R/H,830.42,185.97,0.25,622.81,0.25,622.81,False
+5103373-1546,Steering Axle Rear Mudguard Fixing,205.62,143.79,0.25,154.22,0.0,205.62,True
+5103374-1546,Steering Axle Rear Mudguard Fixing,205.62,143.79,0.25,154.22,0.0,205.62,True
+5103385-1600,Steering Axle Rear Mudguard Bracke,485.48,339.5,0.25,364.11,0.0,485.48,True
+5103510-1600,Steering Axle Rear Mudguard Fixing,227.03,158.76,0.25,170.27,0.0,227.03,True
+5103511-1509,Steering Axle Rear Mudguard Fixing,220.18,153.97,0.2,176.14,0.0,220.18,True
+5103611-1063,L/H Engine Side Shield,265.22,129.81,0.15,225.44,0.25,198.92,True
+5103612-1600,R/H Engine Side Shield,838.35,129.81,0.25,628.76,0.25,628.76,False
+5109111-H02,L/H Door Sill Scuff Plate,74.0,49.93,0.0,74.0,0.0,74.0,False
+5109112-B45,R/H Door Sill Scuff Plate,61.83,29.96,0.15,52.56,0.25,46.37,True
+5201010-B45,Windshield Upper Crossbeam Assembl,1009.51,705.95,,,0.0,1009.51,True
+5205010-H02-C00,Windscreen Wiper Assembly,2524.22,928.62,0.25,1893.16,0.25,1893.16,False
+5207010-H02-C00,Windscreen Washer Assembly,615.78,169.75,0.25,461.83,0.25,461.83,False
+5300010-H02-DQ,Front Wall Welding,9566.77,6690.05,0.1,8610.09,0.0,9566.77,True
+5302021-B45-G,Bonnet/Grill Outer Panel,2067.57,1445.85,0.25,1550.68,0.0,2067.57,True
+5302051-B45,Front Wall Bug Screen A,344.14,75.89,0.25,258.11,0.25,258.11,False
+5302053-B45,Front Wall Bug Screen B,286.7,69.9,0.25,215.02,0.25,215.02,False
+5302056-B45,Front Wall Bug Screen C,399.23,69.9,0.25,299.42,0.25,299.42,False
+5302071-B45-G,Radiator Grille,825.04,269.6,0.25,618.78,0.25,618.78,False
+5302125-B90,L/H Handrail,819.45,56.72,0.25,614.59,0.25,614.59,False
+5302130-B90,R/H Handrail,819.45,56.72,0.25,614.59,0.25,614.59,False
+5302155-B45,Radiator Grille L/H Hinge,205.61,49.93,0.25,154.21,0.25,154.21,False
+5302160-B45,Radiator Grille R/H Hinge,315.83,49.93,0.25,236.87,0.25,236.87,False
+5302171-B45,L/H Handrail Cover A,87.75,9.99,0.25,65.81,0.25,65.81,False
+5302172-B45,R/H Handrail Cover A,288.27,9.99,0.25,216.2,0.25,216.2,False
+5302221-A01,Pneumatic Spring Fixing Seat,47.84,15.98,0.25,35.88,0.25,35.88,False
+5302300-H02,Lower Mount Bracket,1765.23,135.8,0.25,1323.92,0.25,1323.92,False
+5302311-B45,Lower Mount Bracket Base,74.8,29.96,0.25,56.1,0.25,56.1,False
+5302350-H02,Windshield Lower Trim Panel,1684.85,347.73,0.25,1263.64,0.25,1263.64,False
+5302410-B45-C00,Gas Spring Assembly - Bonnet/Grill,274.82,66.06,0.25,206.12,0.25,206.12,False
+5302415-B45,L/H Handrail Bracket,706.39,219.67,0.25,529.79,0.25,529.79,False
+5302420-B45,R/H Handrail Bracket,593.83,219.67,0.25,445.37,0.25,445.37,False
+5302500-H02-C00,Bonnet/Grill Lock Strap Cable,531.72,159.76,0.25,398.79,0.25,398.79,False
+5302530-A01,Release Handle,62.1,19.97,0.25,46.58,0.25,46.58,False
+5302591-B45,Buffer Block A - Front Wall,42.69,9.99,0.25,32.02,0.25,32.02,False
+5302621-B45-G,L/H Deflector,1561.56,139.79,0.25,1171.17,0.25,1171.17,False
+5302622-B45-G,R/H Deflector,790.0,139.79,0.25,592.5,0.25,592.5,False
+5302715-H02,Left A-pillar upper decorative pan,501.59,165.0,0.25,376.19,0.25,376.19,False
+5302720-H02,Right A-pillar upper decorative pa,601.59,165.0,0.25,451.19,0.25,451.19,False
+5302801-B45,Front Emblem,943.9,199.7,0.25,707.92,0.25,707.92,False
+5302841-B45-G,Left A-pillar lower decorative pla,454.84,132.05,0.25,341.13,0.25,341.13,False
+5302842-B45-G,Right A-pillar lower decorative pl,746.48,132.05,0.25,559.86,0.25,559.86,False
+5400015-H02,Cab Side Panel Outer - L/H,6757.28,4725.37,0.25,5067.96,0.0,6757.28,True
+5400020-H02,Cab Side Panel Outer - R/H,12695.75,4725.37,0.25,9521.81,0.25,9521.81,False
+5401085-H02,Cab Side Panel Inner - L/H,2212.07,1546.9,0.25,1659.05,0.0,2212.07,True
+5401090-H02,Cab Side Panel Inner - R/H,2212.07,1546.9,0.25,1659.05,0.0,2212.07,True
+5407025-B45,Side Toolbox Cover L/H,1347.06,942.0,0.25,1010.29,0.0,1347.06,True
+5407086-B45-C00,Side Toolbox Sealing Strip L/H or ,93.38,65.3,0.2,74.7,0.0,93.38,True
+5600010-B45,Cab Rear Panel Assembly,6837.82,4781.69,0.25,5128.36,0.0,6837.82,True
+5700010-B45,Cab Complete Roof Assembly,56060.78,6750.56,0.25,42045.58,0.25,42045.58,False
+5704011-B45,Sun Visor,1827.44,659.02,0.25,1370.58,0.25,1370.58,False
+5704021-B45,Sun Visor Bracket 1,53.44,19.97,0.25,40.08,0.25,40.08,False
+5704031-B45,Sun Visor Bracket 2,113.85,19.97,0.25,85.39,0.25,85.39,False
+5704081-B45,Roof Trim Strip L/H,552.69,135.8,0.25,414.52,0.25,414.52,False
+5704082-B45,Roof Trim Strip R/H,552.69,135.8,0.25,414.52,0.25,414.52,False
+5704111CB45-G,Aerokit Top Deflector Panel,13382.72,1417.89,0.25,10037.04,0.25,10037.04,False
+5704116CB45,Aerokit Top Deflector Adjustment B,365.16,209.69,0.0,365.16,0.1,328.64,True
+5704130CB45,Aerokit Top Deflector Front Hinge,106.77,59.91,0.1,96.09,0.15,90.75,True
+5704145CB45,Aerokit Adjustment Support Bracket,527.21,249.63,0.15,448.13,0.25,395.41,True
+5704150CB45,Aerokit Adjustment Support Bracket,527.23,249.63,0.15,448.15,0.25,395.42,True
+5704175CB45,Aerokit Top Support Bracket L/H,188.48,131.8,0.25,141.36,0.0,188.48,True
+5704180CB45,Aerokit Top Support Bracket R/H,259.92,131.8,0.15,220.93,0.2,207.94,True
+5704190-H40,Aerokit Right Side Support Bracket,285.06,93.86,0.25,213.8,0.25,213.8,False
+5704211CB45-G,Aerokit Upper Side Deflector L/H,2807.6,309.54,0.25,2105.7,0.25,2105.7,False
+5704212CB45-G,Sun Visor,1149.35,309.54,0.25,862.01,0.25,862.01,False
+5704221CB45-G,Aerokit Lower Side Deflector L/H,2992.15,479.29,0.25,2244.11,0.25,2244.11,False
+5704222CB45-G,Aerokit Lower Side Deflector R/H,2891.38,459.32,0.25,2168.53,0.25,2168.53,False
+5704231-H40,Aerokit Upper Side Deflector Brack,78.66,43.93,0.1,70.79,0.15,66.86,True
+5704232-H40,Aerokit Upper Side Deflector Brack,78.66,43.93,0.1,70.79,0.15,66.86,True
+5704241-H40,Aerokit Side Deflector Upper Brack,74.59,39.94,0.1,67.13,0.15,63.4,True
+5704242-H40,Aerokit Side Deflector Upper Brack,79.47,43.93,0.1,71.52,0.15,67.55,True
+5704251-H40,Aerokit Side Deflector Middle Brac,78.88,43.93,0.1,70.99,0.15,67.05,True
+5704262-H40,Aerokit Side Deflector Lower Brack,207.24,59.91,0.25,155.43,0.25,155.43,False
+5704281DB45,Aerokit Left Lower Reinforcement T,148.6,69.9,0.15,126.31,0.25,111.45,True
+5704282-H40,Aerokit Right Lower Reinforcement ,93.8,45.93,0.15,79.73,0.25,70.35,True
+5704283CB45,Aerokit Left & Right Lower Fixing ,89.33,45.93,0.15,75.93,0.2,71.46,True
+6100005-H02,Door Assembly L/H,11000.0,11039.58,0.15,9350.0,0.0,11000.0,True
+6100010-H02,Door Assembly R/H,14175.0,11039.59,0.25,10631.25,0.0,14175.0,True
+6100031-B45,Door Rear Frame Trim Cover L/H,32.28,22.57,0.25,24.21,0.0,32.28,True
+6100032-B45,Door Rear Frame Trim Cover R/H,33.28,22.57,0.25,24.96,0.0,33.28,True
+6101585-B83,Door Lower Trim Panel L/H,3207.21,503.71,0.25,2405.41,0.25,2405.41,False
+6101590-B83,Door Lower Trim Panel R/H,3179.26,507.74,0.25,2384.45,0.25,2384.45,False
+6102015-H02-C00,Door Interior Trim Panel L/H,1450.0,650.78,0.2,1160.0,0.25,1087.5,True
+6102020-H02-C00,Door Interior Trim Panel R/H,1450.0,654.43,0.2,1160.0,0.25,1087.5,True
+6102151-B45-C00,Door Window Frame Upper Protective,114.8,80.28,0.25,86.1,0.0,114.8,True
+6102152-B45-C00,Door Window Frame Upper Protective,114.8,80.28,0.25,86.1,0.0,114.8,True
+6104015AB45-C00,Door Electric Window Lift Module A,1411.02,986.73,0.1,1269.92,0.0,1411.02,True
+6104020AB45-C00,Door Electric Window Lift Module A,1411.02,986.73,0.0,1411.02,0.0,1411.02,False
+6105025AB45-C00,Door Electric Lock Assembly L/H,348.98,244.04,0.25,261.74,0.0,348.98,True
+6105030AB45-C00,Door Electric Lock Assembly R/H,348.98,244.04,0.25,261.74,0.0,348.98,True
+6105045-B45-C00,Door Handle L/H w/ Key,270.44,189.12,0.25,202.83,0.0,270.44,True
+6105050-B45-C00,Door Handle R/H w/ Key,270.44,189.12,0.25,202.83,0.0,270.44,True
+6106015-B45-C00,Door Upper Hinge L/H,341.83,239.04,0.25,256.37,0.0,341.83,True
+6106020-B45-C00,Door Upper Hinge R/H,341.83,239.04,0.25,256.37,0.0,341.83,True
+6106055-B45-C00,Door Lower Hinge L/H,237.02,165.75,0.25,177.77,0.0,237.02,True
+6106060-B45-C00,Door Lower Hinge R/H,237.02,165.75,0.25,177.77,0.0,237.02,True
+6109015-B45-C00,Front Door Limiter L/H or R/H,107.66,75.29,0.25,80.75,0.0,107.66,True
+8105010-1600-C00,Condenser Assembly,1321.36,924.03,0.25,991.02,0.0,1321.36,True
+8202015-H02-C00,Rearview Mirror Assembly L/H - Ele,2983.39,1151.83,0.25,2237.54,0.25,2237.54,False
+8202020-H02-C00,Rearview Mirror Assembly R/H - Ele,2983.39,1161.27,0.25,2237.54,0.25,2237.54,False
+8202061-B45-C00-G,Rearview Mirror L/H Lower Cover,296.69,23.96,0.25,222.52,0.25,222.52,False
+8202062-B45-C00-G,Rearview Mirror R/H Lower Cover,204.96,23.96,0.25,153.72,0.25,153.72,False
+8219010-H02-C00,Overhead Mirror Assembly - L/H,545.96,146.05,0.25,409.47,0.25,409.47,False
+8219020AH02-C00,Front Lower View Mirror Assembly -,750.38,329.7,0.2,600.3,0.25,562.78,True

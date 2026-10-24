@@ -171,3 +171,36 @@ About 7–8 days in total.
 - PO file required for customers, optional on behalf.
 - Make = Manufacturer, Model = Brand.
 - Fitment stays in CTP.
+
+## Addendum 24 Oct — Ian's rebate sheet, dry run (nothing created in Zoho)
+Ian: *"see only the rebate structure application here, dont change sales pricing in zoho"*.
+Zoho item rates stay the sales price.
+
+**The sheet** (Google Sheet exported as xlsx; "Master Pricing" + Assumptions / Dashboard /
+Scenario Summary):
+- one row per SKU (155), with:
+  - Landed cost, FAW retail, CTP invoice price (= FAW retail);
+  - **Recommended rebate %**, Rebate R, net revenue, GP, commission (10% of GP), contribution,
+    contribution margin %, band flag.
+- **Rule:** the rebate is the highest of 25 / 20 / 15 / 10 / 0% that keeps contribution margin
+  (after 10% commission) ≥ 30%; maximum 25%.
+- Bands: 25% × 125, 20% × 6, 15% × 9, 10% × 10, 0% × 3, blank × 2 (5201010-B45; DIA001 has no
+  retail price and is not a Zoho item).
+- **No customers or groups** are in the sheet.
+
+**Mapping:** per-item price book **"FAW JH6 – Rebate"** (`per_item`, sales): rebate rate =
+**Zoho rate × (1 − rebate %)**. It is not a flat % markdown (not uniform). It is assigned to the
+customers Ian names.
+
+**Mismatches:**
+- **80 items:** Zoho's sales rate is well below the sheet's "FAW retail" (e.g. 2803035B1063-DQ
+  R2,162.96 vs R6,360.62; 5001010CB45 R5,527.04 vs R11,933.83). Many Zoho rates are about
+  cost × 1.43, while the sheet assumes about 3× cost.
+- **Applied as-is to Zoho rates (A):** 40 items fall below the sheet's own 30% contribution rule,
+  and 2 below cost: 6100005-H02 Door L/H R9,350 vs cost R11,039.58; 6100010-H02 Door R/H
+  R10,631.25 vs R11,039.59.
+- **The sheet's RULE re-applied to Zoho rate + cost (B):** 25% × 102, 20% × 2, 15% × 8, 10% × 1,
+  0% × 41. 113 items get a rebate; none breaks 30%; none below cost. 61 items differ from the
+  sheet %.
+- DIA001 is not in Zoho; CAB001 is in Zoho but not in the sheet; 5201010-B45 has a blank rebate.
+- Recommendation: **B**. Detail per SKU: `docs/rebates/rebate_dryrun_2026-10-24.csv`.
