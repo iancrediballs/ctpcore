@@ -382,6 +382,18 @@ function RebateTag({ r, big }: { r: Rebate | null; big?: boolean }) {
   );
 }
 
+/** 0077: one line under an order card's total — "rebate −R 1 234" and/or "R 567 above rebate". */
+function RebateSum({ r }: { r: { saving: number; over: number } | null }) {
+  if (!r || (r.saving <= 0 && r.over <= 0)) return null;
+  return (
+    <div className="mb-csku mb-rbsum">
+      {r.saving > 0 && <>rebate −{fmtR(r.saving)}</>}
+      {r.saving > 0 && r.over > 0 && " · "}
+      {r.over > 0 && <span className="over">{fmtR(r.over)} above rebate</span>}
+    </div>
+  );
+}
+
 // ─── the shell ───────────────────────────────────────────────────────────────
 
 /** 0072: one line's price, book-aware. Customers: ~~list~~ their price. Staff also see cost,
@@ -399,6 +411,9 @@ function PriceInfo({ lp, priceMinor, qty, staff }: { lp?: LinePrice; priceMinor:
       {list != null && book != null && book < list
         ? <span><s>{fmtR(list)}</s> <b>{fmtR(book)}</b> each · −{pct}% rebate</span>
         : staff && list != null ? <span>List {fmtR(list)} each</span> : null}
+      {staff && book != null && priceMinor > 0 && (priceMinor > book
+        ? <span className="mb-pm warn">{fmtR((priceMinor - book) * qty)} above the rebate price</span>
+        : list != null && priceMinor < list ? <span className="mb-pm ok">saves {fmtR((list - priceMinor) * qty)} vs list</span> : null)}
       {staff && cost != null && (
         <span className={"mb-pm" + cls}>
           Cost {fmtR(cost)}{m != null ? ` · margin ${fmtR(m * qty)} (${mPct}%)` : ""}{floor != null ? ` · floor ${fmtR(floor)}` : ""}
@@ -629,6 +644,23 @@ export default function MobileShell() {
     return { line_id: l.id, part_id: l.part_id, ...lp,
       book_minor: lp?.book_minor ?? rb?.book_minor, list_minor: lp?.list_minor ?? rb?.list_minor ?? undefined };
   }, [prices, rebateFor]);
+  /** 0077: an order's rebate at a glance, over the lines on the customer's book: their list
+   *  value, what they are priced at (an unpriced line counts at the rebate price), the saving,
+   *  and — staff — how much sits above the rebate price. null when no line is on a book. */
+  const orderRebate = useCallback((o: { id: number; status: string; customer_id?: number | null;
+      lines: { id: number; part_id: number; qty: number; unit_price_minor: number | null }[] }) => {
+    let list = 0, at = 0, over = 0, n = 0;
+    for (const l of o.lines) {
+      const lp = isClient ? rebateFor(l.part_id) : lpFor(o, l);
+      if (!lp || lp.book_minor == null || lp.list_minor == null) continue;
+      // Only a quote's empty price box means "will go at the rebate"; a R0 line on a settled order was free.
+      if ((l.unit_price_minor ?? 0) <= 0 && o.status !== "quote") continue;
+      const price = (l.unit_price_minor ?? 0) > 0 ? (l.unit_price_minor as number) : lp.book_minor;
+      n++; list += lp.list_minor * l.qty; at += price * l.qty;
+      if (price > lp.book_minor) over += (price - lp.book_minor) * l.qty;
+    }
+    return n ? { n, list, at, saving: Math.max(0, list - at), over } : null;
+  }, [isClient, rebateFor, lpFor]);
   /** What an unpriced line's price box starts at: the customer's rebate price, if they have one. */
   const defaultMinor = useCallback((o: StaffOrder, l: StaffOrder["lines"][number]) =>
     l.unit_price_minor > 0 ? l.unit_price_minor : (lpFor(o, l).book_minor ?? 0), [lpFor]);
@@ -2119,6 +2151,7 @@ const parseRand = (s: string): number => {
                       </span>
                       <span className="mb-rv">
                         {o.total_minor > 0 ? fmtR(o.total_minor) : <span style={{ color: "var(--warn)" }}>no price</span>}
+                        <RebateSum r={orderRebate(o)} />
                       </span>
                     </button>
 
@@ -2148,6 +2181,15 @@ const parseRand = (s: string): number => {
                             )}
                           </div>
                         ))}
+                        {(() => { const rb = orderRebate(o); return rb && (
+                          <div className="mb-row">
+                            <span className="mb-rk">Rebate · {rb.n} line{rb.n === 1 ? "" : "s"}</span>
+                            <span className="mb-rv">
+                              {rb.list > rb.at && <s className="mb-was">{fmtR(rb.list)}</s>}<b>{fmtR(rb.at)}</b>
+                              <RebateSum r={rb} />
+                            </span>
+                          </div>
+                        ); })()}
                         {stageOf(o) === "to_price" && (
                           o.lines.length === 0 ? (
                             <div className="mb-row">
@@ -2409,6 +2451,7 @@ const parseRand = (s: string): number => {
                         <div className="mb-csku" style={{ textTransform: "capitalize" }}>
                           {o.status}{o.tax_rate_bps > 0 ? " · incl. VAT" : ""}
                         </div>
+                        <RebateSum r={orderRebate(o)} />
                       </span>
                     </button>
                     {open && (
@@ -2473,6 +2516,15 @@ const parseRand = (s: string): number => {
                             <span className="mb-rv">{fmtR(l.unit_price_minor * l.qty)}</span>
                           </div>
                         ))}
+                        {(() => { const rb = orderRebate(o); return rb && (
+                          <div className="mb-row">
+                            <span className="mb-rk">Rebate · {rb.n} line{rb.n === 1 ? "" : "s"}</span>
+                            <span className="mb-rv">
+                              {rb.list > rb.at && <s className="mb-was">{fmtR(rb.list)}</s>}<b>{fmtR(rb.at)}</b>
+                              <RebateSum r={rb} />
+                            </span>
+                          </div>
+                        ); })()}
                         {o.tax_rate_bps > 0 && (
                           <div className="mb-row">
                             <span className="mb-rk">VAT {(o.tax_rate_bps / 100).toFixed(0)}%</span>
@@ -2604,6 +2656,8 @@ const parseRand = (s: string): number => {
                         : r.status === "fulfilled" ? "Ready for collection"
                         : r.status === "invoiced" ? "Invoiced"
                         : r.status}
+                      {r.status === "quote" && !priced && (() => { const rb = orderRebate({ ...r, lines });
+                        return rb && rb.saving > 0 ? <div className="mb-csku mb-rbsum">your rebate: {fmtR(rb.at)} instead of {fmtR(rb.list)}</div> : null; })()}
                     </span>
                   </div>
                   {lines.map((l) => (
@@ -2641,12 +2695,19 @@ const parseRand = (s: string): number => {
                       )}
                     </div>
                   ))}
-                  {priced && !(estInfo[r.id]?.total_minor) && (
-                    <div className="mb-row">
-                      <span className="mb-rk">Total</span>
-                      <span className="mb-rv"><b>{fmtR(total)}</b> excl VAT</span>
-                    </div>
-                  )}
+                  {priced && !(estInfo[r.id]?.total_minor) && (() => {
+                    const rb = orderRebate({ ...r, lines });   // 0077: their rebate on this order
+                    return (
+                      <div className="mb-row">
+                        <span className="mb-rk">Total</span>
+                        <span className="mb-rv">
+                          {rb && rb.saving > 0 && <s className="mb-was">{fmtR(total + rb.saving)}</s>}
+                          <b>{fmtR(total)}</b> excl VAT
+                          {rb && rb.saving > 0 && <div className="mb-csku mb-rbsum">you save {fmtR(rb.saving)} with your rebate</div>}
+                        </span>
+                      </div>
+                    );
+                  })()}
                   {priced && estInfo[r.id]?.total_minor != null && (
                     <div className="mb-row">
                       <span className="mb-rk">Total</span>

@@ -794,3 +794,7 @@ textarea.st-in{resize:vertical;line-height:1.45;font-size:15px}
 .mb-rebate .mb-rlabel{font-weight:600;margin-left:6px}
 .mb-rebate.big{font-size:20px;margin-top:0}
 .mb-rebate.big .mb-rlabel{display:block;font-size:12.5px;margin:4px 0 0}
+
+/* 0077 — the rebate on order cards: saving vs list (green) and anything priced above the book (amber) */
+.mb-rbsum{font-weight:700;color:var(--pm-ok)}
+.mb-rbsum .over{color:var(--pm-warn)}

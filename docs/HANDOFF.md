@@ -969,3 +969,29 @@ Ian: "List, Cost and Floor on an order line, but no rebate and no strikethrough.
     customer list holds only Hermans; my_price_book returns 113 rows.
 - Deployed to production with `vercel --prod` (a git push alone does not deploy); live sw.js is ctp-core-v38.
 - Zoho prices untouched.
+
+## 24 Oct — rebate on the Orders tab (v39)
+Ian: "we are missing seeing the rebate visibility in the orders tab?"
+- **Staff order cards** (pipeline and completed): a line under the total reads "rebate −R x"
+  (the saving against list) and/or "R y above rebate" in amber (charged above the customer's
+  rebate price). It is worked out on the device from the price book, so it shows without
+  opening the order.
+- **Inside an open staff order:**
+  - A "Rebate · n lines" row shows the list total struck through (only when higher), the total
+    at the charged price, and the same saving/above line.
+  - Each line also shows "saves R x vs list" or "R y above the rebate price", next to
+    cost/margin/floor.
+- **Hermans login:**
+  - A priced order's total shows the list total struck through and "you save R x with your
+    rebate".
+  - A quote still being priced says "your rebate: R x instead of R y".
+  - Line strikethroughs as before.
+  - Never cost, floor or "above rebate".
+- **Rules:** only lines on the customer's book count. A R0 line counts at the rebate price only
+  on a quote; on a settled order it was free and is skipped.
+- **Finding for Ian/Anton:** Hermans' two newest invoices (RQ-261022-45, RQ-261020-43) were
+  charged at list, so they show "R 15 620,90 above rebate" and "R 289,00 above rebate". Their
+  older orders were partly below list.
+- Tested on the local build against live as staff (Ian test login) and as Hermans (Denver,
+  one-time admin link, read only, signed out after).
+- Pricing/orders UI files only: MobileShell.tsx, mobile.css, sw.js.
