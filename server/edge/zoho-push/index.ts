@@ -44,6 +44,9 @@
 //   { "action": "receive", "purchaseorder_id": "…", "lines": [{ "line_item_id", "quantity" }] }
 //   { "action": "hook", "module": "item|salesorder|invoice|estimate|package|shipment|bill|purchasereceive|adjustment", "id": "…" }
 //                          Zoho workflow-rule webhook (anon key): trusts nothing but the id; re-reads Zoho
+//   { "action": "rebate_book", "scheme": "FAW JH6 – Rebate", "apply"?: true }   ADMIN (0069): recompute the
+//                          scheme's rebate prices from Zoho's LIVE sales price + cost with its rule, and (apply)
+//                          create / update that one per-item price book. Never changes item rates or customers.
 //   { "action": "test" }   manager/admin: create a clearly marked TEST draft
 //                          invoice + bill against TEST contacts, read them back,
 //                          then delete all four; returns what was created.
@@ -794,6 +797,76 @@ async function hook(db: SupabaseClient, log: Logger, body: any) {
   }
 }
 
+// ── 0069: rebate scheme → Zoho price book ────────────────────────────────────
+/** The sheet's rule: the highest tier that keeps contribution margin (after commission) ≥ the minimum. */
+export function rebateFor(rate: number, cost: number, tiers: number[], minCm: number, commission: number): { pct: number; price: number; cm: number | null } {
+  for (const t of [...tiers].sort((a, b) => b - a)) {
+    const price = Math.round(rate * (1 - t) * 100) / 100;
+    const cm = price > 0 ? (1 - commission) * (price - cost) / price : null;
+    if (cm != null && cm >= minCm - 1e-9) return { pct: t, price, cm };
+  }
+  return { pct: 0, price: rate, cm: rate > 0 ? (1 - commission) * (rate - cost) / rate : null };
+}
+
+// deno-lint-ignore no-explicit-any
+async function rebateBook(db: SupabaseClient, log: Logger, body: any) {
+  const name = String(body.scheme ?? "");
+  const { data: sc } = await db.from("rebate_scheme").select("*").eq("name", name).maybeSingle();
+  if (!sc) throw new Blocked(`No rebate scheme "${name}"`);
+  const { data: skuRows } = await db.from("rebate_scheme_sku").select("sku").eq("scheme_id", sc.id);
+  const skus = new Set((skuRows ?? []).map((r) => String(r.sku).trim().toUpperCase()));
+  // deno-lint-ignore no-explicit-any
+  const items: any[] = [];
+  for (let page = 1; page <= 10; page++) {
+    const b = await zohoInv("GET", "/items", { page: String(page), per_page: "200", filter_by: "Status.Active" });
+    items.push(...(b.items ?? []));
+    if (!b.page_context?.has_more_page) break;
+  }
+  const bySku = new Map(items.map((i) => [String(i.sku ?? "").trim().toUpperCase(), i]));
+  const tiers = (sc.tiers as number[]).map(Number), minCm = Number(sc.min_contribution), commission = Number(sc.commission);
+  // deno-lint-ignore no-explicit-any
+  const rows: any[] = [];
+  for (const sku of [...skus].sort()) {
+    const it = bySku.get(sku);
+    if (!it) { rows.push({ sku, flag: "in the scheme but not an active Zoho item" }); continue; }
+    const rate = Number(it.rate ?? 0), cost = Number(it.purchase_rate ?? 0);
+    if (!(rate > 0)) { rows.push({ sku, name: it.name, flag: "no Zoho sales rate" }); continue; }
+    const r = rebateFor(rate, cost, tiers, minCm, commission);
+    rows.push({ sku, name: it.name, item_id: String(it.item_id), zoho_rate: rate, cost, rebate_pct: r.pct, rebate_price: r.price,
+                contribution_margin: r.cm == null ? null : Math.round(r.cm * 10000) / 10000 });
+  }
+  const notInScheme = items.filter((i) => i.item_type === "inventory" && !skus.has(String(i.sku ?? "").trim().toUpperCase())).map((i) => i.sku);
+  const inBook = rows.filter((r) => r.item_id && (r.rebate_pct > 0 || sc.include_zero));
+  const summary = { scheme: name, parts_in_scheme: skus.size, priced: rows.filter((r) => r.item_id).length, in_book: inBook.length,
+    tiers: Object.fromEntries(tiers.map((t) => [t, rows.filter((r) => r.rebate_pct === t).length])),
+    flags: [...rows.filter((r) => r.flag).map((r) => `${r.sku}: ${r.flag}`), ...notInScheme.map((s) => `${s}: active Zoho item not in the scheme`)] };
+  if (body.apply !== true) return { preview: true, ...summary, rows };
+
+  // one named, per-item SALES price book; created once, then updated in place
+  // deno-lint-ignore no-explicit-any
+  const books = ((await zoho("GET", "/pricebooks")).pricebooks ?? []) as any[];
+  const existing = books.find((b) => String(b.pricebook_id) === String(sc.zoho_pricebook_id ?? "")) ?? books.find((b) => b.name === name);
+  if (existing && existing.pricebook_type !== "per_item") throw new Blocked(`Zoho price book "${name}" exists but is not per-item.`);
+  const pricebook_items = inBook.map((r) => ({ item_id: r.item_id, pricebook_rate: r.rebate_price }));
+  const cur = (await zoho("GET", "/settings/currencies")).currencies?.find((c: { is_base_currency: boolean }) => c.is_base_currency);
+  const payload = { name, description: `Rebate prices from CTP Core scheme "${name}" — highest of ${tiers.map((t) => Math.round(t * 100) + "%").join("/")} keeping ≥ ${Math.round(minCm * 100)}% contribution after ${Math.round(commission * 100)}% commission, on Zoho sales price and cost. Regenerated by CTP; do not edit rates by hand.`,
+    currency_id: cur?.currency_id, pricebook_type: "per_item", sales_or_purchase_type: "sales", pricebook_items };
+  // deno-lint-ignore no-explicit-any
+  let pb: any;
+  if (existing) pb = (await zoho("PUT", `/pricebooks/${existing.pricebook_id}`, {}, payload)).pricebook;
+  else pb = (await zoho("POST", "/pricebooks", {}, payload)).pricebook;
+  const id = String(pb?.pricebook_id ?? existing?.pricebook_id);
+  await db.from("rebate_scheme").update({ zoho_pricebook_id: id, last_built_at: new Date().toISOString(), last_result: summary, updated_at: new Date().toISOString() }).eq("id", sc.id);
+  await log({ doc_type: "config", action: existing ? "update" : "create", ok: true, zoho_id: id,
+              message: `Rebate price book "${name}" ${existing ? "updated" : "created"}: ${inBook.length} parts (${JSON.stringify(summary.tiers)})` });
+  // verify: read the book back and compare every rate
+  const back = (await zoho("GET", `/pricebooks/${id}`)).pricebook;
+  // deno-lint-ignore no-explicit-any
+  const got = new Map(((back?.pricebook_items ?? []) as any[]).map((x) => [String(x.item_id), Number(x.pricebook_rate)]));
+  const mismatch = inBook.filter((r) => Math.abs((got.get(r.item_id) ?? NaN) - r.rebate_price) > 0.005).map((r) => `${r.sku}: want ${r.rebate_price}, Zoho ${got.get(r.item_id)}`);
+  return { applied: true, pricebook_id: id, created: !existing, verified_items: got.size, mismatches: mismatch, ...summary, rows };
+}
+
 // ── entry ────────────────────────────────────────────────────────────────────
 async function authorise(req: Request, db: SupabaseClient) {
   const syncToken = env("ZOHO_SYNC_TOKEN");
@@ -823,7 +896,7 @@ Deno.serve(async (req: Request) => {
   // invoice issued before go-live does not report a failure that isn't one.
   // (Status read-back is allowed while sending is off: documents already in
   // Zoho still change status there.)
-  if (!["test", "status", "so_sync", "hook", "stock_sync", "receive_list"].includes(body.action) && (!cfg?.push_enabled || !cfg?.push_from)) {
+  if (!["test", "status", "so_sync", "hook", "stock_sync", "receive_list", "rebate_book"].includes(body.action) && (!cfg?.push_enabled || !cfg?.push_from)) {
     return json({ ok: true, skipped: "Sending to Zoho is off (Settings → Zoho). Nothing was sent." });
   }
   await zohoInit(db);
@@ -910,6 +983,11 @@ Deno.serve(async (req: Request) => {
         await db.from("sales_order").update({ zoho_estimate_error: msg }).eq("id", id);
         return json({ ok: false, error: msg }, e instanceof Blocked ? 409 : 502);
       }
+    }
+    if (body.action === "rebate_book") {
+      if (who.actor && !who.admin) return json({ error: "Only an admin can build a rebate price book." }, 403);
+      try { return json({ ok: true, ...(await rebateBook(db, log, body)) }); }
+      catch (e) { return json({ ok: false, error: e instanceof Error ? e.message : String(e) }, e instanceof Blocked ? 409 : 502); }
     }
     if (body.action === "estimate_recreate") {
       // admin only; the server's own sync token is trusted like the live test (actor null)

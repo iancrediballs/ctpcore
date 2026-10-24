@@ -697,3 +697,29 @@ settings reads and CTP's caches.
 - Tests: tests_0068_local.js 18/18 (+0067 14, 0065 20); deno at baseline; tsc + build clean.
 - Waiting on Ian/Anton: confirm docs/12 (then: PO flow with estimates OFF → rebates (needs the
   spreadsheet) → staff pricing view → public/walk-in RLS → catalogue fields → Zoho salespersons).
+
+## 24 Oct — rebate price book "FAW JH6 – Rebate" LIVE in Zoho (0069)
+- Ian chose option B. **Zoho price book `FAW JH6 – Rebate`** (id 1429405000000433001, per-item, sales).
+  - 113 parts, every rate verified by read-back, 0 mismatches.
+  - Tiers: 25% × 102, 20% × 2, 15% × 8, 10% × 1. The 41 parts at 0% are left OUT of the book (my call).
+- **Rule** (from the sheet): pick the highest of 25/20/15/10/0% that keeps contribution margin
+  ≥ 30% after 10% commission. It runs on Zoho's CURRENT sales price and cost.
+- **What was not touched:**
+  - item sales rates (0 changed against the 23 Oct snapshot);
+  - Anton's "Rebate" book (still 1 item, 5704145CB45 at 527.21);
+  - customer assignments (no contact has a price list; the book is not assigned yet).
+- **Final list:** docs/rebates/faw_jh6_rebate_pricebook_2026-10-24.csv
+  (part, name, Zoho price, cost, rebate %, rebate price, contribution margin, in book, flag).
+- **Flags:**
+  - DIA001 is in the sheet but not in Zoho, so it is left out of the scheme;
+  - CAB001 is an active Zoho item that is not in the sheet;
+  - 5201010-B45 was blank in the sheet. The rule now gives 0%, because 10% would drop the margin below 30%; at 0% the margin is 27.1%.
+- **Reusable:**
+  - tables `rebate_scheme` (tiers, min_contribution, commission, include_zero, zoho_pricebook_id,
+    last_result) and `rebate_scheme_sku` hold the part list (staff-only RLS);
+  - zoho-push `{action:"rebate_book", scheme:"FAW JH6 – Rebate", apply:false|true}` (admin or server
+    token) recomputes from live Zoho prices and costs. `apply:false` previews; `apply:true` updates the
+    same book in place and verifies it;
+  - re-run it whenever prices or costs change. It never changes item rates or customers.
+- JS rounds half-up and the Python dry run rounds half-even. This gave 9 one-cent differences against
+  docs/rebates/rebate_dryrun_2026-10-24.csv. Zoho has the JS values.
