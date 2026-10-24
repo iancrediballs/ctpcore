@@ -911,3 +911,20 @@ settings reads and CTP's caches.
   - Live: 154 of 157 parts in stock, 0 mismatches against the ledger.
   - Every table and column named in server/sync-streams.yaml exists on live (checked by query).
     **The file is final for the dashboard paste.**
+
+## 24 Oct — customer-visibility check after PowerSync sync rules v8 (9ac1): PASS
+Signed in on ctpcore.vercel.app as the test customer "Test Account (Ian)" (ian@iancredible.co.za,
+customer 7) using a one-time admin magic link. No email was sent and no password was used. The
+local PowerSync DB was read in the browser after hasSynced, then cleared and signed out.
+- part_cost 0, price 0, price_tier 0, stock_policy 0, location 0, stock_movement 0, customer 0,
+  part_alias 0.
+- sales_order 13 and sales_line 27, every one customer_id 7 (2 live, 11 soft-deleted test orders).
+  zoho_salesorder_number is present (8 orders, SO-00005 … SO-00019).
+- part 162 = 157 live + 5 soft-deleted, so the file's "expect 161" comment is out of date.
+  in_stock is set on all 162 rows (155 true). part_type is OEM on 155 rows; 2 live CTP-only parts
+  (CTP-CBY-001-C, CTP-CBY-004-C) are null because they are not in Zoho.
+- Columns actually synced, read from the raw ps_data JSON: part has no list_price_minor, locator,
+  inventory_pn, notes, match_status, supplier or Zoho stock. sales_order has no internal fields.
+  company carries our own invoice details (bank, VAT no.), which is intended.
+- Caveat: sales_order.notes is the customer's own order note, but past staff test runs appended
+  text to it (e.g. "DELETE ME"). Staff should not write internal remarks there.
