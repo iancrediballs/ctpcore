@@ -834,3 +834,56 @@ settings reads and CTP's caches.
   - deno at the 71 baseline; tsc + build clean;
   - live SQL as the Hermans login: my_prices returns 5/5 book parts, cache rows visible 0, and an
     order line shows list 4 642.52 / book 3 481.89 with no cost. As TESTACC (no book): 0 / 0.
+
+## 24 Oct — docs/12 finished: hiding (0073), catalogue (0074), salesperson; PWA v37
+- **Server-side hiding (0073, live):**
+  - Over the Data API, `authenticated` reads every column EXCEPT:
+    - part: list_price_minor, locator, inventory_pn, notes, match_status, max_rebate_pct, origin,
+      zoho_* ids/stock, supplier;
+    - customer: notes, price_tier, rebate_pct, origin;
+    - sales_line: tier_at_add, rebate ceiling/override columns, origin.
+  - The PowerSync streams, edge functions (service role), SECURITY DEFINER RPCs and staff PATCHes
+    are unaffected.
+  - TRUNCATE/TRIGGER/REFERENCES are revoked from anon and authenticated on every public table.
+  - `public_parts(q, limit)` is for anon (a future public site): parts, OEM no., make/model,
+    section, in stock yes/no. No prices.
+  - Live check as the Hermans login: list price, bins, Zoho stock, customer notes, tiers and
+    staff_log are refused; their name and line prices are readable; price rows visible = 0. Anon:
+    part is refused, and public_parts returns 155 parts without prices.
+  - Walk-in / cash customers have no login, so they are served from the staff screen only.
+  - Found: **0049 (`part.in_stock`) is NOT on live**, though sync-streams.yaml lists it.
+    public_parts derives in-stock from the ledger instead. Check the PowerSync dashboard copy of
+    the streams against the repo file.
+- **Catalogue (0074, live):**
+  - `part.part_type` (OEM/Aftermarket; Zoho custom field "Part type" if Anton adds one, else OEM)
+    and `part.supplier` (Zoho preferred vendor; staff only).
+  - make = Zoho Manufacturer, model = Zoho Brand, read with the 15-minute item read
+    (`apply_zoho_catalogue`; only changed rows are touched).
+  - **Zoho changed:** Manufacturer FAW + Brand JH6 set on the 154 active items that had neither
+    (Anton's 2801070-1063 already had them), via `{action:"catalogue_set", apply:true, limit:25}`
+    in paced batches.
+    - Every item was read back: 0 failed, 0 drift in rate, purchase rate, name, SKU or status.
+    - Brand being mandatory no longer blocks UI saves.
+    - Categories (sections) were NOT mirrored into Zoho: not asked for.
+  - CTP: 155 parts are FAW · JH6 · OEM · Supalift Trading cc. The 2 parts not linked to Zoho keep
+    FAW/JH6.
+  - Phone: Find has Make / Model / Type filters (Supplier for staff), shown only when a field has
+    more than one value. So with everything FAW JH6 they appear once aftermarket parts or other
+    makes arrive. The part sheet shows "FAW · JH6 · OEM" (and the supplier for staff).
+  - sync-streams.yaml: `part_type` was added to the customer part list. **It needs pasting into the
+    PowerSync dashboard** (not urgent; until then customers see no Type).
+- **Salesperson on Zoho SOs (live):**
+  - SOs carry `salesperson_name` = the CTP staff member: the admin accepting on behalf, else
+    whoever sent or priced the quote (timeline), else whoever raised it. Customer logins, names
+    with "test" and unnamed users are skipped.
+  - Zoho links the salesperson by name, or creates one the first time. Tested live:
+    `zoho-auth {action:"sp_test"}` created salesperson **"Ian"** (1429405000000448002) on test
+    SO-00021, which was deleted.
+  - Accounts' invoices converted from the SO carry it.
+  - The "CTP user" custom field is not set up: Zoho has no API to create custom fields.
+  - Staff data to tidy: three "Ian" admin rows (two without a login email), a sales user with no
+    display name, an "ian test customer" sales user, and no Michelle user.
+- **Already live from earlier today:** item 4 PO flow + estimates off, item 6 credit warning,
+  item 7 follow Zoho (0070, v35); item 8 tax by id (0068).
+- **Tests:** tests_0074_local.js 51/51 (includes 0070 + 0072); deno at the 71 baseline; tsc + build
+  clean.

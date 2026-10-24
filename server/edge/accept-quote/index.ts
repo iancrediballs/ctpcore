@@ -55,7 +55,7 @@
 // a hold without a document would be a real one.
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
-import { zohoInit, zohoMissing, salesOrderFor, salesOrderFromEstimate, markEstimateAccepted, deleteSalesOrder, attachToSalesOrder, creditCheck, rands, Blocked, type Logger } from "../_shared/zoho.ts";
+import { zohoInit, zohoMissing, salesOrderFor, salesOrderFromEstimate, markEstimateAccepted, deleteSalesOrder, attachToSalesOrder, creditCheck, salespersonFor, rands, Blocked, type Logger } from "../_shared/zoho.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -191,9 +191,9 @@ Deno.serve(async (req: Request) => {
     }
     try {
       if (viaEstimate) {
-        const r = await salesOrderFromEstimate(db, orderId, o.zoho_estimate_id!, log, po);
+        const r = await salesOrderFromEstimate(db, orderId, o.zoho_estimate_id!, log, po, await salespersonFor(db, orderId, onBehalf ? uid : null));
         so = r; est = { status: r.estimate_status, number: r.estimate_number };
-      } else so = await salesOrderFor(db, cfg, orderId, log, po);
+      } else so = await salesOrderFor(db, cfg, orderId, log, po, await salespersonFor(db, orderId, onBehalf ? uid : null));
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       await log({ doc_type: "salesorder", ctp_id: orderId, ctp_ref: o.number, action: e instanceof Blocked ? "blocked" : "error", ok: false, message: msg });

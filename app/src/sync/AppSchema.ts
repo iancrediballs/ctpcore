@@ -31,6 +31,8 @@ const part = new Table({
   // in_stock (0050): the one stock fact a customer device receives — a boolean
   // derived on the server from the ledger the device never syncs. 0/1 here.
   in_stock: column.integer,
+  // 0074: OEM / Aftermarket (everyone) and the Zoho preferred vendor (staff stream only)
+  part_type: column.text, supplier: column.text,
   rev: column.integer, updated_at: column.text, deleted_at: column.text, origin: column.text,
 }, { indexes: { cat: ["category_id"], locator: ["locator"] } });
 

@@ -115,6 +115,28 @@ export async function findByReference(kind: "invoices" | "bills" | "salesorders"
   return null;
 }
 
+/** 0075: the salesperson for an order = the CTP staff member who handled it, by display name:
+ *  the admin accepting on behalf, else whoever priced / sent the quote (timeline), else raised it.
+ *  Staff only (never a customer login); null when the person has no name in CTP. */
+export async function salespersonFor(db: SupabaseClient, orderId: number, actor: string | null): Promise<string | null> {
+  const ids: string[] = [];
+  if (actor) ids.push(actor);
+  const { data: o } = await db.from("sales_order").select("timeline, raised_by").eq("id", orderId).maybeSingle();
+  // deno-lint-ignore no-explicit-any
+  const tl = (Array.isArray(o?.timeline) ? o!.timeline : []) as any[];
+  for (const k of ["quoted", "priced", "created"]) {
+    const e = [...tl].reverse().find((x) => x.kind === k && x.by_id);
+    if (e) ids.push(String(e.by_id));
+  }
+  if (o?.raised_by) ids.push(String(o.raised_by));
+  for (const id of ids) {
+    const { data: u } = await db.from("app_user").select("display_name, role").eq("id", id).maybeSingle();
+    const n = String(u?.display_name ?? "").trim();
+    if (u && u.role !== "customer" && n && !/test/i.test(n)) return n.slice(0, 100);
+  }
+  return null;
+}
+
 /** "… order RQ-261024-1 …" names RQ-261024-1, not RQ-261024-12. */
 export function notesName(notes: unknown, ctpNumber: string): boolean {
   const n = String(notes ?? ""), k = `order ${ctpNumber}`;
@@ -267,7 +289,8 @@ export const rebateDiscount = (pct: unknown) => {
  *  reported, not hidden. Lines by SKU through zoho_item; any unlinked SKU
  *  blocks the whole order. VAT is the Standard Rate tax. */
 // deno-lint-ignore no-explicit-any
-export async function salesOrderFor(db: SupabaseClient, cfg: any, orderId: number, log: Logger, po: string | null = null): Promise<SalesOrderRef> {
+export async function salesOrderFor(db: SupabaseClient, cfg: any, orderId: number, log: Logger, po: string | null = null,
+                                    salesperson: string | null = null): Promise<SalesOrderRef> {
   const { data: o, error } = await db.from("sales_order")
     .select("id, number, tax_rate_bps, zoho_salesorder_id, zoho_salesorder_number, " +
             "customer:customer_id(id, code, name, email, vat_no, zoho_contact_id), " +
@@ -304,6 +327,8 @@ export async function salesOrderFor(db: SupabaseClient, cfg: any, orderId: numbe
     is_inclusive_tax: false,
     // 0072: the customer's price book on the SO (rates stay explicit — they ARE the book rates)
     ...(pricebookId ? { pricebook_id: pricebookId } : {}),
+    // 0075: the CTP staff member, by name — Zoho links (or first time, creates) the salesperson
+    ...(salesperson ? { salesperson_name: salesperson } : {}),
     line_items: lines.map((l) => ({
       item_id: ids.get(l.part.id), quantity: l.qty, rate: rands(l.unit_price_minor),
       description: l.part.sku, ...(taxId ? { tax_id: taxId } : {}), ...rebateDiscount(l.rebate_pct),
@@ -485,7 +510,8 @@ export async function estimateFor(db: SupabaseClient, cfg: any, orderId: number,
  *  If CTP's transaction then fails the SO is deleted and the estimate stays
  *  accepted; a retry is allowed on an accepted estimate. Idempotent on the RQ no. */
 // deno-lint-ignore no-explicit-any
-export async function salesOrderFromEstimate(db: SupabaseClient, orderId: number, estimateId: string, log: Logger, po: string | null = null):
+export async function salesOrderFromEstimate(db: SupabaseClient, orderId: number, estimateId: string, log: Logger, po: string | null = null,
+                                             salesperson: string | null = null):
     Promise<SalesOrderRef & { estimate_status: string; estimate_number: string }> {
   const { data: o } = await db.from("sales_order").select("id, number, zoho_salesorder_id, zoho_salesorder_number").eq("id", orderId).single();
   if (!o) throw new Blocked(`Order ${orderId} not found`);
@@ -523,7 +549,8 @@ export async function salesOrderFromEstimate(db: SupabaseClient, orderId: number
   }));
   const body = { customer_id: est.customer_id, reference_number: po ?? o.number, date: jhbDate(new Date().toISOString()),
     is_inclusive_tax: !!est.is_inclusive_tax, line_items, ...(est.discount ? { discount: est.discount, is_discount_before_tax: est.is_discount_before_tax } : {}),
-    notes: `Accepted in CTP Core · order ${o.number} · from estimate ${estimate_number}${po ? ` · customer PO ${po}` : ""}` };
+    notes: `Accepted in CTP Core · order ${o.number} · from estimate ${estimate_number}${po ? ` · customer PO ${po}` : ""}`,
+    ...(salesperson ? { salesperson_name: salesperson } : (est.salesperson_name ? { salesperson_name: est.salesperson_name } : {})) };
   // deno-lint-ignore no-explicit-any
   let so: any;
   let linked = true;

@@ -648,16 +648,63 @@ async function stockSync(db: SupabaseClient, log: Logger, force: boolean) {
   const last = cfg?.stock_synced_at ? new Date(cfg.stock_synced_at).getTime() : 0;
   if (!force && Date.now() - last < 15 * 60_000) return { skipped: "stock read less than 15 minutes ago" };
   // deno-lint-ignore no-explicit-any
-  const rows: any[] = [];
+  const rows: any[] = [], cat: any[] = [];
   for (let page = 1; page <= 10; page++) {
     const b = await zohoInv("GET", "/items", { page: String(page), per_page: "200" });
     rows.push(...(b.items ?? []).filter((i: { track_inventory?: boolean }) => i.track_inventory !== false).map(invItemRow));
+    cat.push(...(b.items ?? []).map(catalogueRow));
     if (!b.page_context?.has_more_page) break;
   }
   const { data, error } = await db.rpc("apply_zoho_stock", { p_items: rows });
   if (error) { await log({ doc_type: "item", action: "readback_error", ok: false, message: error.message }); throw new Error(error.message); }
-  return { items_read: rows.length, ...data };
+  // 0074: make / model / type / supplier from the same read
+  const { data: cd, error: cErr } = await db.rpc("apply_zoho_catalogue", { p_items: cat });
+  if (cErr) await log({ doc_type: "item", action: "readback_error", ok: false, message: `catalogue: ${cErr.message}` });
+  return { items_read: rows.length, ...data, catalogue_changed: cd?.parts_changed ?? null };
 }
+/** 0074: an Inventory item's catalogue fields (Manufacturer = make, Brand = model, vendor = supplier). */
+// deno-lint-ignore no-explicit-any
+const catalogueRow = (i: any) => ({ item_id: String(i.item_id), manufacturer: i.manufacturer ?? null, brand: i.brand ?? null,
+  vendor_name: i.vendor_name ?? null,
+  // deno-lint-ignore no-explicit-any
+  part_type: ((i.custom_fields ?? []) as any[]).find((f) => /part\s*type/i.test(String(f.label ?? f.api_name ?? "")))?.value ?? i.cf_part_type ?? null });
+
+/** 0074 (Ian, 24 Oct: "carry straight on"): Manufacturer FAW + Brand JH6 on the active FAW JH6
+ *  inventory items that have neither. Only those two fields are sent; every item is read back and
+ *  its rate, purchase rate, name and SKU compared, so nothing else changes unnoticed.
+ *  { action: "catalogue_set", apply?: true } — preview without apply. */
+// deno-lint-ignore no-explicit-any
+async function catalogueSet(db: SupabaseClient, log: Logger, body: any) {
+  const make = String(body.manufacturer ?? "FAW"), model = String(body.brand ?? "JH6");
+  // deno-lint-ignore no-explicit-any
+  const items: any[] = [];
+  for (let page = 1; page <= 10; page++) {
+    const b = await zohoInv("GET", "/items", { page: String(page), per_page: "200", filter_by: "Status.Active" });
+    items.push(...(b.items ?? []));
+    if (!b.page_context?.has_more_page) break;
+  }
+  const todo = items.filter((i) => i.item_type === "inventory" && (!i.manufacturer || !i.brand));
+  if (body.apply !== true) return { preview: true, active_items: items.length, to_set: todo.length, already: items.length - todo.length, sample: todo.slice(0, 5).map((i) => i.sku) };
+  const changed: string[] = [], failed: string[] = [], drift: string[] = [];
+  // Zoho allows 100 calls a minute: a batch per call (default 25 items = 50 calls), paced
+  const batch = todo.slice(0, Math.min(Math.max(Number(body.limit ?? 25), 1), 40));
+  const pause = () => new Promise((r) => setTimeout(r, 700));
+  for (const i of batch) {
+    await pause();
+    try {
+      await zohoInv("PUT", `/items/${i.item_id}`, {}, { name: i.name, ...(i.manufacturer ? {} : { manufacturer: make }), ...(i.brand ? {} : { brand: model }) });
+      const a = (await zohoInv("GET", `/items/${i.item_id}`)).item;
+      for (const k of ["rate", "purchase_rate", "name", "sku", "status"]) if (String(a?.[k]) !== String(i[k])) drift.push(`${i.sku}.${k}: ${i[k]} → ${a?.[k]}`);
+      if (a?.manufacturer && a?.brand) changed.push(i.sku); else failed.push(`${i.sku}: not set (manufacturer=${a?.manufacturer}, brand=${a?.brand})`);
+    } catch (e) { failed.push(`${i.sku}: ${e instanceof Error ? e.message : String(e)}`); }
+  }
+  await log({ doc_type: "item", action: "update", ok: !failed.length && !drift.length,
+              message: `Catalogue: Manufacturer ${make} / Brand ${model} set on ${changed.length} items${failed.length ? `; ${failed.length} failed` : ""}${drift.length ? `; DRIFT ${drift.join(", ")}` : ""}`.slice(0, 2000) });
+  const left = todo.length - batch.length;
+  const sync = left === 0 ? await stockSync(db, log, true) : null;
+  return { applied: true, set: changed.length, left, failed, drift, catalogue_changed: (sync as { catalogue_changed?: number } | null)?.catalogue_changed ?? null };
+}
+
 /** One item's stock now (after a ship / adjust / receive touched it). */
 async function stockOne(db: SupabaseClient, itemIds: string[]) {
   // deno-lint-ignore no-explicit-any
@@ -1022,7 +1069,7 @@ Deno.serve(async (req: Request) => {
   // invoice issued before go-live does not report a failure that isn't one.
   // (Status read-back is allowed while sending is off: documents already in
   // Zoho still change status there.)
-  if (!["test", "status", "so_sync", "hook", "stock_sync", "receive_list", "rebate_book", "assign_pricebook", "pricebook_sync"].includes(body.action) && (!cfg?.push_enabled || !cfg?.push_from)) {
+  if (!["test", "status", "so_sync", "hook", "stock_sync", "receive_list", "rebate_book", "assign_pricebook", "pricebook_sync", "catalogue_set"].includes(body.action) && (!cfg?.push_enabled || !cfg?.push_from)) {
     return json({ ok: true, skipped: "Sending to Zoho is off (Settings → Zoho). Nothing was sent." });
   }
   await zohoInit(db);
@@ -1113,6 +1160,11 @@ Deno.serve(async (req: Request) => {
     if (body.action === "rebate_book") {
       if (who.actor && !who.admin) return json({ error: "Only an admin can build a rebate price book." }, 403);
       try { return json({ ok: true, ...(await rebateBook(db, log, body)) }); }
+      catch (e) { return json({ ok: false, error: e instanceof Error ? e.message : String(e) }, e instanceof Blocked ? 409 : 502); }
+    }
+    if (body.action === "catalogue_set") {
+      if (who.actor && !who.admin) return json({ error: "Only an admin can set catalogue fields in Zoho." }, 403);
+      try { return json({ ok: true, ...(await catalogueSet(db, log, body)) }); }
       catch (e) { return json({ ok: false, error: e instanceof Error ? e.message : String(e) }, e instanceof Blocked ? 409 : 502); }
     }
     if (body.action === "pricebook_sync") {

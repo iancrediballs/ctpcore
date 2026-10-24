@@ -789,6 +789,30 @@ Deno.serve(async (req: Request) => {
       && (out.documents as string[] | undefined)?.includes(`${po}.pdf`) && out.removed === "deleted", ...out });
   }
 
+  // 0075: does a sales order take salesperson_name (Zoho links / creates the salesperson)? TESTACC, self-cleaning
+  if (body.action === "sp_test") {
+    await zohoInit(db);
+    const { data: link } = await db.from("zoho_item").select("zoho_item_id, sku").eq("status", "active").not("part_id", "is", null).limit(1).single();
+    const { data: tc } = await db.from("customer").select("zoho_contact_id").eq("code", "TESTACC").maybeSingle();
+    if (!link || !tc?.zoho_contact_id) return json({ ok: false, error: "no test item/contact" }, 412);
+    const name = String(body.name ?? "Ian");
+    const stamp = new Date().toISOString().replace(/[-:T]/g, "").slice(0, 12);
+    const out: Record<string, unknown> = { before: ((await zoho("GET", "/salespersons")).data ?? (await zoho("GET", "/salespersons")).salespersons ?? null) };
+    // deno-lint-ignore no-explicit-any
+    let so: any = null;
+    try {
+      so = (await zoho("POST", "/salesorders", {}, { customer_id: tc.zoho_contact_id, reference_number: `CTP-TEST-SP-${stamp}`, salesperson_name: name,
+        line_items: [{ item_id: link.zoho_item_id, quantity: 1, rate: 1, description: `TEST ${link.sku}` }], notes: "CTP CORE TEST - DELETE ME" })).salesorder;
+      out.so = { number: so.salesorder_number, salesperson_id: so.salesperson_id, salesperson_name: so.salesperson_name };
+      const sp = await zoho("GET", "/salespersons");
+      out.after = sp.data ?? sp.salespersons ?? Object.keys(sp);
+    } catch (e) { out.error = e instanceof Error ? e.message : String(e); }
+    finally {
+      if (so?.salesorder_id) { try { await zoho("DELETE", `/salesorders/${so.salesorder_id}`); out.removed = "deleted"; } catch (e) { out.removed = "FAILED " + String(e); } }
+    }
+    return json({ ok: !out.error, ...out });
+  }
+
   if (body.action === "so_test") {
     await zohoInit(db);
     const { data: link } = await db.from("zoho_item").select("zoho_item_id, sku").eq("status", "active").not("part_id", "is", null).limit(1).single();

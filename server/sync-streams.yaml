@@ -117,7 +117,7 @@ bucket_definitions:
       # derived on the server from the ledger they never see.
       - SELECT id, sku, mpn, brand_id, category_id, name, description, uom,
                weight_g, status, superseded_by, make, model, drawing_no,
-               diagram_item_no, catalogue_pn, side, diagram_ref, in_stock,
+               diagram_item_no, catalogue_pn, side, diagram_ref, in_stock, part_type,
                rev, updated_at, deleted_at
           FROM part
       - SELECT * FROM part_xref

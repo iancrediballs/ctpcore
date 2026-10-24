@@ -42,7 +42,7 @@
 //   non-http(s) scheme. So the guard WAS the whole bug on that count. It is
 //   still wrapped in a catch below, because quota exhaustion is real and an
 //   image that fails to cache must still be shown.
-const CACHE = "ctp-core-v36";   // v36: price-book-aware prices — list struck through + rebate price; staff cost, margin, floor (0072) (2026-10-24)
+const CACHE = "ctp-core-v37";   // v37: catalogue fields + Find filters (Make/Model/Type, Supplier for staff) (0074); server-side hiding (0073); salesperson on Zoho SOs (2026-10-24)
 // v33:   // v33: app version shown (Info, Settings) + "new version ready — Reload"; SO status mapped on the order desk; Send quote always creates the estimate; one-tap Refresh (2026-10-24)
 // v32:   // v32: CTP-mode Fulfil also creates the Zoho package + shipment (mirror) so Inventory physical stock follows (2026-10-24)
 // v31:   // v31: e2e fixes — staff-only history (privacy, 0067), SO status labels, Fill from list only fills, Send quote creates the estimate, close toast, accept-on-behalf modal, lane headers, word wrap (2026-10-23)

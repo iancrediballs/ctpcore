@@ -55,6 +55,8 @@ type PartRow = {
   // 0050: the one stock fact a customer gets. null = not synced yet (unknown).
   in_stock?: boolean | null;
   image?: string | null;
+  // 0074: catalogue fields — make (Zoho Manufacturer), model (Brand), OEM / Aftermarket, supplier (staff)
+  make?: string | null; model?: string | null; part_type?: string | null; supplier?: string | null;
 };
 
 type Hit = {
@@ -77,6 +79,7 @@ type LedgerLine = {
 type Detail = {
   id: number; sku: string; name: string; locator: string | null;
   catalogue_pn: string | null; inventory_pn: string | null; brand: string | null;
+  make?: string | null; model?: string | null; part_type?: string | null; supplier?: string | null;   // 0074
   category_name: string | null; drawing_no: string | null; notes: string | null;
   price_cents: number | null; total_on_hand: number; in_stock?: boolean | null;
   stock: StockLine[]; ledger: LedgerLine[];
@@ -401,6 +404,8 @@ export default function MobileShell() {
   const [q, setQ] = useState("");
   const [hits, setHits] = useState<Hit[] | null>(null); // null = not searching
   const [chip, setChip] = useState<string | null>(null);
+  // 0074: Find filters — Make / Model / Type, and Supplier for staff
+  const [catF, setCatF] = useState<{ make: string; model: string; part_type: string; supplier: string }>({ make: "", model: "", part_type: "", supplier: "" });
   const [detail, setDetail] = useState<Detail | null>(null);
   // Which photo the part sheet is showing. Only visible as a carousel when the
   // part has more than one (Ian, 2026-09-25); reset whenever the sheet changes
@@ -1342,13 +1347,14 @@ const parseRand = (s: string): number => {
     }
     let rows = parts;
     if (chip) rows = rows.filter((p) => p.category_code === chip);
+    for (const k of ["make", "model", "part_type", "supplier"] as const) if (catF[k]) rows = rows.filter((p) => (p[k] ?? "") === catF[k]);
     if (tab === "shelf") {
       rows = [...rows].sort((a, b) =>
         a.bin && b.bin ? a.bin.localeCompare(b.bin, undefined, { numeric: true })
         : a.bin ? -1 : b.bin ? 1 : a.sku.localeCompare(b.sku));
     }
     return rows;
-  }, [hits, parts, chip, tab]);
+  }, [hits, parts, chip, tab, catF]);
 
   const connected = status.connected;
 
@@ -1472,6 +1478,23 @@ const parseRand = (s: string): number => {
         )}
       </div>
 
+      {!hits && (() => {
+        // 0074: only fields with more than one value (or one already chosen) get a filter
+        const fields = ([["make", "Make"], ["model", "Model"], ["part_type", "Type"], ...(isClient ? [] : [["supplier", "Supplier"]])] as [keyof typeof catF, string][])
+          .map(([k, label]) => ({ k, label, vals: [...new Set(parts.map((p) => p[k]).filter((v): v is string => !!v))].sort() }))
+          .filter((f) => f.vals.length > 1 || catF[f.k]);
+        return fields.length > 0 && (
+          <div className="mb-chips" aria-label="Filter parts">
+            {fields.map((f) => (
+              <select key={f.k} className="mb-chip" aria-label={f.label} value={catF[f.k]}
+                onChange={(e) => setCatF((c) => ({ ...c, [f.k]: e.target.value }))}>
+                <option value="">{f.label}: all</option>
+                {f.vals.map((v) => <option key={v} value={v}>{v}</option>)}
+              </select>
+            ))}
+          </div>
+        );
+      })()}
       {!hits && (
         <div className="mb-chips">
           <button className={"mb-chip" + (chip == null ? " on" : "")} onClick={() => setChip(null)}>All</button>
@@ -2721,6 +2744,11 @@ const parseRand = (s: string): number => {
             <div className="mb-psku mb-mono">
               {d.sku}{d.locator ? `  ·  ${d.locator}` : ""}
             </div>
+            {(d.make || d.model || d.part_type || (!isClient && d.supplier)) && (
+              <div className="mb-csku" style={{ marginTop: -10, marginBottom: 14 }}>
+                {[d.make, d.model, d.part_type].filter(Boolean).join(" · ")}{!isClient && d.supplier ? `  ·  supplier ${d.supplier}` : ""}
+              </div>
+            )}
 
             {isClient ? (
               <>
