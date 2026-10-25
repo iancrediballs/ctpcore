@@ -677,12 +677,11 @@ export default function MobileShell() {
   const refresh = useCallback(() => {
     api.listParts<PartRow[]>().then(setParts).catch(console.error);
     api.listSections<Section[]>().then(setSections).catch(console.error);
-  }, []);
-  useEffect(() => {
-    refresh();
+    // CAT-2: categories too. On a fresh sign-in the mount-time read ran before the first
+    // sync landed, so the Find chips stayed at "All" until a reload.
     api.listCategories<Cat[]>().then(setCats).catch(console.error);
-    api.listSections<Section[]>().then(setSections).catch(console.error);
-  }, [refresh]);
+  }, []);
+  useEffect(() => { refresh(); }, [refresh]);
 
   // Re-pull the catalogue when sync completes a cycle, so counts posted by
   // someone else's phone show up without a manual action.
