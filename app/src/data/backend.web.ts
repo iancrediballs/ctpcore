@@ -123,6 +123,9 @@ const nnum = (v: unknown): number | null => (v == null ? null : Number(v));
 /** part.in_stock (0050): NULL until the column has synced (schema older than
  *  0050) — "unknown" must never read as "out". */
 const nbool = (v: unknown): boolean | null => (v == null || v === "" ? null : Number(v) !== 0);
+/** A list price. 0 (or below) is not a price: Zoho hands back rate 0 for an item that was
+ *  never priced (CAT-1, 34 parts), and showing "R 0.00" makes a rep read it as free. */
+const listMinor = (v: unknown): number | null => { const n = nnum(v); return n != null && Number.isFinite(n) && n > 0 ? n : null; };
 
 // ─── the part_detail view, re-expressed ──────────────────────────────────────
 // Mirrors migrations/0013_pricing_reset.sql's CREATE VIEW part_detail — the
@@ -330,7 +333,7 @@ async function searchParts(query: string): Promise<unknown[]> {
       brand: nstr(r["brand"]),
       on_hand: Number(r["on_hand"]),
       in_stock: nbool(r["in_stock"]),
-      price_cents: nnum(r["price_cents"]),
+      price_cents: listMinor(r["price_cents"]),
       matched_on: matched_on ?? `part ${sku}`,
       bin: nstr(r["bin"]),
       thumb: nstr(r["thumb"]),
@@ -396,6 +399,7 @@ async function partDetail(partId: number): Promise<unknown> {
     );
     priceCents = nnum(fallback?.["amount_minor"]);
   }
+  priceCents = listMinor(priceCents);
 
   // 0065: Zoho Inventory's figures for this part (null until the first stock sync / on customer phones)
   const zs = await one<Row>(`SELECT zoho_stock_on_hand, zoho_available_for_sale, zoho_committed, zoho_stock_at FROM part WHERE id = ?`, [pid])
@@ -501,7 +505,7 @@ async function listParts(): Promise<unknown[]> {
     qty_on_hand: Number(r["qty_on_hand"]),
     in_stock: nbool(r["in_stock"]),
     bin: nstr(r["bin"]),
-    price_cents: nnum(r["list_row_minor"]) ?? nnum(r["list_price_minor"]),
+    price_cents: listMinor(r["list_row_minor"]) ?? listMinor(r["list_price_minor"]),
     // The mobile cards want the actual thumbnail path, not just the boolean.
     // Desktop list_parts has no such field; extra fields are invisible to it.
     image: nstr(r["primary_image"]),
@@ -1358,7 +1362,7 @@ async function diagramParts(a: Record<string, unknown>): Promise<unknown> {
     catalogue_pn: nstr(r["catalogue_pn"]), image: nstr(r["image"]),
     on_hand: hasStock ? Number(r["on_hand"] ?? 0) : null,
     in_stock: nbool(r["in_stock"]),
-    list_minor: hasPrice ? nnum(r["list_minor"]) : null,
+    list_minor: hasPrice ? listMinor(r["list_minor"]) : null,
   }));
 }
 

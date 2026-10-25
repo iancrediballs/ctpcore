@@ -716,6 +716,7 @@ textarea.st-in{resize:vertical;line-height:1.45;font-size:15px}
 .dv-stock.in{color:var(--green);font-weight:800} .dv-stock.out{color:var(--red);font-weight:800}
 .dv-side{flex:0 0 auto;display:flex;flex-direction:column;align-items:flex-end;gap:6px}
 .dv-price{font-weight:900;font-family:var(--mono,ui-monospace,monospace);font-size:14px}
+.dv-price.dim{font:600 11.5px/1.2 -apple-system,"Segoe UI",Roboto,sans-serif;color:var(--dim)}
 .dv-add{display:flex;align-items:center;gap:6px}
 .dv-qty{width:44px;height:34px;text-align:center;background:var(--bg);border:1px solid var(--line);border-radius:8px;color:var(--txt);font-weight:800}
 .dv-add .mb-chip{height:34px;padding:0 12px;font-size:12.5px}

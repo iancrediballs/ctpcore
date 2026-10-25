@@ -398,9 +398,12 @@ function RebateSum({ r }: { r: { saving: number; over: number } | null }) {
 
 /** 0072: one line's price, book-aware. Customers: ~~list~~ their price. Staff also see cost,
  *  margin (R and %) and the 0041 floor, coloured against it. */
-function PriceInfo({ lp, priceMinor, qty, staff }: { lp?: LinePrice; priceMinor: number; qty: number; staff: boolean }) {
+function PriceInfo({ lp, priceMinor, qty, staff, known }: { lp?: LinePrice; priceMinor: number; qty: number; staff: boolean;
+  /** The server's order_prices has answered, so a missing list price is a fact, not "still loading". */
+  known?: boolean }) {
   if (!lp) return null;
-  const list = lp.list_minor ?? null, book = lp.book_minor ?? null;
+  // CAT-1: a list of 0 is "never priced in Zoho", not "free". Treated as no list price.
+  const list = lp.list_minor != null && lp.list_minor > 0 ? lp.list_minor : null, book = lp.book_minor ?? null;
   const pct = list && book != null && book < list ? Math.round((1 - book / list) * 1000) / 10 : null;
   const cost = staff ? lp.cost_minor ?? null : null, floor = staff ? lp.floor_minor ?? null : null;
   const m = cost != null && priceMinor > 0 ? priceMinor - cost : null;
@@ -410,7 +413,8 @@ function PriceInfo({ lp, priceMinor, qty, staff }: { lp?: LinePrice; priceMinor:
     <div className="mb-pinfo">
       {list != null && book != null && book < list
         ? <span><s>{fmtR(list)}</s> <b>{fmtR(book)}</b> each · −{pct}% rebate</span>
-        : staff && list != null ? <span>List {fmtR(list)} each</span> : null}
+        : staff && list != null ? <span>List {fmtR(list)} each</span>
+        : staff && (known || lp.list_minor === 0) ? <span className="mb-dim">No list price</span> : null}
       {staff && book != null && priceMinor > 0 && (priceMinor > book
         ? <span className="mb-pm warn">{fmtR((priceMinor - book) * qty)} above the rebate price</span>
         : list != null && priceMinor < list ? <span className="mb-pm ok">saves {fmtR((list - priceMinor) * qty)} vs list</span> : null)}
@@ -615,7 +619,11 @@ export default function MobileShell() {
     const rows = bookLocal.length ? bookLocal : bookRemote?.rows ?? [];
     const customers = bookCustLocal.length ? bookCustLocal : bookRemote?.customers ?? [];
     const byPart = new Map<number, BookPrice[]>();
-    for (const r of rows) { const k = Number(r.part_id); byPart.set(k, [...(byPart.get(k) ?? []), r]); }
+    for (const r0 of rows) {
+      // CAT-1: list 0 = never priced; no strikethrough, no "-100%" against it
+      const r = r0.list_minor != null && r0.list_minor <= 0 ? { ...r0, list_minor: null } : r0;
+      const k = Number(r.part_id); byPart.set(k, [...(byPart.get(k) ?? []), r]);
+    }
     return { byPart, customers };
   }, [bookLocal, bookCustLocal, bookRemote]);
   // Whose prices staff are looking at: the counter sale's customer, else the open order's.
@@ -2169,7 +2177,7 @@ const parseRand = (s: string): number => {
                             <span style={{ flex: 1, minWidth: 0 }}>
                               <div className="mb-cname">{l.qty} × {l.name}</div>
                               <div className="mb-csku mb-mono">{l.sku}</div>
-                              <PriceInfo lp={lpFor(o, l)} qty={l.qty} staff
+                              <PriceInfo lp={lpFor(o, l)} qty={l.qty} staff known={!!prices[o.id]}
                                 priceMinor={draftPrices[l.id] != null && draftPrices[l.id] !== "" ? Math.round(Number(draftPrices[l.id]) * 100) || 0 : defaultMinor(o, l)} />
                             </span>
                             {stageOf(o) === "to_price" ? (
@@ -2511,7 +2519,7 @@ const parseRand = (s: string): number => {
                             <span style={{ flex: 1, minWidth: 0 }}>
                               <div className="mb-cname">{l.qty} × {l.name}</div>
                               <div className="mb-csku mb-mono">{l.sku}</div>
-                              <PriceInfo lp={lpFor(o, l)} qty={l.qty} staff priceMinor={l.unit_price_minor} />
+                              <PriceInfo lp={lpFor(o, l)} qty={l.qty} staff known={!!prices[o.id]} priceMinor={l.unit_price_minor} />
                             </span>
                             <span className="mb-rv">{fmtR(l.unit_price_minor * l.qty)}</span>
                           </div>
@@ -2941,7 +2949,7 @@ const parseRand = (s: string): number => {
                 <div className="mb-box">
                   <div className="mb-k">On hand</div>
                   <div className={"mb-v" + (d.total_on_hand <= 0 ? " z" : " g")}>{d.total_on_hand}</div>
-                  <div className="mb-sub">{fmtR(d.price_cents)} list</div>
+                  <div className="mb-sub">{d.price_cents != null && d.price_cents > 0 ? `${fmtR(d.price_cents)} list` : "no list price"}</div>
                 </div>
               </div>
             )}
@@ -3136,7 +3144,7 @@ const parseRand = (s: string): number => {
         : listView}
       {sheet}
       {diagram && !hotspotEditor && (
-        <DiagramView drawings={drawings} start={diagram.idx} deepPart={diagram.part} canEdit={!isClient}
+        <DiagramView drawings={drawings} start={diagram.idx} deepPart={diagram.part} canEdit={!isClient} staff={!isClient}
           onClose={() => { setDiagram(null); if (/^#dg=/.test(location.hash)) history.replaceState(null, "", location.pathname + location.search); }}
           onOpenPart={(pid) => { void openPart(pid); }}
           onEditMarkers={(path, label) => setHotspotEditor({ path, label })}

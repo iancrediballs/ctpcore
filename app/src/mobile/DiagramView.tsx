@@ -40,10 +40,13 @@ type Row = {
   sku: string | null; name: string; badges: string[]; link: WebHotspot["link"];
 };
 
-export function DiagramView({ drawings, start, onClose, canEdit, onOpenPart, onEditMarkers, onAddToRequest, inRequest, deepPart, headerExtra }: {
+export function DiagramView({ drawings, start, onClose, canEdit, staff, onOpenPart, onEditMarkers, onAddToRequest, inRequest, deepPart, headerExtra }: {
   drawings: Drawing[]; start: number;
   onClose: () => void;
   canEdit?: boolean;
+  /** Staff wording and prices: "Add to order" (the counter), and "no list price" for an
+   *  unpriced part. A customer device has no list prices to show at all. */
+  staff?: boolean;
   onOpenPart?: (partId: number) => void;
   onEditMarkers?: (path: string, label: string) => void;
   /** Customers: add to the request list (the confirm step is the qty box + button). */
@@ -228,7 +231,9 @@ export function DiagramView({ drawings, start, onClose, canEdit, onOpenPart, onE
               </div>
             </div>
             <div className="dv-side" onClick={(e) => e.stopPropagation()}>
-              {p && p.list_minor != null && <div className="dv-price">{fmtR(p.list_minor)}</div>}
+              {p && (p.list_minor != null && p.list_minor > 0
+                ? <div className="dv-price">{fmtR(p.list_minor)}</div>
+                : staff && <div className="dv-price dim">no list price</div>)}
               {/* Open is offered to EVERYONE now, customers included — it is the
                   only way to the part's details, and the detail sheet is where
                   the photo carousel lives. It used to appear for staff only. */}
@@ -237,7 +242,7 @@ export function DiagramView({ drawings, start, onClose, canEdit, onOpenPart, onE
                 <div className="dv-add">
                   <input className="dv-qty" inputMode="numeric" value={q}
                     onChange={(e) => setQty((s) => ({ ...s, [p.id]: Math.max(1, Math.min(999, parseInt(e.target.value, 10) || 1)) }))} />
-                  <button className="mb-chip on" onClick={() => onAddToRequest(p, q)}>{already ? `+ (${already} in list)` : "Add to request"}</button>
+                  <button className="mb-chip on" onClick={() => onAddToRequest(p, q)}>{already ? `+ (${already} ${staff ? "on counter" : "in list"})` : staff ? "Add to order" : "Add to request"}</button>
                 </div>
               )}
             </div>
