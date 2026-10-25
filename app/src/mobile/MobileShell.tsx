@@ -383,12 +383,14 @@ function RebateSum({ r }: { r: { saving: number; over: number } | null }) {
 // ─── the shell ───────────────────────────────────────────────────────────────
 
 /** 0072: one line's price, book-aware. Customers: ~~list~~ their price. Staff also see cost,
- *  margin (R and %) and the 0041 floor, coloured against it. */
-function PriceInfo({ lp, priceMinor, qty, staff }: { lp?: LinePrice; priceMinor: number; qty: number; staff: boolean }) {
+ *  margin (R and %) and the 0041 floor, coloured against it.
+ *  QA 26 Oct: cost / margin / floor only with `seesCost` (sales, manager, admin; 0086's
+ *  can_see_cost). order_prices still returns them to warehouse, so the line is gated here too. */
+function PriceInfo({ lp, priceMinor, qty, staff, seesCost }: { lp?: LinePrice; priceMinor: number; qty: number; staff: boolean; seesCost: boolean }) {
   if (!lp) return null;
   const list = lp.list_minor ?? null, book = lp.book_minor ?? null;
   const pct = list && book != null && book < list ? Math.round((1 - book / list) * 1000) / 10 : null;
-  const cost = staff ? lp.cost_minor ?? null : null, floor = staff ? lp.floor_minor ?? null : null;
+  const cost = staff && seesCost ? lp.cost_minor ?? null : null, floor = staff && seesCost ? lp.floor_minor ?? null : null;
   const m = cost != null && priceMinor > 0 ? priceMinor - cost : null;
   const mPct = m != null ? Math.round((m / priceMinor) * 1000) / 10 : null;
   const cls = floor == null || priceMinor <= 0 ? "" : priceMinor < floor ? " bad" : priceMinor < floor * 1.05 ? " warn" : " ok";
@@ -578,6 +580,9 @@ export default function MobileShell() {
   // legitimately be missing.
   const role = tokenRole(session?.access_token) ?? dbRole;
   const isClient = role == null || role === "customer";
+  // QA 26 Oct: who may see cost, margin and the floor. Same list as 0086's can_see_cost(), and an
+  // allow-list so an unknown role sees none. Warehouse is staff but not this.
+  const seesCost = role === "sales" || role === "manager" || role === "admin";
 
   // ── 0076: price books (Zoho's rebate rates) on the device ──
   // Staff hold every book (ctp_staff); a customer holds only their own (ctp_client_book). Until
@@ -1017,7 +1022,10 @@ const parseRand = (s: string): number => {
       // rules, it simply had no opinion about the number it was handed.
       const warns = (res?.warnings ?? []).filter((w) => w.severity === "warn");
       if (warns.length > 0) {
-        showToast({ text: warns.map((w) => w.message).join(" "), err: true });
+        // QA 26 Oct: near_cost / far_above_cost messages name the supplier cost. Without
+        // seesCost, say which line to check, not why. above_list names only the list price.
+        showToast({ text: warns.map((w) => seesCost || w.code === "above_list" ? w.message
+          : `${w.sku}: check this price with sales before it goes out.`).join(" "), err: true });
       } else {
         showToast({ text: left > 0
           ? `Saved — ${left} line${left === 1 ? "" : "s"} still without a price, so ${o.number} can't be accepted yet.`
@@ -1041,12 +1049,16 @@ const parseRand = (s: string): number => {
       // A margin-floor refusal is not a failure to be dismissed — it is a
       // decision to be made, so it gets a strip with two named choices rather
       // than a toast that vanishes.
-      if (/below the minimum margin/i.test(msg)) setFloorBlock({ order: o, message: msg });
+      // QA 26 Oct: the refusal names each line's floor and supplier cost. Without seesCost it is
+      // reworded with neither, and the strip offers no override (see floorBlock below).
+      if (/below the minimum margin/i.test(msg)) setFloorBlock({ order: o, message: seesCost ? msg
+        : `${/^(\d+) line/.exec(msg)?.[1] ?? "Some"} line(s) are below the minimum price for this customer. `
+          + "Raise the price, or ask sales or a manager to price this quote." });
       else showToast({ text: msg, err: true });
     } finally {
       setSavingOrder(false);
     }
-  }, [draftPrices, showToast, loadOrders, defaultMinor]);
+  }, [draftPrices, showToast, loadOrders, defaultMinor, seesCost]);
 
   /** Stock out. One server transaction (0042): refuses if any line is short,
    *  names the shortfall, writes nothing in that case. Idempotent on retry. */
@@ -2155,7 +2167,7 @@ const parseRand = (s: string): number => {
                             <span style={{ flex: 1, minWidth: 0 }}>
                               <div className="mb-cname">{l.qty} × {l.name}</div>
                               <div className="mb-csku mb-mono">{l.sku}</div>
-                              <PriceInfo lp={lpFor(o, l)} qty={l.qty} staff
+                              <PriceInfo lp={lpFor(o, l)} qty={l.qty} staff seesCost={seesCost}
                                 priceMinor={draftPrices[l.id] != null && draftPrices[l.id] !== "" ? Math.round(Number(draftPrices[l.id]) * 100) || 0 : defaultMinor(o, l)} />
                             </span>
                             {stageOf(o) === "to_price" ? (
@@ -2497,7 +2509,7 @@ const parseRand = (s: string): number => {
                             <span style={{ flex: 1, minWidth: 0 }}>
                               <div className="mb-cname">{l.qty} × {l.name}</div>
                               <div className="mb-csku mb-mono">{l.sku}</div>
-                              <PriceInfo lp={lpFor(o, l)} qty={l.qty} staff priceMinor={l.unit_price_minor} />
+                              <PriceInfo lp={lpFor(o, l)} qty={l.qty} staff seesCost={seesCost} priceMinor={l.unit_price_minor} />
                             </span>
                             <span className="mb-rv">{fmtR(l.unit_price_minor * l.qty)}</span>
                           </div>
@@ -3163,7 +3175,8 @@ const parseRand = (s: string): number => {
               onClick={() => setFloorBlock(null)}>
               Change the price
             </button>
-            <button className="mb-chip" style={{ flex: 1 }}
+            {/* QA 26 Oct: going under a floor you cannot see is not a decision — no override without seesCost. */}
+            {seesCost && <button className="mb-chip" style={{ flex: 1 }}
               onClick={() => {
                 const o = floorBlock.order;
                 setFloorBlock(null);
@@ -3174,7 +3187,7 @@ const parseRand = (s: string): number => {
                 void savePrices(o, true);
               }}>
               Price it below the floor anyway
-            </button>
+            </button>}
           </div>
         </div>
       )}
