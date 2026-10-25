@@ -17,11 +17,13 @@ const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window
 // inside Tauri the SVG ships in the bundle; on the web the PNG now ships in
 // the bundle too (public/brand/) — v2, rebuilt from the refined master, and
 // no longer fetched from the bucket so it draws before any network exists.
+// v3: an 800 px WebP (~41 KB) of the v2 master (~120 KB). It is drawn at 5%
+// opacity, so the extra resolution of the 1600 px master was never visible.
 document.documentElement.style.setProperty(
   "--ctp-watermark",
   isTauri
     ? "url('/assets/brand/ctp_logo_light.svg')"
-    : "url('/brand/ctp_logo_light_v2.png')"
+    : "url('/brand/ctp_logo_light_v3.webp')"
 );
 
 // Which root renders:

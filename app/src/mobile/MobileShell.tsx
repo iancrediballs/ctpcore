@@ -171,8 +171,11 @@ const timeAgo = (iso: string): string => {
 // the truck alone — so the truck can drive off and back without the rest of
 // the logo moving. Same dimensions, stacked, so there is no alignment maths:
 // see .mb-brand in mobile.css.
-const LOGO_BODY = "/brand/ctp_logo_body_v2.png";
-const LOGO_TRUCK = "/brand/ctp_truck_v2.png";
+// v3 (2026-10-26): 300x90 WebP cut from the same 1600x480 v2 masters, which
+// stay in public/brand/. The box is 100x30 CSS px, so 300x90 covers DPR 3;
+// the masters were ~125 KB for two 100 px images on every first load.
+const LOGO_BODY = "/brand/ctp_logo_body_v3.webp";
+const LOGO_TRUCK = "/brand/ctp_truck_v3.webp";
 
 /** The logo, with a truck that occasionally goes for a drive. */
 function Brand() {
