@@ -2,9 +2,11 @@
 // zero build-time dependencies.
 //
 //   1. Catalogue images (the Supabase Storage bucket) — cache-first, forever.
-//      The bucket is served with `immutable, max-age=1y`; a changed image is
-//      re-uploaded under the SAME key though, so "forever" is really "until
-//      the cache is dropped". CACHE version bumps drop it.
+//      The bucket is served with `immutable, max-age=1y` and a changed image
+//      goes up under a NEW key (e.g. sections/<CODE>_v3.webp), so a cached
+//      image is never stale. They live in their OWN cache, IMG_CACHE, which a
+//      shell release (CACHE bump) does not drop. Bump IMG_CACHE only if an
+//      image key is ever reused.
 //   2. The app shell (same-origin navigations + hashed build assets) —
 //      network-first with cache fallback, so the app opens in a dead zone in
 //      the warehouse but still picks up new deploys when there is signal.
@@ -56,6 +58,10 @@ const CACHE = "ctp-core-v42";   // v42: Fulfil needs a SENT Zoho invoice for acc
 // v22: fulfil waits for accounts (Zoho SO sent), Michelle's SO edits read back, account terms (0059) (2026-10-22)
 // v21: admin "Accept on customer's behalf" on the order desk (0058) (2026-10-22)
 // v20: add customer (Zoho companies & people), print copy carries Zoho invoice no. (2026-10-21)
+// Images get their own cache so a deploy (CACHE bump) does not empty the
+// offline image store. Until 2026-10-26 they shared CACHE, so every release
+// threw away every cached photo, drawing and section tile (perf PERF-8).
+const IMG_CACHE = "ctp-img-v1";
 const ASSET_HOST = "hkzmydowyiajkbakxfkj.supabase.co";
 
 // ── TIMEOUTS, and the mistake the first version of this file made with them.
@@ -90,7 +96,7 @@ self.addEventListener("install", (e) => {
 self.addEventListener("activate", (e) => {
   e.waitUntil(
     caches.keys().then((keys) =>
-      Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k)))
+      Promise.all(keys.filter((k) => k !== CACHE && k !== IMG_CACHE).map((k) => caches.delete(k)))
     ).then(() => self.clients.claim())
   );
 });
@@ -129,7 +135,7 @@ self.addEventListener("fetch", (e) => {
   // Rule 1: catalogue images — cache-first, and it must NEVER hang or throw.
   if (url.hostname === ASSET_HOST) {
     e.respondWith((async () => {
-      const cache = await caches.open(CACHE);
+      const cache = await caches.open(IMG_CACHE);
 
       const hit = await cache.match(e.request);
       if (hit) return hit;

@@ -21,9 +21,15 @@ OUT = "sections"
 # so the truck fills its frame instead of floating in letterbox bars. The home
 # page shows these two-up in near-square tiles; anything wider wasted the width.
 W, H = 1080, 880
-SUFFIX = "_v2"                   # bucket keys are immutable + SW-cached: a
+SUFFIX = "_v3"                   # bucket keys are immutable + SW-cached: a
                                  # changed image needs a NEW key, never a
                                  # silent overwrite. Bump this on every redraw.
+                                 # v3 (2026-10-26): same drawing, but the app now
+                                 # loads the 540 px WebP below (the tiles are
+                                 # ~172 CSS px wide; the 1080 px PNG was ~230 KB
+                                 # each, 3.6 MB for Home). The PNG stays as the
+                                 # master; upload the .webp.
+WEB_W, WEB_Q = 540, 75
 
 DIM = (86, 100, 116)             # unlit line colour
 HOT = (255, 138, 31)             # CTP amber — the lit region
@@ -106,7 +112,10 @@ def build(code, box):
     os.makedirs(OUT, exist_ok=True)
     path = f"{OUT}/{code}{SUFFIX}.png"
     canvas.save(path, "PNG", optimize=True)
-    return path, os.path.getsize(path)
+    web = f"{OUT}/{code}{SUFFIX}.webp"
+    canvas.resize((WEB_W, round(H * WEB_W / W)), Image.LANCZOS).save(
+        web, "WEBP", quality=WEB_Q, method=6)
+    return web, os.path.getsize(web)
 
 
 if __name__ == "__main__":

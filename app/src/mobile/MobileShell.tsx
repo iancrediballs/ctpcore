@@ -21,7 +21,8 @@ import { refreshZohoStatus, zohoStatusLabel, syncSalesOrder, syncEstimate, recre
          acceptPrecheck, uploadPo, poFileUrl, orderPrices, myPrices, type OrderPrices, type LinePrice,
          remoteBookPrices, bookLabel, type BookPrice, type BookCustomer } from "../data/zoho";
 import AddCustomer from "../admin/AddCustomer";
-import { assetUrl, photoWebUrl } from "../assets";
+import { assetUrl } from "../assets";
+import { PhotoImg } from "./PhotoImg";
 import { DiagramCanvas, Marker, loadMarkerScale, saveMarkerScale, markerRadius, MARKER_SCALE_MIN, MARKER_SCALE_MAX, type CanvasApi, type Frame, type Pt } from "./DiagramCanvas";
 import { DiagramView, readDiagramHash, type Drawing } from "./DiagramView";
 import { markerState, markerTitle } from "./hotspotState";
@@ -171,13 +172,16 @@ const timeAgo = (iso: string): string => {
 // the truck alone — so the truck can drive off and back without the rest of
 // the logo moving. Same dimensions, stacked, so there is no alignment maths:
 // see .mb-brand in mobile.css.
-const LOGO_BODY = "/brand/ctp_logo_body_v2.png";
-const LOGO_TRUCK = "/brand/ctp_truck_v2.png";
+// v3 (2026-10-26): 300x90 WebP cut from the same 1600x480 v2 masters, which
+// stay in public/brand/. The box is 100x30 CSS px, so 300x90 covers DPR 3;
+// the masters were ~125 KB for two 100 px images on every first load.
+const LOGO_BODY = "/brand/ctp_logo_body_v3.webp";
+const LOGO_TRUCK = "/brand/ctp_truck_v3.webp";
 
 /** The logo, with a truck that occasionally goes for a drive. */
 function Brand() {
   return (
-    <span className="mb-brand" aria-label="China Truck Parts">
+    <span className="mb-brand" role="img" aria-label="China Truck Parts">
       <img className="mb-brand-body" src={LOGO_BODY} alt=""
         onError={(e) => { e.currentTarget.style.display = "none"; }} />
       <img className="mb-brand-truck" src={LOGO_TRUCK} alt="" aria-hidden="true"
@@ -281,25 +285,7 @@ async function shrinkImage(file: File, maxSide = 1600): Promise<Blob> {
   }
 }
 
-// ─── a part photo: web variant first, master if that 404s ────────────────────
-//
-// Thumbs, the hero and the admin gallery all show the cropped web variant
-// (see photoWebUrl). The lightbox deliberately does NOT — it is the "see the
-// original" surface, and pinch-zoom on the master gives the same pixels the
-// crop would. The fallback is keyed on the path so a re-render with a new
-// photo starts again from the variant rather than inheriting a stale "failed".
-function PhotoImg({ path, alt, className, onClick }: {
-  path: string; alt: string; className?: string; onClick?: () => void;
-}) {
-  const web = photoWebUrl(path);
-  const [failed, setFailed] = useState<string | null>(null);
-  const useWeb = !!web && failed !== path;
-  return (
-    <img className={className} src={useWeb ? web : assetUrl(path)} alt={alt} loading="lazy"
-      onClick={onClick}
-      onError={useWeb ? () => setFailed(path) : undefined} />
-  );
-}
+// PhotoImg (web variant first, master if that 404s) lives in ./PhotoImg.
 
 // ─── icons (inline so the shell has zero icon deps) ──────────────────────────
 

@@ -23,6 +23,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import * as api from "../data/api";
 import type { DiagramPart, WebHotspot } from "../data/api";
 import { assetUrl } from "../assets";
+import { PhotoImg } from "./PhotoImg";
 import { DiagramCanvas, Marker, loadMarkerScale, markerRadius, calloutRect, FOCUS_SCALE, type CanvasApi, type Frame, type Rect } from "./DiagramCanvas";
 import { markerState, markerTitle } from "./hotspotState";
 
@@ -211,7 +212,7 @@ export function DiagramView({ drawings, start, onClose, canEdit, onOpenPart, onE
             onClick={() => goTo(row)} role="button" tabIndex={0}
             onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); goTo(row); } }}>
             <div className="dv-badges">{row.badges.map((b) => <span key={b} className="dv-badge">{b}</span>)}</div>
-            {p?.image ? <img className="dv-thumb" src={assetUrl(p.image)} alt="" loading="lazy" /> : <span className="dv-thumb ph" />}
+            {p?.image ? <PhotoImg className="dv-thumb" path={p.image} alt="" /> : <span className="dv-thumb ph" />}
             <div className="dv-main">
               {/* Plain text, not a link: the name points at the callout with the
                   rest of the row. "Open" in dv-side is the way to the sheet. */}
