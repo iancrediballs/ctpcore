@@ -464,7 +464,7 @@ export default function MobileShell() {
   // 0056: the customer list includes every synced Zoho customer, so it is searchable
   const [counterFind, setCounterFind] = useState("");
   const [addingCustomer, setAddingCustomer] = useState(false);   // Phase 1: Zoho-first add customer
-  const [audit, setAudit] = useState<{ table: string; rows: number }[] | null>(null);
+  const [audit, setAudit] = useState<{ table: string; rows: number; foreign?: number }[] | null>(null);
   const [mine, setMine] = useState<MyRequest[] | null>(null);
   // 0072: their own quotes, book-aware (list struck through + their price); never cost
   const [minePrices, setMinePrices] = useState<Record<number, OrderPrices>>({});
@@ -1779,7 +1779,7 @@ const parseRand = (s: string): number => {
         <div className="mb-count">Data on this device</div>
         {audit === null ? (
           <button className="mb-btn s" style={{ width: "100%" }}
-            onClick={() => { api.deviceAudit<{ table: string; rows: number }[]>()
+            onClick={() => { api.deviceAudit<{ table: string; rows: number; foreign?: number }[]>()
               .then(setAudit).catch((e) => { console.error(e); setAudit([]); }); }}>
             Check what synced
           </button>
@@ -1790,16 +1790,20 @@ const parseRand = (s: string): number => {
               // so it is coloured like one rather than left to be noticed.
               const shouldBeEmpty = isClient && [
                 "part_cost", "price", "price_tier", "stock_policy", "stock_movement",
-                "location", "customer", "sales_order", "sales_line", "part_alias",
+                "location", "customer", "part_alias",
               ].includes(a.table);
-              const bad = shouldBeEmpty && a.rows > 0;
+              // QA 26 Oct: their own orders and lines are expected (ctp_client_orders); only
+              // someone else's is a leak — see `foreign` in deviceAudit.
+              const ownOnly = isClient && a.foreign != null;
+              const bad = shouldBeEmpty ? a.rows > 0 : ownOnly && a.foreign! > 0;
               return (
                 <div className="mb-row" key={a.table}>
                   <span className="mb-rk mb-mono" style={{ flex: 1 }}>{a.table}</span>
                   <span className="mb-rv" style={{
                     color: bad ? "var(--red)" : a.rows > 0 ? "var(--green)" : "var(--dimmer)",
                   }}>
-                    {a.rows < 0 ? "not synced" : a.rows}{bad ? "  ⚠ should be 0" : ""}
+                    {a.rows < 0 ? "not synced" : a.rows}
+                    {bad ? (ownOnly ? "  ⚠ includes someone else's" :"  ⚠ should be 0") : ownOnly && a.rows > 0 ? " · your own only" : ""}
                   </span>
                 </div>
               );

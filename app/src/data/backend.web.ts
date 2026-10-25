@@ -1162,11 +1162,20 @@ const AUDIT_TABLES = [
 
 async function deviceAudit(): Promise<unknown[]> {
   await ready();
-  const out: { table: string; rows: number }[] = [];
+  const out: { table: string; rows: number; foreign?: number }[] = [];
+  // QA 26 Oct: a customer legitimately holds their OWN orders (ctp_client_orders), so a count
+  // alone can't tell own from leaked. `foreign` is what isn't theirs: orders beyond a single
+  // customer_id, and lines whose order isn't on the device. 0 = only their own.
+  const FOREIGN: Partial<Record<string, string>> = {
+    sales_order: "SELECT max(0, count(DISTINCT customer_id) - 1) + sum(customer_id IS NULL) AS n FROM sales_order",
+    sales_line: "SELECT count(*) AS n FROM sales_line WHERE CAST(order_id AS INTEGER) NOT IN (SELECT CAST(id AS INTEGER) FROM sales_order)",
+  };
   for (const t of AUDIT_TABLES) {
     try {
       const r = await powerSync.getOptional<{ n: number }>(`SELECT count(*) AS n FROM ${t}`);
-      out.push({ table: t, rows: Number(r?.n ?? 0) });
+      const q = FOREIGN[t];
+      const f = q ? await powerSync.getOptional<{ n: number }>(q) : null;
+      out.push({ table: t, rows: Number(r?.n ?? 0), ...(q ? { foreign: Number(f?.n ?? 0) } : {}) });
     } catch {
       // table absent from the local schema entirely — also an answer, and a
       // safer one than a missing row.
