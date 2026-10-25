@@ -131,6 +131,7 @@ const sales_order = new Table({
 const sales_line = new Table({
   order_id: column.text, part_id: column.text, qty: column.integer,
   unit_price_minor: column.integer, tier_at_add: column.text,
+  line_net_minor: column.integer,   // FLOW-3: after Zoho's line discount (0059); staff stream only
   // Denormalised from the order by a database trigger (0021). Sync rules
   // cannot join, so without this a client's own lines are unreachable —
   // sales_line knows its order, and the customer is one hop past that.

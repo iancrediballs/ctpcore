@@ -58,6 +58,27 @@ export async function syncSalesOrder(orderId: number, force = false): Promise<{ 
   }
 }
 
+/** QA 26 Oct (FLOW-1): after cancel_order(), the order's Zoho documents follow — the open sales
+ *  order is voided (no email; Zoho's stock commitment goes), an invoiced one is left and named,
+ *  a draft/sent estimate is declined. Never throws: `message` is what staff must be told. */
+export async function cancelInZoho(orderId: number): Promise<{ ok: boolean; voided?: string; message?: string }> {
+  try {
+    const { data, error } = await supabase.functions.invoke("zoho-push", { body: { action: "cancel", order_id: orderId } });
+    let d = data as { ok?: boolean; error?: string; salesorder?: { number?: string; voided?: boolean; message?: string; error?: string }; estimate?: { error?: string } } | null;
+    if (error) {
+      // a non-2xx answer still carries the server's own words
+      try { d = await (error as { context?: Response }).context?.json(); } catch { /* keep the generic message */ }
+      return { ok: false, message: d?.error ?? error.message };
+    }
+    const so = d?.salesorder;
+    if (so?.voided) return { ok: true, voided: so.number };
+    const msg = so?.error ?? so?.message ?? d?.estimate?.error ?? d?.error;
+    return { ok: !so?.error && !d?.estimate?.error && d?.ok !== false, message: msg };
+  } catch (e) {
+    return { ok: false, message: e instanceof Error ? e.message : String(e) };
+  }
+}
+
 /** 0062 (Phase 2): the quote's draft Zoho estimate, created or brought up to
  *  date after staff price it. The server skips it while quotes are not yet Zoho
  *  estimates (zoho_config.estimates_enabled off). Never throws. */

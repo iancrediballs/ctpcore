@@ -755,7 +755,7 @@ async function postMovement(a: Record<string, unknown>): Promise<unknown> {
 // boundary by adding one.
 async function myRequests(): Promise<unknown[]> {
   const orders = await all(
-    `SELECT id, number, status, currency, notes, created_at,
+    `SELECT id, number, status, currency, notes, created_at, customer_id,
             client_response, client_responded_at, zoho_salesorder_number
        FROM sales_order
       WHERE deleted_at IS NULL
@@ -790,6 +790,7 @@ async function myRequests(): Promise<unknown[]> {
       currency: str(o["currency"]),
       notes: nstr(o["notes"]),
       created_at: str(o["created_at"]),
+      customer_id: o["customer_id"] == null ? null : Number(o["customer_id"]),
       client_response: nstr(o["client_response"]),
       client_responded_at: nstr(o["client_responded_at"]),
       zoho_salesorder_number: nstr(o["zoho_salesorder_number"]),
@@ -841,7 +842,7 @@ async function staffOrders(): Promise<unknown[]> {
   if (orders.length > 0) {
     const ids = orders.map((o) => String(o["id"]));
     const allLines = await all(
-      `SELECT sl.id, sl.order_id, sl.qty, sl.unit_price_minor, sl.part_id,
+      `SELECT sl.id, sl.order_id, sl.qty, sl.unit_price_minor, sl.part_id, sl.line_net_minor,
               p.sku, p.name, p.catalogue_pn
          FROM sales_line sl LEFT JOIN part p ON p.id = sl.part_id
         WHERE sl.order_id IN (SELECT value FROM json_each(?)) AND sl.deleted_at IS NULL
@@ -865,6 +866,8 @@ async function staffOrders(): Promise<unknown[]> {
       sku: str(l["sku"]),
       name: nstr(l["name"]) ?? "(part unavailable)",
       catalogue_pn: nstr(l["catalogue_pn"]),
+      // FLOW-3: Zoho's line discount, read back (0059) — the amount the invoice charges
+      net_minor: l["line_net_minor"] == null ? null : Number(l["line_net_minor"]),
     }));
     const status = str(o["status"]);
     const unpriced = mapped.filter((l) => l.unit_price_minor <= 0).length;
@@ -929,7 +932,7 @@ async function staffOrders(): Promise<unknown[]> {
       zoho_estimate_total_minor: o["zoho_estimate_total_minor"] == null ? null : Number(o["zoho_estimate_total_minor"]),
       zoho_estimate_expiry: nstr(o["zoho_estimate_expiry"]),
       unpriced,
-      total_minor: mapped.reduce((t, l) => t + l.unit_price_minor * l.qty, 0),
+      total_minor: mapped.reduce((t, l) => t + (l.net_minor ?? l.unit_price_minor * l.qty), 0),
       // The queue this order sits in. Derived here so every surface agrees.
       stage:
         status === "quote" && (unpriced > 0 || mapped.length === 0) ? "to_price"

@@ -16,7 +16,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useStatus } from "@powersync/react";
 import * as api from "../data/api";
-import { refreshZohoStatus, zohoStatusLabel, syncSalesOrder, syncEstimate, recreateEstimate, overrideFulfilGate, fulfilBlockReason, setCustomerOnAccount,
+import { refreshZohoStatus, zohoStatusLabel, syncSalesOrder, cancelInZoho, syncEstimate, recreateEstimate, overrideFulfilGate, fulfilBlockReason, setCustomerOnAccount,
          shipInZoho, countToZoho, openPurchaseOrders, receiveInZoho, type OpenPO,
          acceptPrecheck, uploadPo, poFileUrl, orderPrices, myPrices, type OrderPrices, type LinePrice,
          remoteBookPrices, bookLabel, type BookPrice, type BookCustomer } from "../data/zoho";
@@ -100,6 +100,7 @@ type MyLine = {
 type StaffLine = {
   id: number; part_id: number; qty: number; unit_price_minor: number;
   sku: string; name: string; catalogue_pn: string | null;
+  net_minor?: number | null;   // FLOW-3: the line after Zoho's discount (read back), when it has one
 };
 type StaffOrder = {
   id: number; number: string; status: string;
@@ -137,6 +138,7 @@ type StaffOrder = {
 type MyRequest = {
   id: number; number: string; status: string; currency: string;
   notes: string | null; created_at: string;
+  customer_id?: number | null;   // FLOW-7: their own company, synced with the order
   client_response: string | null; client_responded_at: string | null;
   // 0047: the sales order raised in Zoho Books when they accepted — their proforma
   zoho_salesorder_number?: string | null;
@@ -159,7 +161,27 @@ const timeAgo = (iso: string): string => {
   if (s < 90) return "just now";
   if (s < 3600) return `${Math.round(s / 60)}m ago`;
   if (s < 86400) return `${Math.round(s / 3600)}h ago`;
-  return new Date(t).toLocaleDateString("en-ZA");
+  return new Date(t).toLocaleDateString("en-ZA", { timeZone: JHB });
+};
+
+// FLOW-12: dates as people in Johannesburg read them, not UTC (an order at 00:27 SAST is "today")
+const JHB = "Africa/Johannesburg";
+const jhbDay = (iso: string): string => {
+  const t = Date.parse(iso);
+  return Number.isFinite(t) ? new Date(t).toLocaleDateString("en-CA", { timeZone: JHB }) : iso.slice(0, 10);
+};
+const jhbWhen = (iso: string): string => {
+  const t = Date.parse(iso);
+  return Number.isFinite(t) ? new Date(t).toLocaleString("en-ZA", { timeZone: JHB, day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }) : iso;
+};
+
+/** FLOW-3: a line's amount — after Zoho's discount when accounts put one on (read back), the
+ *  undiscounted amount struck through beside it. */
+const LineAmt = ({ l }: { l: { qty: number; unit_price_minor: number; net_minor?: number | null } }) => {
+  const gross = l.unit_price_minor * l.qty;
+  return l.net_minor != null && l.net_minor !== gross
+    ? <span className="mb-rv"><s className="mb-was">{fmtR(gross)}</s>{fmtR(l.net_minor)}</span>
+    : <span className="mb-rv">{fmtR(gross)}</span>;
 };
 
 // The brand mark ships IN the app bundle (public/brand/), not the asset
@@ -654,7 +676,8 @@ export default function MobileShell() {
   }, [isClient, rebateFor, lpFor]);
   /** What an unpriced line's price box starts at: the customer's rebate price, if they have one. */
   const defaultMinor = useCallback((o: StaffOrder, l: StaffOrder["lines"][number]) =>
-    l.unit_price_minor > 0 ? l.unit_price_minor : (lpFor(o, l).book_minor ?? 0), [lpFor]);
+    // FLOW-15: an unpriced line starts at the customer's book rate, else the list price — every customer alike
+    l.unit_price_minor > 0 ? l.unit_price_minor : (lpFor(o, l).book_minor ?? lpFor(o, l).list_minor ?? 0), [lpFor]);
 
   // ── data loads (all local SQLite via PowerSync — cheap to re-run) ──
   const refresh = useCallback(() => {
@@ -1001,7 +1024,7 @@ const parseRand = (s: string): number => {
     const missing = resolved.filter((r) => r.minor <= 0);
     if (missing.length > 0) {
       showToast({
-        text: `Type a price for every line first — missing: ${missing
+        text: `Type a price for every line first (or tap Fill from list) — missing: ${missing
           .map((m) => m.line.sku).slice(0, 3).join(", ")}${missing.length > 3 ? "…" : ""}`,
         err: true,
       });
@@ -1063,12 +1086,24 @@ const parseRand = (s: string): number => {
   /** Stock out. One server transaction (0042): refuses if any line is short,
    *  names the shortfall, writes nothing in that case. Idempotent on retry. */
   const cancelOrder = useCallback(async (o: StaffOrder) => {
-    const reason = window.prompt(`Cancel ${o.number}? Any stock held for it is released. Reason:`);
+    // FLOW-1: an order accounts already invoiced is not cancelled here — the invoice needs a credit note
+    if (o.zoho_invoice_id && !["void", "deleted"].includes(o.zoho_status ?? "")) {
+      showToast({ text: `${o.number} is already invoiced in Zoho as ${o.zoho_invoice_number ?? "an invoice"} — accounts must credit-note it before the order can be cancelled.`, err: true });
+      return;
+    }
+    const soNote = o.zoho_salesorder_id && !["void", "deleted"].includes(o.zoho_so_status ?? "")
+      ? ` Its Zoho sales order ${o.zoho_salesorder_number ?? ""} is voided.` : "";
+    const reason = window.prompt(`Cancel ${o.number}? Any stock held for it is released.${soNote} Reason:`);
     if (reason == null) return;
     setSavingOrder(true);
     try {
       const r = await api.cancelOrder<{ released: number }>(o.id, reason);
-      showToast({ text: `${o.number} cancelled${r.released ? ` — ${r.released} stock hold${r.released === 1 ? "" : "s"} released` : ""}.` });
+      const done = `${o.number} cancelled${r.released ? ` — ${r.released} stock hold${r.released === 1 ? "" : "s"} released` : ""}`;
+      // the CTP cancel stands whatever Zoho says; Zoho's answer is reported, and kept on the order
+      const z = o.zoho_salesorder_id || o.zoho_estimate_id ? await cancelInZoho(o.id) : null;
+      showToast(z?.voided ? { text: `${done}. Zoho sales order ${z.voided} voided.` }
+        : z?.message ? { text: `${done}. ⚠ ${z.message}`, err: true }
+        : { text: `${done}.` });
       loadOrders();
     } catch (e) { showToast({ text: e instanceof Error ? e.message.replace(/^\[CTP web\] could not cancel: /, "") : "Could not cancel.", err: true }); }
     finally { setSavingOrder(false); }
@@ -1341,12 +1376,22 @@ const parseRand = (s: string): number => {
   }, [showToast, loadMine]);
 
   // 0070: accepting asks for the customer's PO (number; file unless the setting says otherwise)
-  const [poStep, setPoStep] = useState<{ r: MyRequest; po: string; file: File | null; need: boolean | null; credit: string | null; customerId: number | null } | null>(null);
-  const openPoStep = useCallback((r: MyRequest) => {
-    setPoStep({ r, po: "", file: null, need: null, credit: null, customerId: null });
+  const [poStep, setPoStep] = useState<{ r: MyRequest; po: string; file: File | null; need: boolean | null; credit: string | null;
+    customerId: number | null; failed?: boolean } | null>(null);
+  // FLOW-7: the check is shown while it runs; if it fails the customer can still accept (PO file
+  // then required — the server checks everything again) or retry, never stuck on a dead button.
+  const runPrecheck = useCallback((r: MyRequest) => {
+    setPoStep((p) => p && p.r.id === r.id ? { ...p, need: null, failed: false } : p);
     void acceptPrecheck(r.id).then((c) => setPoStep((p) => p && p.r.id === r.id
-      ? { ...p, need: c ? c.po_file_required : true, credit: c?.credit?.customer ?? null, customerId: c?.customer_id ?? null } : p));
+      ? { ...p, need: c ? c.po_file_required : true, credit: c?.credit?.customer ?? null,
+          customerId: c?.customer_id ?? r.customer_id ?? null, failed: !c } : p));
   }, []);
+  const openPoStep = useCallback((r: MyRequest) => {
+    setPoStep({ r, po: "", file: null, need: null, credit: null, customerId: r.customer_id ?? null });
+    runPrecheck(r);
+  }, [runPrecheck]);
+  // FLOW-6: declining cancels the quote for good, so it asks first
+  const [declineStep, setDeclineStep] = useState<MyRequest | null>(null);
 
   const answerQuote = useCallback(async (r: MyRequest, accept: boolean, po?: { po: string; file: File | null; customerId: number | null }) => {
     setAnswering(r.id);
@@ -2007,13 +2052,20 @@ const parseRand = (s: string): number => {
     const sg = stageOf(o);
     if (sg === "to_price") return { cls: "st-pricing", label: "Needs pricing" };
     if (sg === "with_customer") return { cls: "st-quote", label: "Quote sent" };
-    if (sg === "to_pick") return o.zoho_invoice_id || !o.zoho_salesorder_id
-      ? { cls: "st-invoiced", label: o.zoho_invoice_id ? "Invoiced — ready to fulfil" : "Accepted — ready to fulfil" }
-      : { cls: "st-accepted", label: "Accepted — awaiting invoice" };
+    if (sg === "to_pick") {
+      // FLOW-2: "ready" only when the Fulfil gate agrees (draft invoice / unpaid cash block it)
+      if (!o.zoho_salesorder_id) return { cls: "st-invoiced", label: "Accepted — ready to fulfil" };
+      const why = fulfilBlockReason(o);
+      const inv = !!o.zoho_invoice_id && !["void", "deleted"].includes(o.zoho_status ?? "");
+      if (!why) return { cls: "st-invoiced", label: inv ? "Invoiced — ready to fulfil" : "Released — ready to fulfil" };
+      if (!inv) return { cls: "st-accepted", label: "Accepted — awaiting invoice" };
+      return { cls: "st-accepted", label: why.startsWith("Waiting for payment") ? "Invoiced — waiting for payment"
+        : /mark it sent/.test(why) ? "Invoiced — not sent yet" : "Invoiced — check Zoho" };
+    }
     if (sg === "fulfilled") return { cls: "st-out", label: "Goods out — close it" };
     return { cls: "st-muted", label: o.status };
   };
-  const STAGE_LEGEND: [string, string][] = [["st-pricing", "Needs pricing"], ["st-quote", "Quote sent"], ["st-accepted", "Awaiting invoice"],
+  const STAGE_LEGEND: [string, string][] = [["st-pricing", "Needs pricing"], ["st-quote", "Quote sent"], ["st-accepted", "Awaiting invoice / payment"],
     ["st-invoiced", "Ready to fulfil"], ["st-out", "Goods out — close"], ["st-muted", "Completed / cancelled"]];
 
   /** Lane headers say what is actually true of the orders in them (Ian, 23 Oct). */
@@ -2021,8 +2073,11 @@ const parseRand = (s: string): number => {
     if (key === "to_price") return rows.some((o) => estimatesOn && o.unpriced === 0) ? "price it, then Send quote (creates the Zoho estimate)" : fallback;
     if (key === "with_customer") return estimatesOn ? "estimate in Zoho — accounts send it, then the customer accepts" : fallback;
     if (key === "to_pick") {
+      // FLOW-2: what the Fulfil gate says, not just "has an invoice"
+      const ready = rows.filter((o) => !fulfilBlockReason(o)).length;
       const inv = rows.filter((o) => o.zoho_invoice_id).length;
-      return inv === rows.length ? "invoiced in Zoho — goods can go out" : inv === 0 ? "sales order in Zoho — waiting for accounts to invoice it" : "some invoiced in Zoho — see each order";
+      return ready === rows.length ? "ready — goods can go out" : inv === 0 ? "sales order in Zoho — waiting for accounts to invoice it"
+        : ready === 0 ? "waiting on Zoho (invoice to send, or payment) — see each order" : "some ready to go out — see each order";
     }
     if (key === "fulfilled") {
       const inv = rows.filter((o) => o.zoho_invoice_id || !o.zoho_salesorder_id).length;
@@ -2184,7 +2239,7 @@ const parseRand = (s: string): number => {
                                 value={draftPrices[l.id] ?? (defaultMinor(o, l) > 0 ? (defaultMinor(o, l) / 100).toFixed(2) : "")}
                                 onChange={(e) => setDraftPrices((d) => ({ ...d, [l.id]: e.target.value }))} />
                             ) : (
-                              <span className="mb-rv">{fmtR(l.unit_price_minor * l.qty)}</span>
+                              <LineAmt l={l} />
                             )}
                           </div>
                         ))}
@@ -2221,7 +2276,7 @@ const parseRand = (s: string): number => {
                             <span className="mb-rk">Waiting</span>
                             <span className="mb-rv">{(estimatesOn || o.zoho_estimate_id) && !["sent", "accepted"].includes(o.zoho_estimate_status ?? "")
                               ? "on accounts — the customer sees the quote but cannot accept until the estimate is sent"
-                              : `sent ${timeAgo(o.created_at)} · they see it on their phone`}</span>
+                              : `sent ${timeAgo([...(o.timeline ?? [])].reverse().find((e) => e.kind === "quoted" || e.kind === "priced")?.at ?? o.created_at)} · they see it on their phone`}</span>
                           </div>
                         )}
                         {o.status === "quote" && (o.zoho_estimate_id || (estimatesOn && o.unpriced === 0 && !!o.zoho_estimate_error)) && (
@@ -2298,7 +2353,7 @@ const parseRand = (s: string): number => {
                             <ol className="mb-tl">
                               {o.timeline!.map((e, i) => (
                                 <li key={i}>
-                                  <span className="mb-tl-when">{new Date(e.at).toLocaleString("en-ZA", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}</span>
+                                  <span className="mb-tl-when">{jhbWhen(e.at)}</span>
                                   <span className="mb-tl-what">{e.label}{e.detail && typeof e.detail.po === "string" ? ` · PO ${e.detail.po}` : ""}{e.detail && typeof e.detail.note === "string" ? ` — “${e.detail.note}”` : ""}</span>
                                   <span className="mb-tl-who">{e.by}</span>
                                 </li>
@@ -2423,7 +2478,9 @@ const parseRand = (s: string): number => {
           if (done.length === 0) return null;
           // The invoice total, the way the desktop prints it: tax_of() in
           // main.rs rounds half-up in cents. The card must agree with the paper.
-          const grand = (o: StaffOrder) => o.total_minor + Math.floor((o.total_minor * o.tax_rate_bps + 5000) / 10000);
+          // FLOW-3: once accounts' Zoho invoice is linked, ITS total is the order's total (discounts included).
+          const grand = (o: StaffOrder) => o.zoho_invoice_total_minor != null && o.zoho_invoice_id && !["void", "deleted"].includes(o.zoho_status ?? "")
+            ? o.zoho_invoice_total_minor : o.total_minor + Math.floor((o.total_minor * o.tax_rate_bps + 5000) / 10000);
           return (
             <div key={cancelledGroup ? "cancelled" : "done"}>
               <div className="mb-count">{cancelledGroup ? `Cancelled · ${done.length}` : `Completed · ${done.length} — invoiced and closed`}</div>
@@ -2438,7 +2495,7 @@ const parseRand = (s: string): number => {
                       <span style={{ flex: 1, minWidth: 0 }}>
                         <div className="mb-cname">{o.customer_name}</div>
                         <div className="mb-csku mb-mono">
-                          {o.invoice_no ? `${o.invoice_no} · ` : ""}{o.number} · {o.lines.length} line{o.lines.length === 1 ? "" : "s"} · {when.slice(0, 10)}
+                          {o.invoice_no ? `${o.invoice_no} · ` : ""}{o.number} · {o.lines.length} line{o.lines.length === 1 ? "" : "s"} · {jhbDay(when)}
                         </div>
                         {/* Zoho's own status, read back (0047). Shown only for
                             invoices CTP Core sent or tried to send — pre-go-live
@@ -2479,6 +2536,15 @@ const parseRand = (s: string): number => {
                             <span className="mb-rv"><b className="mb-mono">{o.zoho_estimate_number}</b> · {o.zoho_estimate_status ?? "—"} in Zoho</span>
                           </div>
                         )}
+                        {o.status === "cancelled" && o.zoho_salesorder_number && (
+                          <div className="mb-row">
+                            <span className="mb-rk">Sales order</span>
+                            <span className="mb-rv" style={{ color: ["void", "deleted"].includes(o.zoho_so_status ?? "") ? undefined : "var(--red)" }}>
+                              <b className="mb-mono">{o.zoho_salesorder_number}</b> · {["void", "deleted"].includes(o.zoho_so_status ?? "")
+                                ? `${o.zoho_so_status} in Zoho` : `still ${o.zoho_so_status ?? "open"} in Zoho — void it there`}
+                            </span>
+                          </div>
+                        )}
                         {o.notes && (
                           <div className="mb-row">
                             <span className="mb-rk">Their note</span>
@@ -2499,7 +2565,7 @@ const parseRand = (s: string): number => {
                             <ol className="mb-tl">
                               {o.timeline!.map((e, i) => (
                                 <li key={i}>
-                                  <span className="mb-tl-when">{new Date(e.at).toLocaleString("en-ZA", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}</span>
+                                  <span className="mb-tl-when">{jhbWhen(e.at)}</span>
                                   <span className="mb-tl-what">{e.label}{e.detail && typeof e.detail.po === "string" ? ` · PO ${e.detail.po}` : ""}{e.detail && typeof e.detail.note === "string" ? ` — “${e.detail.note}”` : ""}</span>
                                   <span className="mb-tl-who">{e.by}</span>
                                 </li>
@@ -2520,7 +2586,7 @@ const parseRand = (s: string): number => {
                               <div className="mb-csku mb-mono">{l.sku}</div>
                               <PriceInfo lp={lpFor(o, l)} qty={l.qty} staff seesCost={seesCost} priceMinor={l.unit_price_minor} />
                             </span>
-                            <span className="mb-rv">{fmtR(l.unit_price_minor * l.qty)}</span>
+                            <LineAmt l={l} />
                           </div>
                         ))}
                         {(() => { const rb = orderRebate(o); return rb && (
@@ -2744,7 +2810,7 @@ const parseRand = (s: string): number => {
                       the toast are the confirmation. */}
                   {r.status === "confirmed" && r.zoho_salesorder_number && (
                     <div className="mb-note" style={{ margin: "6px 0 0" }}>
-                      Your sales order <b className="mb-mono">{r.zoho_salesorder_number}</b> has been raised in our accounts system — we will send you the proforma from there. The tax invoice follows once payment is received.
+                      Your sales order <b className="mb-mono">{r.zoho_salesorder_number}</b> has been raised in our accounts system — we will send you the proforma and the tax invoice from there.
                     </div>
                   )}
                   {awaiting && (blockers[r.id]?.length ?? 0) > 0 && (
@@ -2758,7 +2824,7 @@ const parseRand = (s: string): number => {
                     <div className="mb-row" style={{ gap: 10 }}>
                       <button className="mb-btn s" style={{ height: 46 }}
                         disabled={answering === r.id}
-                        onClick={() => { void answerQuote(r, false); }}>Decline</button>
+                        onClick={() => setDeclineStep(r)}>Decline</button>
                       <button className="mb-btn p" style={{ height: 46 }}
                         disabled={answering === r.id || (blockers[r.id]?.length ?? 0) > 0}
                         onClick={() => openPoStep(r)}>
@@ -3216,18 +3282,39 @@ const parseRand = (s: string): number => {
             <input className="mb-of-q" style={{ marginTop: 6, padding: "0 12px" }} autoFocus value={poStep.po} maxLength={50}
               placeholder="e.g. PO-4471" onChange={(e) => setPoStep((p) => p && { ...p, po: e.target.value })} />
           </label>
-          <label style={{ fontSize: 13, fontWeight: 700 }}>Your PO (PDF or photo){poStep.need === false ? " (optional)" : " (required)"}
+          <label style={{ fontSize: 13, fontWeight: 700 }}>Your PO (PDF or photo){poStep.need === null ? "" : poStep.need === false ? " (optional)" : " (required)"}
             <input type="file" accept="application/pdf,image/*" style={{ marginTop: 6, display: "block" }}
               onChange={(e) => { const f = e.target.files?.[0] ?? null; setPoStep((p) => p && { ...p, file: f }); }} />
           </label>
+          {poStep.need === null && <div className="mb-csku" role="status">Checking your account…</div>}
+          {poStep.failed && (
+            <div className="mb-note" style={{ margin: 0 }}>
+              We could not check your account just now. You can still accept — attach your PO — or{" "}
+              <button className="mb-chip" onClick={() => runPrecheck(poStep.r)}>Try again</button>
+            </div>
+          )}
           {poStep.credit && <div className="mb-note" style={{ margin: 0 }}>{poStep.credit}</div>}
           <div style={{ display: "flex", gap: 8 }}>
             <button className="mb-chip" style={{ flex: 1 }} onClick={() => setPoStep(null)}>Cancel</button>
             <button className="mb-chip on" style={{ flex: 1 }}
               disabled={answering === poStep.r.id || poStep.need === null || !poStep.po.trim() || (poStep.need && !poStep.file)
-                || (!!poStep.file && !poStep.customerId)}
-              onClick={() => { const p = poStep; setPoStep(null); void answerQuote(p.r, true, { po: p.po.trim(), file: p.file, customerId: p.customerId }); }}>
-              Accept quote
+                || (!!poStep.file && !(poStep.customerId ?? poStep.r.customer_id))}
+              onClick={() => { const p = poStep; setPoStep(null); void answerQuote(p.r, true, { po: p.po.trim(), file: p.file, customerId: p.customerId ?? p.r.customer_id ?? null }); }}>
+              {poStep.need === null ? "Checking…" : "Accept quote"}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {declineStep && (
+        <div className="mb-toast" role="dialog" aria-label="Decline the quote"
+          style={{ display: "flex", flexDirection: "column", alignItems: "stretch", gap: 10 }}>
+          <span>Decline <b>{declineStep.number}</b>? The quote is cancelled and cannot be accepted afterwards — send a new request if you change your mind.</span>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button className="mb-chip" style={{ flex: 1 }} onClick={() => setDeclineStep(null)}>Keep the quote</button>
+            <button className="mb-chip on" style={{ flex: 1 }} disabled={answering === declineStep.id}
+              onClick={() => { const r = declineStep; setDeclineStep(null); void answerQuote(r, false); }}>
+              Decline quote
             </button>
           </div>
         </div>
@@ -3246,7 +3333,7 @@ const parseRand = (s: string): number => {
             <input className="mb-of-q" style={{ marginTop: 6, padding: "0 12px" }} value={behalf.po} maxLength={50}
               placeholder="e.g. PO-4471" onChange={(e) => setBehalf((b) => b && { ...b, po: e.target.value })} />
           </label>
-          <label style={{ fontSize: 13, fontWeight: 700 }}>PO file (PDF or photo){behalf.need ? " (required)" : " (optional)"}
+          <label style={{ fontSize: 13, fontWeight: 700 }}>PO file (PDF or photo){behalf.need === null ? " (checking…)" : behalf.need ? " (required)" : " (optional)"}
             <input type="file" accept="application/pdf,image/*" style={{ marginTop: 6, display: "block" }}
               onChange={(e) => { const f = e.target.files?.[0] ?? null; setBehalf((b) => b && { ...b, file: f }); }} />
           </label>
