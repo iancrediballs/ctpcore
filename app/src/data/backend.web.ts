@@ -1403,26 +1403,90 @@ function hotspotLink(h: HotspotRow): HotspotLink {
   return h.part.deleted_at ? "retired" : "ok";
 }
 
-/** The diagram row and its live markers, resolved from the image path the
- *  viewer already has. */
-async function listHotspots(a: Record<string, unknown>): Promise<unknown> {
-  const path = str(a["path"]);
+// SO-2: diagram and hotspot are in BOTH sync streams (staff and customer), so
+// the markers are read from the device like every other catalogue read here —
+// offline the drawing used to show with "0 parts — none marked up yet".
+// Two exceptions go online first (falling back to the device on failure):
+//   * a diagram this device just edited (saveHotspot/deleteHotspot/
+//     setDiagramDims write through PostgREST, and the change takes a moment
+//     to sync back), so the viewer and editor show what was just placed;
+//   * a drawing the device has no row for yet (first sync still running).
+const EDITED_FRESH_MS = 5 * 60_000;
+const editedDiagrams = new Map<number, number>();   // diagram id → when edited
+const markEdited = (diagramId: number) => editedDiagrams.set(diagramId, Date.now());
+const recentlyEdited = (diagramId: number) => Date.now() - (editedDiagrams.get(diagramId) ?? 0) < EDITED_FRESH_MS;
+
+type DiagramHead = { id: number; img_w: number | null; img_h: number | null; drawing_key: string | null };
+
+async function localHotspots(path: string): Promise<{ d: DiagramHead; hs: HotspotRow[] } | null> {
+  const d = await one<Row>(
+    `SELECT id, img_w, img_h, drawing_key FROM diagram
+      WHERE image_path = ? AND deleted_at IS NULL ORDER BY CAST(id AS INTEGER) LIMIT 1`, [path]);
+  if (!d) return null;
+  const rows = await all<Row>(
+    `SELECT h.id, h.diagram_id, h.part_id, h.item_no, h.x, h.y, h.radius,
+            p.id AS p_id, p.sku AS p_sku, p.name AS p_name, p.deleted_at AS p_deleted,
+            (SELECT pi.path FROM part_image pi WHERE pi.part_id = h.part_id AND pi.deleted_at IS NULL
+              ORDER BY pi.is_primary DESC, pi.sort_order LIMIT 1) AS p_image
+       FROM hotspot h LEFT JOIN part p ON p.id = h.part_id
+      WHERE h.diagram_id = ? AND h.deleted_at IS NULL
+      ORDER BY CAST(h.id AS INTEGER)`, [str(d["id"])]);
+  return {
+    d: { id: numId(d["id"], "diagram.id"), img_w: nnum(d["img_w"]), img_h: nnum(d["img_h"]), drawing_key: nstr(d["drawing_key"]) },
+    hs: rows.map((r) => ({
+      id: numId(r["id"], "hotspot.id"), diagram_id: numId(r["diagram_id"], "hotspot.diagram_id"),
+      part_id: r["part_id"] == null || r["part_id"] === "" ? null : numId(r["part_id"], "hotspot.part_id"),
+      item_no: nstr(r["item_no"]), x: Number(r["x"]), y: Number(r["y"]), radius: Number(r["radius"]),
+      // not synced: saveHotspot addresses a row without one by its id
+      client_uuid: null,
+      part: r["p_id"] == null ? null : {
+        sku: str(r["p_sku"]), name: str(r["p_name"]), deleted_at: nstr(r["p_deleted"]),
+        part_image: r["p_image"] ? [{ path: str(r["p_image"]), is_primary: true, sort_order: 0, deleted_at: null }] : [],
+      },
+    })),
+  };
+}
+
+async function remoteHotspots(path: string): Promise<{ d: DiagramHead; hs: HotspotRow[] } | null> {
   const { data: d, error: e1 } = await supabase
     .from("diagram").select("id, img_w, img_h, drawing_key")
     .eq("image_path", path).is("deleted_at", null).maybeSingle();
   if (e1) throw new Error(`[CTP web] diagram lookup failed: ${e1.message}`);
-  if (!d) return { diagram_id: null, img_w: null, img_h: null, hotspots: [] };
+  if (!d) return null;
   const { data: hs, error: e2 } = await supabase
     .from("hotspot")
     .select("id, diagram_id, part_id, item_no, x, y, radius, client_uuid, part:part_id(sku, name, deleted_at, part_image(path, is_primary, sort_order, deleted_at))")
     .eq("diagram_id", d.id).is("deleted_at", null).order("id");
   if (e2) throw new Error(`[CTP web] hotspot read failed: ${e2.message}`);
+  return { d: d as DiagramHead, hs: (hs ?? []) as unknown as HotspotRow[] };
+}
+
+/** The diagram row and its live markers, resolved from the image path the
+ *  viewer already has. */
+async function listHotspots(a: Record<string, unknown>): Promise<unknown> {
+  const path = str(a["path"]);
+  let found = await localHotspots(path);
+  if (!found || recentlyEdited(found.d.id)) {
+    try {
+      found = (await remoteHotspots(path)) ?? found;
+    } catch (e) {
+      // No local row, no network, and the first sync is not finished: say so.
+      // Never fall through to an empty list, which reads as "nobody has marked
+      // this drawing up".
+      if (!found && !powerSync.currentStatus.hasSynced) {
+        throw new Error("Markers need a connection — this drawing has not synced to the device yet.");
+      }
+      console.warn("[CTP web] online marker read failed; showing the device's copy:", e);
+    }
+  }
+  if (!found) return { diagram_id: null, img_w: null, img_h: null, hotspots: [] };
+  const { d, hs } = found;
   return {
     diagram_id: d.id, drawing_key: d.drawing_key, img_w: d.img_w, img_h: d.img_h,
     // One bad row must never take the drawing with it: every field a reader
     // touches is normalised here, so a NULL, a retired part or a NaN
     // coordinate becomes a flagged marker, not an exception in a .map.
-    hotspots: ((hs ?? []) as unknown as HotspotRow[]).map((h) => {
+    hotspots: hs.map((h) => {
       const link = hotspotLink(h);
       // The part's primary photo, so the editor can show WHAT the marker is
       // on — these parts are identified by sight, not by number.
@@ -1485,6 +1549,7 @@ async function saveHotspot(a: Record<string, unknown>): Promise<unknown> {
     origin: "mobile",
   };
   if (!Number.isFinite(row.x) || !Number.isFinite(row.y)) throw new Error("[CTP web] hotspot x/y must be numbers.");
+  markEdited(row.diagram_id);
   // Every marker Ian placed before 0036 has no client_uuid — all 22 on SEC101.
   // Those are addressed by id: an UPDATE of the row that exists, which is just
   // as idempotent as the upsert (the same values land however often it runs).
@@ -1510,6 +1575,8 @@ async function saveHotspot(a: Record<string, unknown>): Promise<unknown> {
 /** Soft delete, like everything else here. The row stays for history. */
 async function deleteHotspot(a: Record<string, unknown>): Promise<unknown> {
   const id = numId(a["id"], "id");
+  const on = await one<Row>(`SELECT diagram_id FROM hotspot WHERE id = ?`, [String(id)]).catch(() => null);
+  if (on?.["diagram_id"] != null) markEdited(Number(on["diagram_id"]));
   const { error } = await supabase.from("hotspot")
     .update({ deleted_at: new Date().toISOString() }).eq("id", id);
   if (error) throw new Error(`[CTP web] could not remove marker: ${error.message}`);
@@ -1523,6 +1590,7 @@ async function setDiagramDims(a: Record<string, unknown>): Promise<unknown> {
   const id = numId(a["diagramId"], "diagramId");
   const w = Number(a["w"]), h = Number(a["h"]);
   if (!(w > 0 && h > 0)) throw new Error("[CTP web] diagram dimensions must be positive.");
+  markEdited(id);
   const { data, error } = await supabase.from("diagram")
     .update({ img_w: Math.round(w), img_h: Math.round(h) })
     .eq("id", id).is("img_w", null).select("id, img_w, img_h").maybeSingle();

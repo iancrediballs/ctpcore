@@ -63,6 +63,9 @@ export function DiagramView({ drawings, start, onClose, canEdit, staff, onOpenPa
   const d = drawings[idx];
   const [frame, setFrame] = useState<Frame | null>(null);
   const [hots, setHots] = useState<WebHotspot[]>([]);
+  // The markers could not be read (offline before this drawing synced). Shown
+  // instead of the empty state, which would claim nobody has marked it up.
+  const [loadErr, setLoadErr] = useState<string | null>(null);
   const [key, setKey] = useState<string | null>(null);
   const [parts, setParts] = useState<Record<number, DiagramPart>>({});
   /** CAT-15: the parts read (stock, price, photo, Open/Add) is the part of a row that can go
@@ -93,7 +96,7 @@ export function DiagramView({ drawings, start, onClose, canEdit, staff, onOpenPa
       loadedPath.current = d.path;
       setHots([]); setParts({}); setFrame(null); setKey(null); setSel(null); setZoomed(false);
     }
-    setPartsState("loading");
+    setPartsState("loading"); setLoadErr(null);
     let live = true;
     api.listHotspots(d.path).then(async (r) => {
       if (!live) return;
@@ -105,7 +108,15 @@ export function DiagramView({ drawings, start, onClose, canEdit, staff, onOpenPa
       if (!live) return;
       setParts(Object.fromEntries(ps.map((p) => [p.id, p])));
       setPartsState("ok");
-    }).catch((e) => { console.error("diagram:", e); if (live) setPartsState("error"); });
+    }).catch((e) => {
+      console.error("diagram:", e);
+      if (!live) return;
+      setPartsState("error");
+      // SO-2: the MARKERS could not be read (listHotspots throws only when the
+      // drawing is not on the device and there is no network). Say that in the
+      // header instead of "0 parts — none marked up yet".
+      if (e instanceof Error && /^Markers need a connection/.test(e.message)) setLoadErr(e.message);
+    });
     return () => { live = false; };
   }, [d.path, retry]);
 
@@ -215,12 +226,14 @@ export function DiagramView({ drawings, start, onClose, canEdit, staff, onOpenPa
           looking for it in the list and did not find it (20 Sep). Staff only;
           a customer login sees neither, by design. */}
       <div className="dv-list-head">
-        <span>{rows.length} part{rows.length === 1 ? "" : "s"} on this drawing{rows.length === 0 && partsState !== "loading" ? " — none marked up yet" : ""}</span>
-        {canEdit && onEditMarkers && (
+        {loadErr
+          ? <span>{loadErr}</span>
+          : <span>{rows.length} part{rows.length === 1 ? "" : "s"} on this drawing{rows.length === 0 && partsState !== "loading" ? " — none marked up yet" : ""}</span>}
+        {canEdit && onEditMarkers && !loadErr && (
           <button className="dv-edit" onClick={() => onEditMarkers(d.path, d.label)}>{rows.length ? "✎ Edit markers" : "✎ Add markers"}</button>
         )}
       </div>
-      {partsState === "error" && (
+      {partsState === "error" && !loadErr && (
         <div className="dv-empty dv-err" role="alert">
           <p>Couldn't load stock, prices and photos for this drawing.</p>
           <button className="mb-chip on" onClick={() => setRetry((n) => n + 1)}>Retry</button>
