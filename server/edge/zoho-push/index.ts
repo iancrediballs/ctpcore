@@ -25,6 +25,8 @@
 //   { "action": "status", "force"?: true }      read Zoho status back (draft/sent/paid/void);
 //                          sales orders also bring Michelle's edits back (0059)
 //   { "action": "so_sync", "order_id": 43 }     one order's sales order + its customer's terms, now
+//   { "action": "cancel", "order_id": 43 }      after cancel_order(): void the open Zoho SO (not if invoiced —
+//                          then say so: accounts credit-note it), decline a draft/sent estimate (FLOW-1)
 //   { "action": "estimate", "order_id": 43 }    Phase 2 (0062/0063): the quote's DRAFT Zoho estimate,
 //                          created ONCE, then only read back (Zoho leads); skipped unless estimates_enabled
 //   { "action": "estimate_recreate", "order_id": 43, "note"? }   ADMIN (0064): the quote's estimate was
@@ -552,6 +554,82 @@ async function syncOne(db: SupabaseClient, log: Logger, orderId: number, force: 
   const r = await applySalesOrder(db, orderId, o.number, so, log);
   const terms = await refreshTerms(db, log, 60 * 60_000, o.customer_id);
   return { status: so?.status, emailed: so?.is_emailed, changes: r?.changes ?? [], warnings: r?.warnings ?? [], terms };
+}
+
+// ── QA 26 Oct (FLOW-1): an order cancelled in CTP → its Zoho documents follow ──
+// Called by the desk right after cancel_order() (which never waits on Zoho). The open sales order
+// is VOIDED (POST /salesorders/{id}/status/void: no email; releases the stock Zoho committed). One
+// that accounts already invoiced is left alone and said so — the invoice needs a credit note first.
+// A draft/sent estimate is marked declined, as the status read-back does (0062). Every outcome is
+// written on the order (zoho_so_status / zoho_so_error) and its timeline; nothing fails silently.
+// deno-lint-ignore no-explicit-any
+async function cancelInZoho(db: SupabaseClient, log: Logger, actor: string | null, orderId: number): Promise<any> {
+  const { data: o } = await db.from("sales_order").select("id, number, status, zoho_salesorder_id, zoho_salesorder_number, zoho_so_status, zoho_estimate_id, zoho_estimate_number, zoho_estimate_status")
+    .eq("id", orderId).maybeSingle();
+  if (!o) return { skipped: "no such order" };
+  if (o.status !== "cancelled") throw new Blocked(`${o.number} is ${o.status} in CTP, not cancelled — its Zoho documents are left as they are.`);
+  const event = (kind: string, label: string, detail: Record<string, unknown> = {}) =>
+    db.rpc("append_order_event", { p_order_id: o.id, p_kind: kind, p_label: label, p_actor: actor, p_detail: detail });
+  const now = () => new Date().toISOString();
+  // deno-lint-ignore no-explicit-any
+  const out: any = { number: o.number };
+
+  if (o.zoho_salesorder_id && !["void", "deleted"].includes(o.zoho_so_status ?? "")) {
+    const num = o.zoho_salesorder_number || "the sales order";
+    try {
+      // deno-lint-ignore no-explicit-any
+      let so: any = null;
+      try { so = (await zoho("GET", `/salesorders/${o.zoho_salesorder_id}`)).salesorder; }
+      catch (e) { if (!/\(404|does not exist|not found/i.test(e instanceof Error ? e.message : String(e))) throw e; }
+      // deno-lint-ignore no-explicit-any
+      const invs = ((so?.invoices ?? []) as any[]).filter((i) => !["void", "deleted"].includes(String(i.status)));
+      if (!so) {
+        await db.from("sales_order").update({ zoho_so_status: "deleted", zoho_so_status_at: now(), zoho_so_error: null }).eq("id", o.id);
+        out.salesorder = { number: num, status: "deleted", voided: false, message: `${num} is no longer in Zoho (deleted) — nothing to void.` };
+      } else if (invs.length) {
+        const nums = invs.map((i) => i.invoice_number).join(" + ");
+        const msg = `Cancelled in CTP, but ${num} is already invoiced in Zoho (${nums}) — it was NOT voided. Accounts must credit-note ${nums}, then void ${num}.`;
+        await db.from("sales_order").update({ zoho_so_status: String(so.status ?? "invoiced"), zoho_so_status_at: now(), zoho_so_error: msg }).eq("id", o.id);
+        await event("salesorder_kept", `Zoho sales order ${num} NOT voided — invoiced as ${nums}; accounts must credit-note it`, { salesorder: num, invoice: nums });
+        await log({ doc_type: "salesorder", ctp_id: o.id, ctp_ref: o.number, action: "blocked", ok: false, zoho_id: String(o.zoho_salesorder_id), message: msg });
+        out.salesorder = { number: num, status: so.status, voided: false, invoiced: nums, message: msg };
+      } else {
+        if (String(so.status) !== "void") await zoho("POST", `/salesorders/${o.zoho_salesorder_id}/status/void`);
+        await db.from("sales_order").update({ zoho_so_status: "void", zoho_so_status_at: now(), zoho_so_error: null }).eq("id", o.id);
+        await event("salesorder_void", `Zoho sales order ${num} voided (its stock commitment released)`, { salesorder: num });
+        await log({ doc_type: "salesorder", ctp_id: o.id, ctp_ref: o.number, action: "void", ok: true, zoho_id: String(o.zoho_salesorder_id),
+                    message: `${o.number} cancelled in CTP — ${num} voided in Zoho (was ${so.status})` });
+        out.salesorder = { number: num, status: "void", voided: true };
+      }
+    } catch (e) {
+      const err = e instanceof Error ? e.message : String(e);
+      const msg = `Cancelled in CTP, but voiding ${num} in Zoho failed: ${err}. Void it in Zoho by hand (or ask accounts).`;
+      await db.from("sales_order").update({ zoho_so_error: msg.slice(0, 1000), zoho_so_status_at: now() }).eq("id", o.id);
+      await event("salesorder_void_failed", `Voiding Zoho sales order ${num} failed — void it in Zoho`, { salesorder: num, error: err.slice(0, 300) });
+      await log({ doc_type: "salesorder", ctp_id: o.id, ctp_ref: o.number, action: "error", ok: false, zoho_id: String(o.zoho_salesorder_id), message: msg.slice(0, 2000) });
+      out.salesorder = { number: num, voided: false, error: msg };
+    }
+  }
+
+  // a quote's estimate (Phase 2): the same step the 10-minute read-back takes, now
+  if (o.zoho_estimate_id && ["draft", "sent", null].includes(o.zoho_estimate_status ?? null)) {
+    const num = o.zoho_estimate_number || "the estimate";
+    try {
+      // deno-lint-ignore no-explicit-any
+      const est: any = (await zoho("GET", `/estimates/${o.zoho_estimate_id}`)).estimate;
+      if (["draft", "sent"].includes(String(est?.status))) {
+        await zoho("POST", `/estimates/${o.zoho_estimate_id}/status/declined`);
+        await db.from("sales_order").update({ zoho_estimate_status: "declined", zoho_estimate_status_at: now(), event_actor: actor }).eq("id", o.id);
+        out.estimate = { number: num, status: "declined" };
+      } else out.estimate = { number: num, status: est?.status ?? "unknown" };
+    } catch (e) {
+      const err = e instanceof Error ? e.message : String(e);
+      await db.from("sales_order").update({ zoho_estimate_error: `Cancelled in CTP, but marking ${num} declined in Zoho failed: ${err}`.slice(0, 1000) }).eq("id", o.id);
+      await log({ doc_type: "estimate", ctp_id: o.id, ctp_ref: o.number, action: "error", ok: false, zoho_id: String(o.zoho_estimate_id), message: err.slice(0, 2000) });
+      out.estimate = { number: num, error: err };
+    }
+  }
+  return out;
 }
 
 // ── the clearly-marked live test ─────────────────────────────────────────────
@@ -1098,7 +1176,7 @@ Deno.serve(async (req: Request) => {
   // invoice issued before go-live does not report a failure that isn't one.
   // (Status read-back is allowed while sending is off: documents already in
   // Zoho still change status there.)
-  if (!["test", "status", "so_sync", "hook", "stock_sync", "receive_list", "rebate_book", "assign_pricebook", "pricebook_sync", "catalogue_set"].includes(body.action) && (!cfg?.push_enabled || !cfg?.push_from)) {
+  if (!["test", "status", "so_sync", "cancel", "hook", "stock_sync", "receive_list", "rebate_book", "assign_pricebook", "pricebook_sync", "catalogue_set"].includes(body.action) && (!cfg?.push_enabled || !cfg?.push_from)) {
     return json({ ok: true, skipped: "Sending to Zoho is off (Settings → Zoho). Nothing was sent." });
   }
   await zohoInit(db);
@@ -1162,6 +1240,15 @@ Deno.serve(async (req: Request) => {
       const id = Number(body.order_id);
       if (!Number.isInteger(id) || id <= 0) return json({ error: "order_id is required" }, 400);
       return json({ ok: true, ...(await syncOne(db, log, id, body.force === true)) });
+    }
+    if (body.action === "cancel") {
+      const id = Number(body.order_id);
+      if (!Number.isInteger(id) || id <= 0) return json({ error: "order_id is required" }, 400);
+      try { return json({ ok: true, ...(await cancelInZoho(db, log, who.actor, id)) }); }
+      catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        return json({ ok: false, error: msg }, e instanceof Blocked ? 409 : 502);
+      }
     }
     if (body.action === "estimate") {
       const id = Number(body.order_id);
