@@ -593,6 +593,8 @@ textarea.st-in{resize:vertical;line-height:1.45;font-size:15px}
    tooltip. The stroke is non-scaling so the ring stays a ring at every zoom. */
 .dg-mk{cursor:pointer}
 .dg-mk-hit{fill:transparent;stroke:none}                       /* the forgiving tap target */
+/* CAT-6: a 32 px screen-space target under each viewer marker (MarkerHalo); never painted */
+.dg-mk-halo{fill:transparent;stroke:none;pointer-events:all;cursor:pointer}
 .dg-mk-ring{fill:rgba(255,138,31,.06);stroke:var(--amber);stroke-width:2.5;vector-effect:non-scaling-stroke;paint-order:stroke}
 .dg-mk:hover .dg-mk-ring{fill:rgba(255,138,31,.18);stroke-width:3.5}
 .dg-mk text{fill:#fff;font-family:var(--mono,ui-monospace,monospace);font-weight:700;pointer-events:none;
@@ -667,6 +669,9 @@ textarea.st-in{resize:vertical;line-height:1.45;font-size:15px}
 .dv-pane{flex:1;min-height:0;display:grid;grid-template-rows:1fr}
 .dv-stack{flex:1;min-height:0;display:flex;flex-direction:column}
 .dv-stack .dv-stage{flex:0 0 55%;min-height:0}
+/* CAT-7: on a phone the drawing fits beside the + − ⟲ column, not under it (Cab Interior #2
+   sat under the buttons at 390). The gutter is the controls' width plus their 10px inset. */
+.dv-stack .dv-stage .dg-wrap{box-sizing:border-box;padding-right:52px}
 .dv-stack .dv-list{flex:1;border-top:1px solid var(--line)}
 .dv-stage{position:relative;min-width:0;min-height:0;display:flex;background:#fff}
 .dv-stage .dg-wrap{flex:1;background:#fff}

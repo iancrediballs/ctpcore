@@ -23,7 +23,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import * as api from "../data/api";
 import type { DiagramPart, WebHotspot } from "../data/api";
 import { assetUrl } from "../assets";
-import { DiagramCanvas, Marker, loadMarkerScale, markerRadius, calloutRect, FOCUS_SCALE, type CanvasApi, type Frame, type Rect } from "./DiagramCanvas";
+import { DiagramCanvas, Marker, MarkerHalo, loadMarkerScale, markerRadius, calloutRect, FOCUS_SCALE, type CanvasApi, type Frame, type Rect } from "./DiagramCanvas";
 import { markerState, markerTitle } from "./hotspotState";
 
 export type Drawing = { path: string; label: string; key?: string };
@@ -148,6 +148,15 @@ export function DiagramView({ drawings, start, onClose, canEdit, staff, onOpenPa
     }, 0);
   }, [rows, key]);
 
+  /** A tap on a marker or its halo. Targets overlap on dense drawings (BMP, DEF, FWL), so
+   *  the tap goes to the marker whose centre is NEAREST the finger, not whichever target
+   *  happens to be on top. */
+  const pickAt = useCallback((e: React.MouseEvent, h: WebHotspot) => {
+    e.stopPropagation();
+    const pt = canvas.current?.toDrawing(e.clientX, e.clientY);
+    pick(pt ? hots.reduce((a, b) => Math.hypot(b.x - pt.x, b.y - pt.y) < Math.hypot(a.x - pt.x, a.y - pt.y) ? b : a, h) : h);
+  }, [hots, pick]);
+
   // deep link: once the rows and the frame exist, land on the part
   useEffect(() => {
     const pid = pendingDeep.current;
@@ -256,10 +265,14 @@ export function DiagramView({ drawings, start, onClose, canEdit, staff, onOpenPa
     <div className="dv-stage">
       <DiagramCanvas key={d.path} href={assetUrl(d.path)} frame={frame} onFrame={setFrame} onZoomed={setZoomed} bind={bind}
         onSwipe={!wide && drawings.length > 1 ? (dir) => step(idx + dir) : undefined}>
+        {/* CAT-6: the near-miss targets first, under every marker */}
+        {frame && hots.map((h) => (
+          <MarkerHalo key={"halo" + h.id} x={h.x} y={h.y} r={r} onClick={(e) => pickAt(e, h)} />
+        ))}
         {frame && hots.map((h) => (
           <Marker key={h.id} x={h.x} y={h.y} r={r} state={markerState(h)} title={markerTitle(h)}
             pulse={!!selRow && selRow.hots.some((x) => x.id === h.id)}
-            onClick={(e) => { e.stopPropagation(); pick(h); }} />
+            onClick={(e) => pickAt(e, h)} />
         ))}
       </DiagramCanvas>
       {drawings.length > 1 && (
