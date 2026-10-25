@@ -44,7 +44,7 @@
 //   { "action": "receive", "purchaseorder_id": "…", "lines": [{ "line_item_id", "quantity" }] }
 //   { "action": "hook", "module": "item|salesorder|invoice|estimate|package|shipment|bill|purchasereceive|adjustment", "id": "…" }
 //                          Zoho workflow-rule webhook (anon key): trusts nothing but the id; re-reads Zoho
-//   { "action": "rebate_book", "scheme": "FAW JH6 – Rebate", "apply"?: true }   ADMIN (0069): recompute the
+//   { "action": "rebate_book", "scheme": "<rebate_scheme.name>", "apply"?: true }   ADMIN (0069): recompute the
 //                          scheme's rebate prices from Zoho's LIVE sales price + cost with its rule, and (apply)
 //                          create / update that one per-item price book. Never changes item rates or customers.
 //   { "action": "test" }   manager/admin: create a clearly marked TEST draft
@@ -649,7 +649,7 @@ async function stockSync(db: SupabaseClient, log: Logger, force: boolean) {
   if (!force && Date.now() - last < 15 * 60_000) return { skipped: "stock read less than 15 minutes ago" };
   // deno-lint-ignore no-explicit-any
   const rows: any[] = [], cat: any[] = [];
-  for (let page = 1; page <= 10; page++) {
+  for (let page = 1; page <= 50; page++) {   // 0079: up to 10,000 items (was 2,000: one make)
     const b = await zohoInv("GET", "/items", { page: String(page), per_page: "200" });
     rows.push(...(b.items ?? []).filter((i: { track_inventory?: boolean }) => i.track_inventory !== false).map(invItemRow));
     cat.push(...(b.items ?? []).map(catalogueRow));
@@ -669,22 +669,41 @@ const catalogueRow = (i: any) => ({ item_id: String(i.item_id), manufacturer: i.
   // deno-lint-ignore no-explicit-any
   part_type: ((i.custom_fields ?? []) as any[]).find((f) => /part\s*type/i.test(String(f.label ?? f.api_name ?? "")))?.value ?? i.cf_part_type ?? null });
 
-/** 0074 (Ian, 24 Oct: "carry straight on"): Manufacturer FAW + Brand JH6 on the active FAW JH6
- *  inventory items that have neither. Only those two fields are sent; every item is read back and
- *  its rate, purchase rate, name and SKU compared, so nothing else changes unnoticed.
- *  { action: "catalogue_set", apply?: true } — preview without apply. */
+/** 0074 (Ian, 24 Oct: "carry straight on"): Manufacturer + Brand on active inventory items that
+ *  have neither. Only those two fields are sent; every item is read back and its rate, purchase
+ *  rate, name and SKU compared, so nothing else changes unnoticed.
+ *  0079 (more makes): the values come from the item's CTP part (make/model) and that make's
+ *  make_profile — never a default. An item with no CTP part, or a make with no profile, is left
+ *  alone and listed (it used to get FAW/JH6). An explicit { manufacturer, brand } still works,
+ *  but only together with { skus: [...] }.
+ *  { action: "catalogue_set", apply?: true, skus?: [...] } — preview without apply. */
 // deno-lint-ignore no-explicit-any
 async function catalogueSet(db: SupabaseClient, log: Logger, body: any) {
-  const make = String(body.manufacturer ?? "FAW"), model = String(body.brand ?? "JH6");
+  const skuList: string[] | null = Array.isArray(body.skus) && body.skus.length ? body.skus.map((x: unknown) => String(x).trim().toUpperCase()) : null;
+  if ((body.manufacturer || body.brand) && !skuList) throw new Blocked("catalogue_set: an explicit manufacturer/brand needs a skus list (0079: no blanket default any more).");
+  const { data: profs } = await db.from("make_profile").select("make, model, zoho_manufacturer, zoho_brand").eq("active", true);
+  const { data: links } = await db.from("zoho_item").select("zoho_item_id, part:part_id(make, model)").not("part_id", "is", null);
+  // deno-lint-ignore no-explicit-any
+  const partOf = new Map((links ?? []).map((l: any) => [String(l.zoho_item_id), l.part]));
+  // deno-lint-ignore no-explicit-any
+  const target = (i: any): { make: string; model: string } | null => {
+    if (body.manufacturer || body.brand) return { make: String(body.manufacturer ?? ""), model: String(body.brand ?? "") };
+    const p = partOf.get(String(i.item_id));
+    const pr = p && (profs ?? []).find((x) => x.make === p.make && (x.model ?? "") === (p.model ?? ""));
+    return pr?.zoho_manufacturer ? { make: pr.zoho_manufacturer, model: pr.zoho_brand ?? "" } : null;
+  };
   // deno-lint-ignore no-explicit-any
   const items: any[] = [];
-  for (let page = 1; page <= 10; page++) {
+  for (let page = 1; page <= 50; page++) {   // 0079: up to 10,000 items (was 2,000: one make)
     const b = await zohoInv("GET", "/items", { page: String(page), per_page: "200", filter_by: "Status.Active" });
     items.push(...(b.items ?? []));
     if (!b.page_context?.has_more_page) break;
   }
-  const todo = items.filter((i) => i.item_type === "inventory" && (!i.manufacturer || !i.brand));
-  if (body.apply !== true) return { preview: true, active_items: items.length, to_set: todo.length, already: items.length - todo.length, sample: todo.slice(0, 5).map((i) => i.sku) };
+  const lacking = items.filter((i) => i.item_type === "inventory" && (!i.manufacturer || !i.brand)
+    && (!skuList || skuList.includes(String(i.sku ?? "").trim().toUpperCase())));
+  const todo = lacking.filter((i) => target(i)), unknown = lacking.filter((i) => !target(i)).map((i) => i.sku);
+  if (body.apply !== true) return { preview: true, active_items: items.length, to_set: todo.length, already: items.length - lacking.length,
+    no_profile: unknown, sample: todo.slice(0, 5).map((i) => `${i.sku} → ${target(i)?.make}/${target(i)?.model}`) };
   const changed: string[] = [], failed: string[] = [], drift: string[] = [];
   // Zoho allows 100 calls a minute: a batch per call (default 25 items = 50 calls), paced
   const batch = todo.slice(0, Math.min(Math.max(Number(body.limit ?? 25), 1), 40));
@@ -692,14 +711,15 @@ async function catalogueSet(db: SupabaseClient, log: Logger, body: any) {
   for (const i of batch) {
     await pause();
     try {
-      await zohoInv("PUT", `/items/${i.item_id}`, {}, { name: i.name, ...(i.manufacturer ? {} : { manufacturer: make }), ...(i.brand ? {} : { brand: model }) });
+      const t = target(i)!;
+      await zohoInv("PUT", `/items/${i.item_id}`, {}, { name: i.name, ...(i.manufacturer ? {} : { manufacturer: t.make }), ...(i.brand || !t.model ? {} : { brand: t.model }) });
       const a = (await zohoInv("GET", `/items/${i.item_id}`)).item;
       for (const k of ["rate", "purchase_rate", "name", "sku", "status"]) if (String(a?.[k]) !== String(i[k])) drift.push(`${i.sku}.${k}: ${i[k]} → ${a?.[k]}`);
-      if (a?.manufacturer && a?.brand) changed.push(i.sku); else failed.push(`${i.sku}: not set (manufacturer=${a?.manufacturer}, brand=${a?.brand})`);
+      if (a?.manufacturer && (a?.brand || !t.model)) changed.push(i.sku); else failed.push(`${i.sku}: not set (manufacturer=${a?.manufacturer}, brand=${a?.brand})`);
     } catch (e) { failed.push(`${i.sku}: ${e instanceof Error ? e.message : String(e)}`); }
   }
   await log({ doc_type: "item", action: "update", ok: !failed.length && !drift.length,
-              message: `Catalogue: Manufacturer ${make} / Brand ${model} set on ${changed.length} items${failed.length ? `; ${failed.length} failed` : ""}${drift.length ? `; DRIFT ${drift.join(", ")}` : ""}`.slice(0, 2000) });
+              message: `Catalogue: Manufacturer / Brand (from each part's make profile) set on ${changed.length} items${failed.length ? `; ${failed.length} failed` : ""}${drift.length ? `; DRIFT ${drift.join(", ")}` : ""}`.slice(0, 2000) });
   const left = todo.length - batch.length;
   const sync = left === 0 ? await stockSync(db, log, true) : null;
   return { applied: true, set: changed.length, left, failed, drift, catalogue_changed: (sync as { catalogue_changed?: number } | null)?.catalogue_changed ?? null };
@@ -928,7 +948,7 @@ async function rebateBook(db: SupabaseClient, log: Logger, body: any) {
   const skus = new Set((skuRows ?? []).map((r) => String(r.sku).trim().toUpperCase()));
   // deno-lint-ignore no-explicit-any
   const items: any[] = [];
-  for (let page = 1; page <= 10; page++) {
+  for (let page = 1; page <= 50; page++) {   // 0079: up to 10,000 items (was 2,000: one make)
     const b = await zohoInv("GET", "/items", { page: String(page), per_page: "200", filter_by: "Status.Active" });
     items.push(...(b.items ?? []));
     if (!b.page_context?.has_more_page) break;
@@ -946,7 +966,16 @@ async function rebateBook(db: SupabaseClient, log: Logger, body: any) {
     rows.push({ sku, name: it.name, item_id: String(it.item_id), zoho_rate: rate, cost, rebate_pct: r.pct, rebate_price: r.price,
                 contribution_margin: r.cm == null ? null : Math.round(r.cm * 10000) / 10000 });
   }
-  const notInScheme = items.filter((i) => i.item_type === "inventory" && !skus.has(String(i.sku ?? "").trim().toUpperCase())).map((i) => i.sku);
+  // 0079: "not in the scheme" only for items of the makes whose profile uses this scheme (another
+  // make's items are not missing from it); a scheme no profile names keeps the all-items check
+  const { data: scProfs } = await db.from("make_profile").select("make, model").eq("rebate_scheme_id", sc.id).eq("active", true);
+  const { data: scLinks } = scProfs?.length ? await db.from("zoho_item").select("zoho_item_id, part:part_id(make, model)").not("part_id", "is", null) : { data: [] };
+  // deno-lint-ignore no-explicit-any
+  const ofScheme = new Set((scLinks ?? []).filter((l: any) => l.part && scProfs!.some((x) => x.make === l.part.make && (x.model ?? "") === (l.part.model ?? "")))
+    // deno-lint-ignore no-explicit-any
+    .map((l: any) => String(l.zoho_item_id)));
+  const notInScheme = items.filter((i) => i.item_type === "inventory" && !skus.has(String(i.sku ?? "").trim().toUpperCase())
+    && (!scProfs?.length || ofScheme.has(String(i.item_id)))).map((i) => i.sku);
   const inBook = rows.filter((r) => r.item_id && (r.rebate_pct > 0 || sc.include_zero));
   const summary = { scheme: name, parts_in_scheme: skus.size, priced: rows.filter((r) => r.item_id).length, in_book: inBook.length,
     tiers: Object.fromEntries(tiers.map((t) => [t, rows.filter((r) => r.rebate_pct === t).length])),

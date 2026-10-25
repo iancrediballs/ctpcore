@@ -1,0 +1,2 @@
+code,make,model,display_name,parts_brand_code,parts_brand_name,parts_brand_is_oem,zoho_manufacturer,zoho_brand,zoho_sales_account_id,zoho_purchase_account_id,zoho_inventory_account_id,unit,default_part_type,rebate_scheme,pn_pattern,lookup_url,description_template,is_test,notes
+ZZTEST,ZZTEST Trucks,T1,ZZTEST T1 (TEST – not a real make),ZZTEST,ZZTEST Genuine (TEST),Y,ZZTEST Trucks,T1,1429405000000000391,1429405000000034003,1429405000000034001,pcs,OEM,ZZTEST – Rebate,^ZZT-,,TEST {make} {model} · part no. {sku},Y,Onboarding pipeline proof — deactivated and purged straight after

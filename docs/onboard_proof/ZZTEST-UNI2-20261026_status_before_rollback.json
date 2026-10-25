@@ -1,0 +1,39 @@
+{
+  "batch": {
+    "code": "ZZTEST-UNI2-20261026",
+    "profile_code": "ZZTEST_ALL2",
+    "status": "imported",
+    "is_test": true,
+    "summary": {
+      "ok": true,
+      "batch": "ZZTEST-UNI2-20261026",
+      "counts": {
+        "part:created": 1,
+        "price:created": 1,
+        "category:created": 1,
+        "supplier:created": 1,
+        "part_image:created": 1,
+        "make_profile:created": 1,
+        "part_supplier:created": 1
+      },
+      "errors": [],
+      "dry_run": false,
+      "uploads": [
+        "assets/photos/master/ZZT-UNI-001_31ee487f.png"
+      ],
+      "warnings": []
+    },
+    "created_at": "2026-10-25T22:39:40.072736+00:00",
+    "updated_at": "2026-10-25T22:39:40.072736+00:00"
+  },
+  "rows": {
+    "make_profile:created": 1,
+    "category:created": 1,
+    "supplier:created": 1,
+    "part:created": 1,
+    "price:created": 1,
+    "part_supplier:created": 1,
+    "part_image:created": 1,
+    "zoho_item:zoho_created": 1
+  }
+}

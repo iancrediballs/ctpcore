@@ -1,0 +1,3 @@
+sku,xref_number,xref_brand,xref_type,confidence
+ZZT-MRR-001-L,ALT-ZZ-123,ZZTEST Aftermarket (TEST),alternate,80
+ZZT-LGT-001-C,OEM-ZZ-777,ZZTEST,oem,100

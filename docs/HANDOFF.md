@@ -1074,3 +1074,22 @@ correctly as you would see them on the truck, or in the diagram."
 - Same evening's diagnosis: the 3 stuck orders were Zoho steps, not a bug — SO-00022/SO-00023 not
   invoiced; INV-000013 saved as Draft and unpaid (cash). zoho-readback cron 200 every 10 min;
   8 Inventory webhooks + rules active; 0 hook errors.
+
+## 26 Oct — new makes are data-driven (0079, zoho-onboard, tools/onboard; docs/13)
+- Ian: "replicate everything we've done with the FAW JH6 to any … make, model … Sonnet next, mechanical
+  for all". Playbook + data checklist: **docs/13_ADD_A_NEW_MAKE.md**; templates **docs/templates/**.
+- **0079** (applied on live, additive): `make_profile` (FAWJH6 row = what was hardcoded: Zoho FAW/JH6,
+  Sales - FAW / COGS - FAW / Inventory Asset ids, scheme, pn pattern, rusauto lookup), `part.universal`,
+  part_type + 'Universal', xref_type + 'alternate', vehicle_model years/engine, `part_supplier`,
+  `import_batch(_row)`, `onboard_import(p, dry_run)`, `onboard_rollback(batch, purge, dry_run)`,
+  `onboard_bump_ids()`. Sync rules: no change.
+- **zoho-onboard** (new edge fn, admin/service): accounts (read), items (create/link), deactivate, verify.
+- **zoho-push** (deployed): `catalogue_set` no longer defaults to FAW/JH6 (from each part's profile;
+  explicit values need a SKU list); item reads up to 50 pages (was 10 = 2,000 items); rebate-book
+  "not in the scheme" only for the scheme's makes. Live previews identical for FAW (0 to set; 154 / 113
+  in book / same tiers / same 1 flag).
+- Proof run with fictitious ZZTEST brand (+ a universal part) end to end, then rolled back: 3 TEST Zoho
+  items INACTIVE (1429405000000514004, 515001, 520004), CTP purged. docs/onboard_proof/.
+- App: unchanged tonight (demo). The UI follow-ups (drawing per make, Find filters with universal parts,
+  Jefrey per make, rusauto button from profile) are listed at the end of docs/13.
+- Note: the price-book preview runs inside the DB via pg_net (like the cron), so no secret leaves Vault.

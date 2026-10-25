@@ -1,0 +1,3 @@
+sku,name,section_code,part_type,universal,catalogue_pn,side,diagram_item_no,description,list_price_zar,supplier
+ZZT-MRR-001-L,TEST – Mirror Arm L/H (ZZTEST),MRR,OEM,,ZZT-MRR-001,L,1,TEST part — do not sell,1000.00,ZZTEST Supplier A (TEST)
+ZZT-LGT-001-C,TEST – Headlamp (ZZTEST),LGT,OEM,,ZZT-LGT-001,C,2,TEST part — do not sell,2500.00,ZZTEST Supplier B (TEST)

@@ -1,0 +1,40 @@
+{
+  "batch": {
+    "code": "ZZTEST-20261026",
+    "profile_code": "ZZTEST",
+    "status": "imported",
+    "is_test": true,
+    "summary": {
+      "ok": true,
+      "batch": "ZZTEST-20261026",
+      "counts": {},
+      "errors": [],
+      "dry_run": false,
+      "uploads": [
+        "assets/diagrams/zztest/ZZTEST-FRONT_e918bfe2.png",
+        "assets/photos/master/ZZT-MRR-001-L_6d2dae84.png",
+        "assets/photos/master/ZZT-LGT-001-C_05fdb6b1.png"
+      ],
+      "warnings": []
+    },
+    "created_at": "2026-10-25T22:33:03.171944+00:00",
+    "updated_at": "2026-10-25T22:36:15.365223+00:00"
+  },
+  "rows": {
+    "make_profile:created": 1,
+    "brand:created": 1,
+    "vehicle_model:created": 2,
+    "supplier:created": 2,
+    "part:created": 2,
+    "price:created": 2,
+    "part_fitment:created": 3,
+    "part_xref:created": 2,
+    "part_supplier:created": 3,
+    "diagram:created": 1,
+    "hotspot:created": 2,
+    "part_image:created": 2,
+    "rebate_scheme_sku:created": 2,
+    "part_supplier:updated": 6,
+    "zoho_item:zoho_created": 2
+  }
+}

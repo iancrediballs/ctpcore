@@ -1,0 +1,4 @@
+sku,supplier_code,supplier_sku,cost_zar,currency,lead_time_days,moq,preferred
+ZZT-MRR-001-L,ZZTEST-SUP-A,A-55501,400.00,ZAR,14,1,Y
+ZZT-MRR-001-L,ZZTEST-SUP-B,B-90001,430.00,ZAR,30,2,
+ZZT-LGT-001-C,ZZTEST-SUP-B,B-90002,1100.00,ZAR,30,1,Y

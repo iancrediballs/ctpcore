@@ -1,0 +1,2 @@
+﻿code,make,model,display_name,parts_brand_code,parts_brand_name,parts_brand_is_oem,zoho_manufacturer,zoho_brand,zoho_sales_account_id,zoho_purchase_account_id,zoho_inventory_account_id,unit,default_part_type,rebate_scheme,pn_pattern,lookup_url,description_template,is_test,notes
+# SONNET_X,Sonnet,X3000,Sonnet X3000,SONNET,Sonnet Genuine,Y,Sonnet,X3000,,,1429405000000034001,pcs,OEM,,,,,,

@@ -1,0 +1,36 @@
+1. Zoho: deactivate the items this batch CREATED (items it only linked are left as they were)
+{
+  "ok": true,
+  "batch": "ZZTEST-20261026",
+  "apply": true,
+  "deactivated": [
+    "ZZT-LGT-001-C (1429405000000514004)",
+    "ZZT-MRR-001-L (1429405000000515001)"
+  ],
+  "would_deactivate": [],
+  "unlinked_only": [],
+  "failed": []
+}
+2. CTP: restore updated rows, DELETE created rows
+{
+  "batch": "ZZTEST-20261026",
+  "purge": true,
+  "undone": {
+    "part:created": 2,
+    "brand:created": 1,
+    "price:created": 2,
+    "diagram:created": 1,
+    "hotspot:created": 2,
+    "supplier:created": 2,
+    "part_xref:created": 2,
+    "part_image:created": 2,
+    "make_profile:created": 1,
+    "part_fitment:created": 3,
+    "part_supplier:created": 3,
+    "part_supplier:updated": 6,
+    "vehicle_model:created": 2,
+    "rebate_scheme_sku:created": 2
+  },
+  "dry_run": false
+}
+3. Storage: removed 5 picture(s) of this TEST batch (200)

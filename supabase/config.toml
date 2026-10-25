@@ -7,3 +7,6 @@ verify_jwt = true
 
 [functions.zoho-hook]
 verify_jwt = false
+
+[functions.zoho-onboard]
+verify_jwt = true
