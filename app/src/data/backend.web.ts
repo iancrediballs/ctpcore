@@ -464,6 +464,17 @@ async function partDetail(partId: number): Promise<unknown> {
   }
   priceCents = listMinor(priceCents);
 
+  // CAT-5: cross-references and fitment for the sheet. Both tables sync to every device.
+  const xrefs = await all(
+    `SELECT xref_type, xref_number, xref_brand FROM part_xref
+      WHERE part_id = ? AND deleted_at IS NULL
+      ORDER BY CASE xref_type WHEN 'oem' THEN 0 ELSE 1 END, xref_number`, [pid]).catch(() => [] as Row[]);
+  const fitment = await all(
+    `SELECT v.make, v.model, v.variant, f.engine, f.year_from, f.year_to, f.note
+       FROM part_fitment f LEFT JOIN vehicle_model v ON v.id = f.vehicle_id
+      WHERE f.part_id = ? AND f.deleted_at IS NULL
+      ORDER BY v.make, v.model, v.variant`, [pid]).catch(() => [] as Row[]);
+
   // 0065: Zoho Inventory's figures for this part (null until the first stock sync / on customer phones)
   const zs = await one<Row>(`SELECT zoho_stock_on_hand, zoho_available_for_sale, zoho_committed, zoho_stock_at FROM part WHERE id = ?`, [pid])
     .catch(() => null);
@@ -485,6 +496,9 @@ async function partDetail(partId: number): Promise<unknown> {
       committed: nnum(zs["zoho_committed"]), at: nstr(zs["zoho_stock_at"]) } : null,
     id: numId(d["id"], "part.id"),
     sku: str(d["sku"]),
+    xrefs: xrefs.map((x) => ({ type: str(x["xref_type"]), number: str(x["xref_number"]), brand: nstr(x["xref_brand"]) })),
+    fitment: fitment.map((f) => ({ make: nstr(f["make"]), model: nstr(f["model"]), variant: nstr(f["variant"]),
+      engine: nstr(f["engine"]), year_from: nnum(f["year_from"]), year_to: nnum(f["year_to"]), note: nstr(f["note"]) })),
     locator: nstr(d["locator"]),
     catalogue_pn: nstr(d["catalogue_pn"]),
     inventory_pn: nstr(d["inventory_pn"]),

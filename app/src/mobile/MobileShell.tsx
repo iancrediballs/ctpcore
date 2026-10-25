@@ -90,6 +90,10 @@ type Detail = {
   diagram_image: string | null; diagram_item: string | null;
   // 0065: Zoho Inventory's physical stock for this part (staff; null until synced)
   zoho_stock?: { on_hand: number; available: number | null; committed: number | null; at: string | null } | null;
+  // CAT-5: cross-references and vehicle fitment
+  xrefs?: { type: string; number: string; brand: string | null }[];
+  fitment?: { make: string | null; model: string | null; variant: string | null; engine: string | null;
+    year_from: number | null; year_to: number | null; note: string | null }[];
 };
 
 type Toast = { text: string; err?: boolean; undo?: () => void };
@@ -2990,6 +2994,32 @@ const parseRand = (s: string): number => {
               {d.inventory_pn && d.inventory_pn !== d.catalogue_pn &&
                 <div className="mb-row"><span className="mb-rk">Received as</span><span className="mb-rv mb-mono">{d.inventory_pn}</span></div>}
               {d.brand && <div className="mb-row"><span className="mb-rk">Brand</span><span className="mb-rv">{d.brand}</span></div>}
+              {(() => {
+                // CAT-5: fitment, one compact line per vehicle. The note is internal wording: staff only.
+                const fits = (d.fitment ?? []).map((f) => {
+                  const yrs = f.year_from || f.year_to ? `${f.year_from ?? "…"}–${f.year_to ?? "on"}` : "";
+                  return { k: [f.make, f.model, f.variant].filter(Boolean).join(" ") + (f.engine ? ` · ${f.engine}` : "") + (yrs ? ` · ${yrs}` : ""), note: f.note };
+                }).filter((f) => f.k);
+                return fits.length > 0 && (
+                  <div className="mb-row"><span className="mb-rk">Fits</span>
+                    <span className="mb-rv">{fits.map((f, i) => <div key={i}>{f.k}{!isClient && f.note ? <span className="mb-dim"> · {f.note}</span> : null}</div>)}</span>
+                  </div>
+                );
+              })()}
+              {(() => {
+                // CAT-5: cross-references, minus numbers already on the sheet. A customer sees the OEM
+                // numbers only; supersessions include CTP's internal legacy codes.
+                const shown = new Set([d.sku, d.catalogue_pn, d.inventory_pn].filter(Boolean).map((v) => String(v).toLowerCase()));
+                const xs = (d.xrefs ?? []).filter((x) => x.number && !shown.has(x.number.toLowerCase()) && (!isClient || x.type === "oem"));
+                return xs.length > 0 && (
+                  <div className="mb-row"><span className="mb-rk">Cross-refs</span>
+                    <span className="mb-rv mb-xrefs">{xs.map((x, i) => (
+                      <span key={i} className="mb-xref"><span className="mb-mono">{x.number}</span>
+                        <span className="mb-dim"> {[x.brand, x.type === "oem" ? "OEM" : x.type].filter(Boolean).join(" · ")}</span></span>
+                    ))}</span>
+                  </div>
+                );
+              })()}
               {!isClient && d.stock.filter((s) => s.on_hand !== 0 || s.bin).map((s) => (
                 <div className="mb-row" key={s.location_id}>
                   <span className="mb-rk">{s.location_code}</span>
