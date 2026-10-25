@@ -181,7 +181,7 @@ const LOGO_TRUCK = "/brand/ctp_truck_v3.webp";
 /** The logo, with a truck that occasionally goes for a drive. */
 function Brand() {
   return (
-    <span className="mb-brand" aria-label="China Truck Parts">
+    <span className="mb-brand" role="img" aria-label="China Truck Parts">
       <img className="mb-brand-body" src={LOGO_BODY} alt=""
         onError={(e) => { e.currentTarget.style.display = "none"; }} />
       <img className="mb-brand-truck" src={LOGO_TRUCK} alt="" aria-hidden="true"
