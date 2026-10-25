@@ -53,6 +53,8 @@ type Section = {
 type PartRow = {
   id: number; sku: string; name: string; category_code: string | null;
   qty_on_hand: number; bin: string | null; price_cents: number | null;
+  /** 0047: of qty_on_hand, units held for accepted orders (staff devices only). */
+  qty_held?: number;
   // 0050: the one stock fact a customer gets. null = not synced yet (unknown).
   in_stock?: boolean | null;
   image?: string | null;
@@ -62,7 +64,7 @@ type PartRow = {
 
 type Hit = {
   id: number; sku: string; name: string; brand: string | null;
-  on_hand: number; in_stock?: boolean | null; price_cents: number | null; matched_on: string;
+  on_hand: number; held?: number; in_stock?: boolean | null; price_cents: number | null; matched_on: string;
   bin?: string | null; thumb?: string | null;
 };
 
@@ -1450,7 +1452,7 @@ const parseRand = (s: string): number => {
     if (hits) {
       return hits.map((h) => ({
         id: h.id, sku: h.sku, name: h.name, category_code: null,
-        qty_on_hand: h.on_hand, in_stock: h.in_stock ?? null, bin: h.bin ?? null, price_cents: h.price_cents,
+        qty_on_hand: h.on_hand, qty_held: h.held ?? 0, in_stock: h.in_stock ?? null, bin: h.bin ?? null, price_cents: h.price_cents,
         image: h.thumb ?? null,
       }));
     }
@@ -1625,7 +1627,10 @@ const parseRand = (s: string): number => {
             demoted. Closing the viewer drops you here, on this section's parts,
             which is what the tile was standing in front of. */}
         <div className="mb-count">
-          {hits ? `${cards.length} match${cards.length === 1 ? "" : "es"}` : `${cards.length} parts`}
+          {hits ? `${cards.length} match${cards.length === 1 ? "" : "es"}`
+            /* CAT-11: search starts at 3 characters; say so rather than silently browsing */
+            : q.trim().length > 0 && q.trim().length < 3 ? `Type at least 3 characters to search · ${cards.length} parts`
+            : `${cards.length} parts`}
         </div>
         {/* .mb-cards is a plain block on a phone; at desktop widths it is the
             auto-fill card grid (mobile.css, desktop skin). */}
@@ -1654,8 +1659,9 @@ const parseRand = (s: string): number => {
               ) : (
                 <span className="mb-cmeta">
                   {p.bin && <span className="mb-bin"><IcPin />{p.bin}</span>}
-                  <span className={"mb-qty" + qtyClass(p.qty_on_hand)}>
-                    {p.qty_on_hand <= 0 ? "out" : `${p.qty_on_hand} on hand`}
+                  {/* CAT-14: held units are on the shelf but promised; coloured by what is free */}
+                  <span className={"mb-qty" + qtyClass(p.qty_on_hand - Math.max(0, p.qty_held ?? 0))}>
+                    {p.qty_on_hand <= 0 ? "out" : `${p.qty_on_hand} on hand`}{(p.qty_held ?? 0) > 0 && p.qty_on_hand > 0 ? ` · ${p.qty_held} held` : ""}
                   </span>
                 </span>
               )}
@@ -1667,7 +1673,7 @@ const parseRand = (s: string): number => {
           <div className="mb-empty">
             <h3>{hits ? "No matches" : "Nothing synced yet"}</h3>
             <p>{hits
-              ? "Try fewer characters, or a different number — search covers SKU, OEM numbers, locators, cross-references and names."
+              ? `Try fewer words, or a different number — search covers SKU, OEM numbers${isClient ? "" : ", locators, aliases"}, cross-references and names.`
               : "Once the first sync completes the catalogue appears here by itself."}</p>
           </div>
         )}

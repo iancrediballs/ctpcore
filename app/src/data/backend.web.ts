@@ -215,129 +215,192 @@ function noteGaps(): void {
 // The desktop ranks by bm25 over an FTS5 trigram index built from
 //   sku · mpn · name · locator · catalogue_pn · inventory_pn · brand.name · every xref
 // (see migrations 0006/0012). PowerSync mirrors base tables only — there is no
-// FTS index to query — so this scans the same field set with instr() and ranks
-// in JS. At 173 live parts that is well under a frame; if the catalogue grows an
-// order of magnitude, revisit with a client-side FTS5 table kept current by a
-// PowerSync watch.
+// FTS index to query — so this reads the same field set (plus Jefrey's learned
+// aliases) once per query and matches in JS. At ~160 live parts that is a few
+// ms; if the catalogue grows an order of magnitude, revisit with a client-side
+// FTS5 table kept current by a PowerSync watch.
 //
-// The one honest behavioural difference: ordering. bm25 is a relevance score
-// this cannot reproduce, so results are ranked by match specificity instead
-// (exact identifier > prefix > substring > xref > name > brand only), tie-broken
-// by shorter field then SKU. Same result SET as the desktop, sometimes a
-// different order within it.
+// Matching (CAT-3, 26 Oct):
+//   - the query is split into words and EVERY word must appear somewhere in the
+//     part's fields, in any order ("bumper bracket" finds "Front Bumper L/H
+//     Bracket Assembly");
+//   - identifiers (SKU, OEM/catalogue/inventory numbers, locator, xrefs) are also
+//     compared with dashes, spaces, dots, slashes and underscores stripped, so
+//     "5103121B45" finds 5103121-B45;
+//   - part_alias phrases count as fields. Only staff devices sync part_alias; on a
+//     customer device the table is empty, so this adds nothing there.
+//
+// Ordering: bm25 is a relevance score this cannot reproduce, so results are
+// ranked by match specificity instead (exact identifier > prefix > substring >
+// xref > name > alias/brand/other), tie-broken by shorter field then SKU.
 //
 // Parity detail worth keeping: Rust guards on `query.trim().len() < 2`, but the
 // index is `tokenize = 'trigram'`, so a 2-character MATCH finds nothing anyway.
-// The effective desktop floor is 3, which is what this uses.
+// The effective desktop floor is 3, which is what this uses (the Find tab says
+// so while fewer are typed).
 
 const MIN_QUERY = 3;
 
+/** Identifier comparison form: lower case, separators gone. */
+const compact = (s: string): string => s.toLowerCase().replace(/[\s\-./_\\]+/g, "");
+
+/** Phase 1: the searchable text of every live part, its xrefs and its aliases. */
+const HAY_PARTS_SQL = `
+  SELECT p.id, p.sku, p.name, p.mpn, p.locator, p.catalogue_pn, p.inventory_pn, b.name AS brand
+    FROM part p LEFT JOIN brand b ON b.id = p.brand_id
+   WHERE p.deleted_at IS NULL`;
+const HAY_XREF_SQL = `
+  SELECT part_id, xref_type, xref_number, xref_brand FROM part_xref WHERE deleted_at IS NULL`;
+// polarity +1 teaches, -1 un-teaches: a phrase counts while its net is positive.
+const HAY_ALIAS_SQL = `
+  SELECT part_id, phrase_norm FROM part_alias
+   WHERE deleted_at IS NULL AND phrase_norm IS NOT NULL
+   GROUP BY part_id, phrase_norm HAVING SUM(COALESCE(polarity, 1)) > 0`;
+
+/** Phase 2: the card columns, for the matched parts only. */
 const SEARCH_SQL = `
   SELECT
     p.id, p.sku, p.name, p.mpn, p.locator, p.catalogue_pn, p.inventory_pn,
     b.name AS brand,
     p.in_stock AS in_stock,
     COALESCE((SELECT SUM(m.delta) FROM stock_movement m WHERE m.part_id = p.id AND m.reason NOT IN ('reserve','release')), 0) AS on_hand,
-    -- Was ORDER BY (currency <> 'USD') first, preferring a USD row. Migration
-    -- 0013 deleted every USD price and stopped tracking USD, so that tiebreak
-    -- is dead code that would silently prefer a stale currency if one ever came
-    -- back. Newest list price wins, full stop. deleted_at guard added to match
-    -- the fallback in partDetail().
+    -- 0047: units held for accepted orders (reserve − release), so a card can say "· 1 held"
+    COALESCE((SELECT -SUM(m.delta) FROM stock_movement m WHERE m.part_id = p.id AND m.reason IN ('reserve','release')), 0) AS held,
+    -- Newest list price wins (0013 dropped USD). deleted_at guard matches partDetail().
     (SELECT pr.amount_minor FROM price pr
       WHERE pr.part_id = p.id AND pr.tier = 'list' AND pr.deleted_at IS NULL
       ORDER BY pr.valid_from DESC LIMIT 1) AS price_cents,
-    -- The two extra columns the mobile cards need. The desktop Hit type does
-    -- not carry them (Rust search_parts predates the mobile shell); extra
-    -- fields on a returned row are invisible to callers that don't read them.
+    -- The extra columns the mobile cards need; invisible to desktop callers.
     (SELECT sp.bin FROM stock_policy sp WHERE sp.part_id = p.id LIMIT 1) AS bin,
     (SELECT pi.path FROM part_image pi
       WHERE pi.part_id = p.id AND pi.deleted_at IS NULL
-      ORDER BY pi.is_primary DESC, pi.sort_order LIMIT 1) AS thumb,
-    (SELECT x.xref_type || ' # ' || x.xref_number FROM part_xref x
-      WHERE x.part_id = p.id AND instr(lower(x.xref_number), ?) > 0 LIMIT 1) AS matched_xref,
-    (SELECT group_concat(x2.xref_number || ' ' || COALESCE(x2.xref_brand, ''), ' ')
-      FROM part_xref x2 WHERE x2.part_id = p.id) AS xref_body
+      ORDER BY pi.is_primary DESC, pi.sort_order LIMIT 1) AS thumb
   FROM part p
   LEFT JOIN brand b ON b.id = p.brand_id
-  WHERE p.deleted_at IS NULL
-    AND (
-         instr(lower(p.sku), ?) > 0
-      OR instr(lower(COALESCE(p.mpn, '')), ?) > 0
-      OR instr(lower(p.name), ?) > 0
-      OR instr(lower(COALESCE(p.locator, '')), ?) > 0
-      OR instr(lower(COALESCE(p.catalogue_pn, '')), ?) > 0
-      OR instr(lower(COALESCE(p.inventory_pn, '')), ?) > 0
-      OR instr(lower(COALESCE(b.name, '')), ?) > 0
-      OR EXISTS (SELECT 1 FROM part_xref x3
-                  WHERE x3.part_id = p.id
-                    AND (instr(lower(x3.xref_number), ?) > 0
-                      OR instr(lower(COALESCE(x3.xref_brand, '')), ?) > 0))
-    )
+  WHERE p.id IN (SELECT value FROM json_each(?)) AND p.deleted_at IS NULL
 `;
 
 /** Identifier fields, most specific first — this order drives the ranking. */
 const ID_FIELDS = ["sku", "inventory_pn", "catalogue_pn", "locator", "mpn"] as const;
 
+type Xref = { type: string; number: string; brand: string };
+type Hay = {
+  row: Row;
+  ids: string[];          // lower-cased identifier values (ID_FIELDS order)
+  idsC: string[];         // the same, compacted (plus xref numbers)
+  text: string[];         // every searchable field, lower-cased
+  xrefs: Xref[];
+  aliases: string[];
+};
+
+/** Does one query word appear in this part? */
+function wordHits(h: Hay, w: string, wc: string): boolean {
+  for (const t of h.text) if (t.includes(w)) return true;
+  if (wc.length >= 2) for (const t of h.idsC) if (t.includes(wc)) return true;
+  return false;
+}
+
 /** Lower is better. Mirrors "how directly did this row match?". */
-function score(row: Row, term: string): [number, number, string] {
-  const idVals = ID_FIELDS.map((f) => str(row[f]).toLowerCase()).filter(Boolean);
-  const xrefs = str(row["xref_body"]).toLowerCase();
-  const name = str(row["name"]).toLowerCase();
-
-  let tier = 5; // brand-only match, or nothing more specific
+function score(h: Hay, term: string, termC: string, words: string[]): [number, number, string] {
+  let tier = 5; // alias / brand / scattered words
   let width = 999;
-
-  for (const v of idVals) {
-    if (v === term) { tier = Math.min(tier, 0); width = Math.min(width, v.length); }
-    else if (v.startsWith(term)) { tier = Math.min(tier, 1); width = Math.min(width, v.length); }
-    else if (v.includes(term)) { tier = Math.min(tier, 2); width = Math.min(width, v.length); }
+  for (const v of h.ids) {
+    const vc = compact(v);
+    if (v === term || (termC && vc === termC)) { tier = Math.min(tier, 0); width = Math.min(width, v.length); }
+    else if (v.startsWith(term) || (termC && vc.startsWith(termC))) { tier = Math.min(tier, 1); width = Math.min(width, v.length); }
+    else if (v.includes(term) || (termC.length >= 3 && vc.includes(termC))) { tier = Math.min(tier, 2); width = Math.min(width, v.length); }
   }
-  if (tier > 2 && xrefs.includes(term)) { tier = 3; width = Math.min(width, xrefs.length); }
-  if (tier > 3 && name.includes(term)) { tier = 4; width = Math.min(width, name.length); }
-
-  return [tier, width, str(row["sku"])];
+  if (tier > 2) {
+    for (const x of h.xrefs) {
+      const n = x.number.toLowerCase();
+      if (n.includes(term) || (termC.length >= 3 && compact(n).includes(termC))) { tier = 3; width = Math.min(width, n.length); }
+    }
+  }
+  const name = str(h.row["name"]).toLowerCase();
+  if (tier > 3 && words.every((w) => name.includes(w))) { tier = 4; width = Math.min(width, name.length); }
+  return [tier, width, str(h.row["sku"])];
 }
 
 async function searchParts(query: string): Promise<unknown[]> {
-  const term = query.trim().toLowerCase();
+  const term = query.trim().toLowerCase().replace(/\s+/g, " ");
   if (term.length < MIN_QUERY) return [];
+  const termC = compact(term);
+  const words = [...new Set(term.split(" ").filter(Boolean))];
+  const wordsC = words.map(compact);
 
-  // 1 binding for matched_xref + 9 in the WHERE clause = 10 copies of the term.
-  const rows = await all(SEARCH_SQL, Array(10).fill(term));
+  const [parts, xrefRows, aliasRows] = await Promise.all([
+    all(HAY_PARTS_SQL),
+    all(HAY_XREF_SQL),
+    all(HAY_ALIAS_SQL).catch(() => [] as Row[]),
+  ]);
+  const xrefsBy = new Map<string, Xref[]>();
+  for (const x of xrefRows) {
+    const k = str(x["part_id"]);
+    const v = { type: str(x["xref_type"]), number: str(x["xref_number"]), brand: str(x["xref_brand"]) };
+    const a = xrefsBy.get(k); if (a) a.push(v); else xrefsBy.set(k, [v]);
+  }
+  const aliasBy = new Map<string, string[]>();
+  for (const a of aliasRows) {
+    const k = str(a["part_id"]), v = str(a["phrase_norm"]).toLowerCase();
+    const l = aliasBy.get(k); if (l) l.push(v); else aliasBy.set(k, [v]);
+  }
 
-  const ranked = rows
-    .map((r) => ({ r, k: score(r, term) }))
-    .sort((a, b) => a.k[0] - b.k[0] || a.k[1] - b.k[1] || a.k[2].localeCompare(b.k[2]))
-    .slice(0, 50);
+  const matched: { h: Hay; k: [number, number, string] }[] = [];
+  for (const r of parts) {
+    const id = str(r["id"]);
+    const ids = ID_FIELDS.map((f) => str(r[f]).toLowerCase()).filter(Boolean);
+    const xrefs = xrefsBy.get(id) ?? [];
+    const aliases = aliasBy.get(id) ?? [];
+    const h: Hay = {
+      row: r, ids, xrefs, aliases,
+      idsC: [...ids, ...xrefs.map((x) => x.number)].map(compact),
+      text: [...ids, str(r["name"]).toLowerCase(), str(r["brand"]).toLowerCase(),
+        ...xrefs.flatMap((x) => [x.number.toLowerCase(), x.brand.toLowerCase()]), ...aliases].filter(Boolean),
+    };
+    const hit = words.every((w, i) => wordHits(h, w, wordsC[i]))
+      || (termC.length >= MIN_QUERY && h.idsC.some((t) => t.includes(termC)));
+    if (hit) matched.push({ h, k: score(h, term, termC, words) });
+  }
+  matched.sort((a, b) => a.k[0] - b.k[0] || a.k[1] - b.k[1] || a.k[2].localeCompare(b.k[2]));
+  const top = matched.slice(0, 50);
+  if (!top.length) return [];
 
-  return ranked.map(({ r }) => {
+  const detail = new Map<string, Row>();
+  for (const d of await all(SEARCH_SQL, [JSON.stringify(top.map(({ h }) => str(h.row["id"])))])) detail.set(str(d["id"]), d);
+
+  return top.flatMap(({ h }) => {
+    const r = detail.get(str(h.row["id"]));
+    if (!r) return [];
     const sku = str(r["sku"]);
-    // Explain WHY it matched, exactly as Rust does: a matching xref wins, then
-    // locator / inventory # / catalogue #, else fall back to the SKU. A name-only
-    // or mpn-only hit falls through to "part <sku>" on the desktop too — that is
-    // parity, not an omission.
-    let matched_on = nstr(r["matched_xref"]);
+    // Explain WHY it matched, as Rust does: a matching xref wins, then
+    // locator / inventory # / catalogue #, then a learned alias, else the SKU.
+    const probes = [term, ...words.filter((w) => w.length >= 3)];
+    const hitIn = (v: string) => { const lv = v.toLowerCase(), cv = compact(v);
+      return probes.some((p) => lv.includes(p) || (compact(p).length >= 3 && cv.includes(compact(p)))); };
+    const xr = h.xrefs.find((x) => hitIn(x.number));
+    let matched_on: string | null = xr ? `${xr.type} # ${xr.number}` : null;
     if (!matched_on) {
-      if (str(r["locator"]).toLowerCase().includes(term)) {
-        matched_on = `locator ${str(r["locator"])}`;
-      } else if (str(r["inventory_pn"]).toLowerCase().includes(term)) {
-        matched_on = `inventory # ${str(r["inventory_pn"])}`;
-      } else if (str(r["catalogue_pn"]).toLowerCase().includes(term)) {
-        matched_on = `catalogue # ${str(r["catalogue_pn"])}`;
+      if (str(r["locator"]) && hitIn(str(r["locator"]))) matched_on = `locator ${str(r["locator"])}`;
+      else if (str(r["inventory_pn"]) && hitIn(str(r["inventory_pn"]))) matched_on = `inventory # ${str(r["inventory_pn"])}`;
+      else if (str(r["catalogue_pn"]) && hitIn(str(r["catalogue_pn"]))) matched_on = `catalogue # ${str(r["catalogue_pn"])}`;
+      else {
+        const al = h.aliases.find((a) => words.every((w) => a.includes(w)));
+        if (al && !words.every((w) => str(r["name"]).toLowerCase().includes(w))) matched_on = `alias "${al}"`;
       }
     }
-    return {
+    return [{
       id: numId(r["id"], "part.id"),
       sku,
       name: str(r["name"]),
       brand: nstr(r["brand"]),
       on_hand: Number(r["on_hand"]),
+      held: Number(r["held"] ?? 0),
       in_stock: nbool(r["in_stock"]),
       price_cents: listMinor(r["price_cents"]),
       matched_on: matched_on ?? `part ${sku}`,
       bin: nstr(r["bin"]),
       thumb: nstr(r["thumb"]),
-    };
+    }];
   });
 }
 
@@ -485,7 +548,10 @@ async function listParts(): Promise<unknown[]> {
     `SELECT v.*,
             (SELECT pr.amount_minor FROM price pr
               WHERE pr.part_id = v.id AND pr.tier = 'list' AND pr.deleted_at IS NULL
-              ORDER BY pr.valid_from DESC LIMIT 1) AS list_row_minor
+              ORDER BY pr.valid_from DESC LIMIT 1) AS list_row_minor,
+            -- 0047: units held for accepted orders, so a staff card can say "1 on hand · 1 held"
+            COALESCE((SELECT -SUM(m.delta) FROM stock_movement m
+                       WHERE m.part_id = v.id AND m.reason IN ('reserve','release')), 0) AS qty_held
        FROM (${PART_DETAIL_SQL}) v
       ORDER BY v.category_code, v.sku`
   );
@@ -503,6 +569,7 @@ async function listParts(): Promise<unknown[]> {
     status: nstr(r["status"]),
     match_status: nstr(r["match_status"]),
     qty_on_hand: Number(r["qty_on_hand"]),
+    qty_held: Number(r["qty_held"] ?? 0),
     in_stock: nbool(r["in_stock"]),
     bin: nstr(r["bin"]),
     price_cents: listMinor(r["list_row_minor"]) ?? listMinor(r["list_price_minor"]),
