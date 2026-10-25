@@ -51,7 +51,7 @@
 import type { Backend } from "./backend";
 import { makeUuid } from "./uuid";
 import { powerSync } from "../sync/system";
-import { supabase } from "../sync/supabase";
+import { supabase, readStoredSession } from "../sync/supabase";
 import { pushToZoho } from "./zoho";
 import { ShelfRefusedError } from "./errors";
 
@@ -729,6 +729,18 @@ async function getCompany(): Promise<unknown> {
 // table), so the UI updates offline and the sync happens when it happens.
 const MOVEMENT_REASONS = ["receipt", "sale", "return", "adjustment"] as const;
 
+/** SO-8: who made a movement. There is no server default or trigger for
+ *  actor_id, and PowerSync uploads through the Data API, so the row carries
+ *  the signed-in user from the moment it is written on the device (offline
+ *  too: the stored session is read without a network). actor_source is
+ *  'local_session' (0037): a verified session on the device at the time of
+ *  the action, accepted by the server afterwards. */
+function movementActor(given: unknown): string | null {
+  if (given != null && given !== "") return String(given);
+  return readStoredSession()?.user.id ?? null;
+}
+const actorSource = (actorId: string | null) => (actorId ? "local_session" : null);
+
 /**
  * Move stock between two locations.
  *
@@ -758,7 +770,7 @@ async function transferStock(a: Record<string, unknown>): Promise<unknown> {
   const qty = Number(a["qty"]);
   const outUuid = str(a["outUuid"]);
   const inUuid = str(a["inUuid"]);
-  const actorId = a["actorId"] == null ? null : String(a["actorId"]);
+  const actorId = movementActor(a["actorId"]);
 
   if (!Number.isInteger(qty) || qty <= 0) {
     throw new Error("[CTP web] transfer_stock: quantity must be a whole number above zero.");
@@ -779,9 +791,9 @@ async function transferStock(a: Record<string, unknown>): Promise<unknown> {
   await powerSync.writeTransaction(async (tx) => {
     const leg = (locationId: number, delta: number, clientUuid: string) =>
       tx.execute(
-        `INSERT INTO stock_movement (id, part_id, location_id, delta, reason, client_uuid, actor_id, created_at)
-         VALUES (?, ?, ?, ?, 'transfer', ?, ?, ?)`,
-        [makeUuid(), String(partId), String(locationId), delta, clientUuid, actorId, now]
+        `INSERT INTO stock_movement (id, part_id, location_id, delta, reason, client_uuid, actor_id, actor_source, created_at)
+         VALUES (?, ?, ?, ?, 'transfer', ?, ?, ?, ?)`,
+        [makeUuid(), String(partId), String(locationId), delta, clientUuid, actorId, actorSource(actorId), now]
       );
     await leg(fromId, -qty, outUuid);
     await leg(toId, qty, inUuid);
@@ -795,7 +807,7 @@ async function postMovement(a: Record<string, unknown>): Promise<unknown> {
   const raw = Number(a["delta"]);
   const reason = str(a["reason"]);
   const clientUuid = str(a["clientUuid"]);
-  const actorId = a["actorId"] == null ? null : String(a["actorId"]);
+  const actorId = movementActor(a["actorId"]);
 
   if (!Number.isInteger(raw) || raw === 0) {
     throw new Error(`[CTP web] post_movement: delta must be a non-zero integer, got "${String(a["delta"])}".`);
@@ -815,8 +827,8 @@ async function postMovement(a: Record<string, unknown>): Promise<unknown> {
   await ready();
   await shelfCheck(partId, locationId, delta);
   await powerSync.execute(
-    `INSERT INTO stock_movement (id, part_id, location_id, delta, reason, client_uuid, actor_id, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO stock_movement (id, part_id, location_id, delta, reason, client_uuid, actor_id, actor_source, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       makeUuid(),
       String(partId),
@@ -825,6 +837,7 @@ async function postMovement(a: Record<string, unknown>): Promise<unknown> {
       reason,
       clientUuid,
       actorId,
+      actorSource(actorId),
       new Date().toISOString(),
     ]
   );

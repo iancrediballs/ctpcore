@@ -62,6 +62,8 @@ const stock_movement = new Table({
   part_id: column.text, location_id: column.text, delta: column.integer, reason: column.text,
   ref_type: column.text, ref_id: column.text, actor_id: column.text, client_uuid: column.text,
   created_at: column.text, origin: column.text,
+  // SO-8: how actor_id was established (0037); uploaded with the row
+  actor_source: column.text,
 }, { indexes: { partloc: ["part_id", "location_id"] } });
 
 const stock_policy = new Table({

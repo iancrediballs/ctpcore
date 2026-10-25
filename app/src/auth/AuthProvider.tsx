@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
-import { supabase } from "../sync/supabase";
+import { supabase, readStoredSession } from "../sync/supabase";
 import { initialAuthIntent } from "./authIntent";
 
 /** Background sync, supplied by the surface rather than imported here.
@@ -47,20 +47,6 @@ export const useAuth = () => useContext(Ctx);
 
 /** How long to wait for getSession() before opening with the stored session. */
 const STORED_SESSION_AFTER_MS = 2500;
-
-/** The session supabase-js persisted, read straight from storage: no network,
- *  no lock. Its access token may be expired; local reads do not need it. */
-function readStoredSession(): Session | null {
-  try {
-    const key = (supabase.auth as unknown as { storageKey?: string }).storageKey;
-    const raw = key ? localStorage.getItem(key) : null;
-    if (!raw) return null;
-    const s = JSON.parse(raw) as Session;
-    return s?.access_token && s?.refresh_token && s?.user?.id ? s : null;
-  } catch {
-    return null;
-  }
-}
 
 /** Refresh an expired/expiring token now. auth-js caches a failed refresh for
  *  60 s (keyed on the refresh token), so a reconnect would otherwise wait it out. */
