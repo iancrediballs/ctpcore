@@ -1248,6 +1248,10 @@ Deno.serve(async (req: Request) => {
       return json({ ok: true, test: await liveTest(db, cfg ?? {}, log) });
     }
 
+    // QA 26 Oct: the queue push only on an explicit "push" — a typo, {} or bad JSON used to fall
+    // through to here and send the whole queue to Zoho.
+    if (body.action !== "push") return json({ error: `Unknown action "${String(body.action ?? "")}"` }, 400);
+
     let jobs: { doc_type: string; ctp_id: number }[];
     if (body.doc_type && body.ctp_id) jobs = [{ doc_type: body.doc_type, ctp_id: Number(body.ctp_id) }];
     else {
