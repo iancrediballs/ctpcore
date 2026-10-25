@@ -830,15 +830,26 @@ async function myRequests(): Promise<unknown[]> {
       ORDER BY created_at DESC, CAST(id AS INTEGER) DESC
       LIMIT 50`
   );
+  // PERF-7: one lines query for every order (was one per order, up to 51 queries on every
+  // sync checkpoint). Grouped in JS; order within an order is by line id, as before.
+  const byOrder = new Map<string, Row[]>();
+  if (orders.length) {
+    const allLines = await all(
+      `SELECT sl.id, sl.order_id, sl.part_id, sl.qty, sl.unit_price_minor, p.sku, p.name, p.catalogue_pn
+         FROM sales_line sl LEFT JOIN part p ON p.id = sl.part_id
+        WHERE sl.order_id IN (SELECT value FROM json_each(?)) AND sl.deleted_at IS NULL
+        ORDER BY CAST(sl.id AS INTEGER)`,
+      [JSON.stringify(orders.map((o) => String(o["id"])))]
+    );
+    for (const l of allLines) {
+      const k = String(l["order_id"]);
+      const arr = byOrder.get(k);
+      if (arr) arr.push(l); else byOrder.set(k, [l]);
+    }
+  }
   const out = [];
   for (const o of orders) {
-    const lines = await all(
-      `SELECT sl.id, sl.part_id, sl.qty, sl.unit_price_minor, p.sku, p.name, p.catalogue_pn
-         FROM sales_line sl LEFT JOIN part p ON p.id = sl.part_id
-        WHERE sl.order_id = ? AND sl.deleted_at IS NULL
-        ORDER BY CAST(sl.id AS INTEGER)`,
-      [String(o["id"])]
-    );
+    const lines = byOrder.get(String(o["id"])) ?? [];
     const mapped = lines.map((l) => ({
       id: numId(l["id"], "sales_line.id"),
       part_id: Number(l["part_id"]),
