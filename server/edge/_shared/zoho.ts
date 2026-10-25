@@ -132,7 +132,8 @@ export async function salespersonFor(db: SupabaseClient, orderId: number, actor:
   for (const id of ids) {
     const { data: u } = await db.from("app_user").select("display_name, role").eq("id", id).maybeSingle();
     const n = String(u?.display_name ?? "").trim();
-    if (u && u.role !== "customer" && n && !/test/i.test(n)) return n.slice(0, 100);
+    // QA 26 Oct (FLOW-14): QA logins ("QA Sales") are test staff too — never a Zoho salesperson
+    if (u && u.role !== "customer" && n && !/test|\bqa\b/i.test(n)) return n.slice(0, 100);
   }
   return null;
 }
