@@ -81,11 +81,11 @@ bucket_definitions:
   # Kept separate so it can be narrowed to managers later without touching
   # anything else.
   ctp_staff:
+    # 0086 (26 Oct): warehouse is out — a warehouse login never holds cost, tiers or books.
     parameters: |
       SELECT FROM app_user
        WHERE id = request.user_id()
-         AND (role = 'sales' OR role = 'warehouse'
-           OR role = 'manager' OR role = 'admin')
+         AND (role = 'sales' OR role = 'manager' OR role = 'admin')
     data:
       - SELECT * FROM part_cost
       - SELECT * FROM price_tier
@@ -129,7 +129,10 @@ bucket_definitions:
       - SELECT * FROM vehicle_model
       - SELECT * FROM part_fitment
       - SELECT * FROM part_image
-      - SELECT * FROM diagram
+      # 26 Oct: explicit list — `source` (where the drawing came from) stays staff-only.
+      - SELECT id, drawing_key, title, section_code, make, model, image_path, model_3d_path,
+               img_w, img_h, rev, updated_at, deleted_at, origin
+          FROM diagram
       - SELECT * FROM part_diagram_callout
       - SELECT * FROM hotspot
       - SELECT * FROM company
