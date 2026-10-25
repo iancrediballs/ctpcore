@@ -25,6 +25,7 @@ import { assetUrl } from "../assets";
 import { PhotoImg } from "./PhotoImg";
 import { DiagramCanvas, Marker, loadMarkerScale, saveMarkerScale, markerRadius, MARKER_SCALE_MIN, MARKER_SCALE_MAX, type CanvasApi, type Frame, type Pt } from "./DiagramCanvas";
 import { DiagramView, readDiagramHash, type Drawing } from "./DiagramView";
+import { SyncBadge } from "./SyncBadge";
 import { withTimeout, TimeoutError } from "../data/timeout";
 import { markerState, markerTitle } from "./hotspotState";
 import type { DiagramPart } from "../data/api";
@@ -1577,9 +1578,7 @@ const parseRand = (s: string): number => {
         <div className="mb-brandrow">
           <Brand />
           <span className="mb-vlabel">Catalogue</span>
-          <span className={"mb-sync" + (connected ? "" : " off")}>
-            <span className="mb-dot" />{connected ? "synced" : "offline"}
-          </span>
+          <SyncBadge />
           {cartBtn}
         </div>
         <div className="mb-searchwrap">
@@ -1628,9 +1627,7 @@ const parseRand = (s: string): number => {
         <div className="mb-brandrow">
           <Brand />
           <span className="mb-vlabel">{isClient ? "Catalogue" : tab === "shelf" ? "Shelf walk" : "Warehouse"}</span>{/* QA 26 Oct */}
-          <span className={"mb-sync" + (connected ? "" : " off")}>
-            <span className="mb-dot" />{connected ? "synced" : "offline"}
-          </span>
+          <SyncBadge />
           {cartBtn}
         </div>
         {tab === "find" && (
@@ -1744,9 +1741,7 @@ const parseRand = (s: string): number => {
         <div className="mb-brandrow">
           <Brand />
           <span className="mb-vlabel">This device</span>
-          <span className={"mb-sync" + (connected ? "" : " off")}>
-            <span className="mb-dot" />{connected ? "synced" : "offline"}
-          </span>
+          <SyncBadge />
           {cartBtn}
         </div>
       </div>
@@ -2121,9 +2116,7 @@ const parseRand = (s: string): number => {
         <div className="mb-brandrow">
           <Brand />
           <span className="mb-vlabel">Orders</span>
-          <span className={"mb-sync" + (connected ? "" : " off")}>
-            <span className="mb-dot" />{connected ? "synced" : "offline"}
-          </span>
+          <SyncBadge />
           {cartBtn}
         </div>
       </div>
@@ -2669,9 +2662,7 @@ const parseRand = (s: string): number => {
         <div className="mb-brandrow">
           <Brand />
           <span className="mb-vlabel">Your request</span>
-          <span className={"mb-sync" + (connected ? "" : " off")}>
-            <span className="mb-dot" />{connected ? "online" : "offline"}
-          </span>
+          <SyncBadge />
           {cartBtn}
         </div>
       </div>

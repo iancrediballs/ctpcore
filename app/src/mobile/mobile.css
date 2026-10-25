@@ -57,6 +57,7 @@
 .mb-sync{margin-left:auto;display:flex;align-items:center;gap:6px;font-size:11px;font-weight:700;
   text-transform:uppercase;letter-spacing:.8px;color:var(--green)}
 .mb-sync.off{color:var(--warn)}
+.mb-sync.busy{color:var(--dim)}
 .mb-dot{width:7px;height:7px;border-radius:50%;background:currentColor;box-shadow:0 0 8px currentColor}
 .mb-searchwrap{display:flex;gap:10px}
 .mb-sbox{flex:1;position:relative;display:flex;align-items:center}
