@@ -18,7 +18,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { supabase } from "../sync/supabase";
 import { zohoStatusLabel } from "../data/zoho";
-import type { Role } from "../auth/AuthProvider";
+import { useAuth, type Role } from "../auth/AuthProvider";
 
 type Section = "company" | "email" | "staff" | "places" | "tiers" | "zoho";
 
@@ -50,6 +50,14 @@ const ROLE_HELP: Record<string, string> = {
   admin:     "Everything, including adding and removing staff.",
 };
 const ROLES = ["customer", "sales", "warehouse", "manager", "admin"] as const;
+// QA 26 Oct: an invite from here carries no person_id, so a "customer" login would belong to no
+// company and see an empty app. Customers are invited from their company (AddCustomer), which
+// links the login. Staff & access invites staff only.
+const INVITE_ROLES = ["sales", "warehouse", "manager", "admin"] as const;
+// QA 26 Oct: higher = more access, to word the role-change confirm.
+const RANK: Record<string, number> = { customer: 0, warehouse: 1, sales: 1, manager: 2, admin: 3 };
+// QA 26 Oct: was includes("@"), which let "x@" through to a raw Supabase error.
+const EMAIL_OK = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 // Basis points are how the database stores rates (1500 = 15.00%), because
 // integers cannot drift the way a stored 0.15 can. People type percentages.
@@ -114,7 +122,7 @@ export default function SettingsView({ role, onClose }: { role: Role; onClose: (
         {section === "staff"   && <StaffPanel   flash={flash} fail={fail} />}
         {section === "places"  && <PlacesPanel  flash={flash} fail={fail} />}
         {section === "tiers"   && <TiersPanel   flash={flash} fail={fail} />}
-        {section === "zoho"    && <ZohoPanel    flash={flash} fail={fail} />}
+        {section === "zoho"    && <ZohoPanel    flash={flash} fail={fail} isAdmin={isAdmin} />}
       </div>
     </div>
   );
@@ -281,6 +289,8 @@ function EmailPanel({ flash, fail }: PanelProps) {
 /* ── Staff & access ──────────────────────────────────────────────────────── */
 
 function StaffPanel({ flash, fail }: PanelProps) {
+  const { session } = useAuth();
+  const myId = session?.user?.id ?? null;   // QA 26 Oct: your own row can't be removed or demoted here
   const [users, setUsers] = useState<StaffUser[] | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [email, setEmail] = useState("");
@@ -322,7 +332,16 @@ function StaffPanel({ flash, fail }: PanelProps) {
     } catch (e) { fail(e); } finally { setBusy(null); }
   };
 
+  const who = (u: StaffUser) =>
+    u.display_name && u.email ? `${u.display_name} (${u.email})` : u.display_name || u.email || "this login";
+
   const setRole = async (u: StaffUser, r: string) => {
+    // QA 26 Oct: a role change was one mis-tap away. Say who, from what, to what. Cancel leaves
+    // the controlled <select> on u.role, so nothing changes.
+    if (u.id === myId || r === (u.role ?? "")) return;
+    const down = (RANK[r] ?? 0) < (RANK[u.role ?? ""] ?? 0);
+    if (!confirm(`Change ${who(u)} from ${u.role ?? "no role"} to ${r}?\n\n`
+      + `${down ? "This takes access away. " : ""}${ROLE_HELP[r] ?? ""}`)) return;
     setBusy(u.id);
     try {
       await call({ action: "set_role", id: u.id, role: r });
@@ -332,6 +351,10 @@ function StaffPanel({ flash, fail }: PanelProps) {
   };
 
   const remove = async (u: StaffUser) => {
+    // QA 26 Oct: confirm, naming the person. The server also refuses your own login.
+    if (u.id === myId) return;
+    if (!confirm(`Remove ${who(u)}?\n\nTheir login is deleted and they can no longer sign in. `
+      + "To give access back you would have to invite them again.")) return;
     setBusy(u.id);
     try {
       await call({ action: "remove", id: u.id });
@@ -353,10 +376,14 @@ function StaffPanel({ flash, fail }: PanelProps) {
         <Field label="Name" value={name} onChange={setName} />
         <div className="st-lbl">Role</div>
         <select className="st-in" value={newRole} onChange={(e) => setNewRole(e.target.value)}>
-          {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
+          {INVITE_ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
         </select>
         <p className="st-note">{ROLE_HELP[newRole]}</p>
-        <button className="st-save" disabled={busy === "invite" || !email.includes("@")}
+        <p className="st-note">
+          Inviting a customer? Do it from their company: Orders → Counter sale → + New customer,
+          add the person, then "Invite to the app". That links the login to the company.
+        </p>
+        <button className="st-save" disabled={busy === "invite" || !EMAIL_OK.test(email.trim())}
           onClick={invite}>
           {busy === "invite" ? "Sending…" : "Send invitation"}
         </button>
@@ -382,14 +409,17 @@ function StaffPanel({ flash, fail }: PanelProps) {
             </div>
           </div>
           <div className="st-uact">
-            <select className="st-in st-role" value={u.role ?? ""} disabled={busy === u.id}
+            <select className="st-in st-role" value={u.role ?? ""} disabled={busy === u.id || u.id === myId}
+              title={u.id === myId ? "You can't change your own role" : undefined}
               onChange={(e) => setRole(u, e.target.value)}>
               {!u.role && <option value="">no role</option>}
               {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
             </select>
-            <button className="st-remove" disabled={busy === u.id} onClick={() => remove(u)}>
-              Remove
-            </button>
+            {u.id === myId
+              ? <span className="st-umeta">you</span>
+              : <button className="st-remove" disabled={busy === u.id} onClick={() => remove(u)}>
+                  Remove
+                </button>}
           </div>
         </div>
       ))}
@@ -578,7 +608,7 @@ function CustSyncList({ c }: { c: CustSync }) {
   );
 }
 
-function ZohoPanel({ flash, fail }: PanelProps) {
+function ZohoPanel({ flash, fail, isAdmin }: PanelProps & { isAdmin: boolean }) {
   const [rows, setRows] = useState<ZohoRow[] | null>(null);
   const [last, setLast] = useState<ZohoRun | null>(null);
   const [busy, setBusy] = useState(false);
@@ -641,7 +671,7 @@ function ZohoPanel({ flash, fail }: PanelProps) {
         with names and prices. The part no. is the Zoho SKU.
       </p>
 
-      <ZohoPushCard flash={flash} fail={fail} />
+      <ZohoPushCard flash={flash} fail={fail} isAdmin={isAdmin} />
 
       <div className="st-card">
         <div className="st-sub">Last sync</div>
@@ -723,7 +753,7 @@ type PushLog = { id: number; at: string; doc_type: string; ctp_ref: string | nul
 type ZohoDoc = { doc_type: string; ctp_id: number; ctp_ref: string; party: string; zoho_number: string | null;
   zoho_status: string | null; zoho_status_at: string | null; zoho_error: string | null };
 
-function ZohoPushCard({ flash, fail }: PanelProps) {
+function ZohoPushCard({ flash, fail, isAdmin }: PanelProps & { isAdmin: boolean }) {
   const [cfg, setCfg] = useState<ZohoConfig | null>(null);
   const [from, setFrom] = useState("");
   const [taxId, setTaxId] = useState("");
@@ -817,14 +847,17 @@ function ZohoPushCard({ flash, fail }: PanelProps) {
             ? "ON: Send quote creates a draft estimate in Zoho once. Accounts check it, edit prices there if needed, and send it from Zoho — CTP follows Zoho. The customer can accept only after it is sent; the sales order is raised from the estimate."
             : "OFF: quotes stay in CTP, and accepting raises the Zoho sales order directly."}
         </p>
-        <div className="st-row2">
-          <button className="st-save" disabled={busy} onClick={async () => {
-            const { error } = await supabase.rpc("set_zoho_estimates", { p_enabled: !cfg.estimates_enabled });
-            if (error) return fail(error);
-            flash(`Quotes as Zoho estimates: ${cfg.estimates_enabled ? "OFF" : "ON"}.`);
-            load();
-          }}>{cfg.estimates_enabled ? "Turn off (admin)" : "Turn on (admin)"}</button>
-        </div>
+        {/* QA 26 Oct: set_zoho_estimates is admin-only at the server; a manager sees the state only. */}
+        {isAdmin ? (
+          <div className="st-row2">
+            <button className="st-save" disabled={busy} onClick={async () => {
+              const { error } = await supabase.rpc("set_zoho_estimates", { p_enabled: !cfg.estimates_enabled });
+              if (error) return fail(error);
+              flash(`Quotes as Zoho estimates: ${cfg.estimates_enabled ? "OFF" : "ON"}.`);
+              load();
+            }}>{cfg.estimates_enabled ? "Turn off (admin)" : "Turn on (admin)"}</button>
+          </div>
+        ) : <p className="st-note">Only an admin can change this.</p>}
       </div>
 
       {/* 0065: who holds the stock (admin). Rehearsal default: CTP. */}
@@ -837,12 +870,13 @@ function ZohoPushCard({ flash, fail }: PanelProps) {
           {cfg.stock_synced_at ? ` Zoho stock read ${new Date(cfg.stock_synced_at).toLocaleString("en-ZA")}.` : ""}
         </p>
         <div className="st-row2">
-          <button className="st-save" disabled={busy} onClick={async () => {
+          {/* QA 26 Oct: set_zoho_stock_master is admin-only; a manager keeps Refresh. */}
+          {isAdmin && <button className="st-save" disabled={busy} onClick={async () => {
             const { error } = await supabase.rpc("set_zoho_stock_master", { p_master: cfg.stock_master === "zoho" ? "ctp" : "zoho" });
             if (error) return fail(error);
             flash(`Stock master: ${cfg.stock_master === "zoho" ? "CTP" : "Zoho Inventory"}.`);
             load();
-          }}>{cfg.stock_master === "zoho" ? "Back to CTP (admin)" : "Switch to Zoho Inventory (admin)"}</button>
+          }}>{cfg.stock_master === "zoho" ? "Back to CTP (admin)" : "Switch to Zoho Inventory (admin)"}</button>}
           <button className="st-save" disabled={busy} onClick={() => call({ action: "stock_sync", force: true }, "Zoho stock refreshed")}>Refresh Zoho stock</button>
         </div>
       </div>
