@@ -1791,7 +1791,9 @@ const parseRand = (s: string): number => {
               const shouldBeEmpty = isClient && [
                 "part_cost", "price", "price_tier", "stock_policy", "stock_movement",
                 "location", "customer", "part_alias",
-              ].includes(a.table);
+              ].includes(a.table)
+                // QA 26 Oct: 0086 + sync rules: a warehouse device holds no cost or tiers either.
+                || (!isClient && !seesCost && ["part_cost", "price_tier"].includes(a.table));
               // QA 26 Oct: their own orders and lines are expected (ctp_client_orders); only
               // someone else's is a leak — see `foreign` in deviceAudit.
               const ownOnly = isClient && a.foreign != null;
