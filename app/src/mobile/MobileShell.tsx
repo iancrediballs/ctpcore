@@ -1559,7 +1559,7 @@ const parseRand = (s: string): number => {
       <div className="mb-top">
         <div className="mb-brandrow">
           <Brand />
-          <span className="mb-vlabel">{tab === "shelf" ? "Shelf walk" : "Warehouse"}</span>
+          <span className="mb-vlabel">{isClient ? "Catalogue" : tab === "shelf" ? "Shelf walk" : "Warehouse"}</span>{/* QA 26 Oct */}
           <span className={"mb-sync" + (connected ? "" : " off")}>
             <span className="mb-dot" />{connected ? "synced" : "offline"}
           </span>
@@ -1816,11 +1816,14 @@ const parseRand = (s: string): number => {
           onClick={() => { void signOut(); }}>
           Sign out
         </button>
-        <div className="mb-note">
-          Counts posted here go to the <b>stock ledger</b> — nothing is ever
-          overwritten. Working offline is fine: movements queue on the phone and
-          post themselves when signal returns.
-        </div>
+        {/* QA 26 Oct: staff copy — customers don't post counts. */}
+        {!isClient && (
+          <div className="mb-note">
+            Counts posted here go to the <b>stock ledger</b> — nothing is ever
+            overwritten. Working offline is fine: movements queue on the phone and
+            post themselves when signal returns.
+          </div>
+        )}
         {!tokenRole(session?.access_token) && (
           <div className="mb-note">
             <b>Access level missing.</b> Your sign-in token doesn't carry a role
