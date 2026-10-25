@@ -53,7 +53,7 @@ import { makeUuid } from "./uuid";
 import { powerSync } from "../sync/system";
 import { supabase, readStoredSession } from "../sync/supabase";
 import { pushToZoho } from "./zoho";
-import { ShelfRefusedError } from "./errors";
+import { ShelfRefusedError, OfflineError, isOfflineError } from "./errors";
 
 /** 0049's rule, run locally before a negative movement is written: on_hand at
  *  that location (every movement except reserve/release) must not go below
@@ -1657,7 +1657,15 @@ export const webBackend: Backend = {
           `It still lives in the Rust layer — port it in src/data/backend.web.ts.`
       );
     }
-    return (await handler(args ?? {})) as T;
+    try {
+      return (await handler(args ?? {})) as T;
+    } catch (e) {
+      // SO-5: a server action with no network says so in words, not as
+      // "TypeError: Failed to fetch". Local (device) commands never fetch, so
+      // their own errors pass through untouched.
+      if (isOfflineError(e)) throw new OfflineError();
+      throw e;
+    }
   },
 };
 

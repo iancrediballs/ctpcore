@@ -3,6 +3,7 @@
 // Neither function throws: every outcome — sent, skipped because sending is
 // off, or the error — comes back as a sentence the screen must show.
 import { supabase } from "../sync/supabase";
+import { netMsg } from "./errors";
 
 export type ZohoOutcome = { ok: boolean; message: string };
 
@@ -15,7 +16,7 @@ export async function pushToZoho(docType: "invoice" | "bill", ctpId: number): Pr
                         results?: { ok: boolean; number?: string; status?: string; error?: string; warning?: string; adopted?: boolean }[] } | null;
     if (error) {
       try { res = await (error as { context?: Response }).context?.json(); } catch { /* keep error */ }
-      if (!res) return { ok: false, message: `NOT sent to Zoho: ${error.message}` };
+      if (!res) return { ok: false, message: `NOT sent to Zoho: ${netMsg(error)}` };
     }
     if (res?.skipped) return { ok: true, message: res.skipped };
     const r = res?.results?.[0];
@@ -27,7 +28,7 @@ export async function pushToZoho(docType: "invoice" | "bill", ctpId: number): Pr
     }
     return { ok: false, message: `NOT sent to Zoho: ${r?.error ?? res?.error ?? "unknown error"}` };
   } catch (e) {
-    return { ok: false, message: `NOT sent to Zoho: ${e instanceof Error ? e.message : String(e)}` };
+    return { ok: false, message: `NOT sent to Zoho: ${netMsg(e)}` };
   }
 }
 
@@ -36,11 +37,11 @@ export async function pushToZoho(docType: "invoice" | "bill", ctpId: number): Pr
 export async function refreshZohoStatus(force = false): Promise<{ ok: boolean; changed: number; message?: string }> {
   try {
     const { data, error } = await supabase.functions.invoke("zoho-push", { body: { action: "status", force } });
-    if (error) return { ok: false, changed: 0, message: error.message };
+    if (error) return { ok: false, changed: 0, message: netMsg(error) };
     const d = data as { ok?: boolean; changed?: number; error?: string; skipped?: string };
     return { ok: d?.ok !== false, changed: d?.changed ?? 0, message: d?.error ?? d?.skipped };
   } catch (e) {
-    return { ok: false, changed: 0, message: e instanceof Error ? e.message : String(e) };
+    return { ok: false, changed: 0, message: netMsg(e) };
   }
 }
 
@@ -50,11 +51,11 @@ export async function refreshZohoStatus(force = false): Promise<{ ok: boolean; c
 export async function syncSalesOrder(orderId: number, force = false): Promise<{ ok: boolean; changes: string[]; message?: string }> {
   try {
     const { data, error } = await supabase.functions.invoke("zoho-push", { body: { action: "so_sync", order_id: orderId, force } });
-    if (error) return { ok: false, changes: [], message: error.message };
+    if (error) return { ok: false, changes: [], message: netMsg(error) };
     const d = data as { ok?: boolean; changes?: string[]; warnings?: string[]; error?: string; skipped?: string };
     return { ok: d?.ok !== false, changes: [...(d?.changes ?? []), ...(d?.warnings ?? [])], message: d?.error ?? d?.skipped };
   } catch (e) {
-    return { ok: false, changes: [], message: e instanceof Error ? e.message : String(e) };
+    return { ok: false, changes: [], message: netMsg(e) };
   }
 }
 
@@ -85,11 +86,11 @@ export async function cancelInZoho(orderId: number): Promise<{ ok: boolean; void
 export async function syncEstimate(orderId: number): Promise<{ ok: boolean; skipped?: string; message?: string; number?: string }> {
   try {
     const { data, error } = await supabase.functions.invoke("zoho-push", { body: { action: "estimate", order_id: orderId } });
-    if (error) return { ok: false, message: error.message };
+    if (error) return { ok: false, message: netMsg(error) };
     const d = data as { ok?: boolean; skipped?: string; error?: string; warning?: string; estimate_number?: string };
     return { ok: d?.ok !== false, skipped: d?.skipped, message: d?.error ?? d?.warning, number: d?.estimate_number };
   } catch (e) {
-    return { ok: false, message: e instanceof Error ? e.message : String(e) };
+    return { ok: false, message: netMsg(e) };
   }
 }
 
@@ -102,11 +103,11 @@ export async function recreateEstimate(orderId: number): Promise<{ ok: boolean; 
     let d = data as { ok?: boolean; error?: string; estimate_number?: string; linked_existing?: boolean } | null;
     if (error) {
       try { d = await (error as { context?: Response }).context?.json(); } catch { /* keep */ }
-      if (!d) return { ok: false, message: error.message };
+      if (!d) return { ok: false, message: netMsg(error) };
     }
     return { ok: d?.ok === true, message: d?.error, number: d?.estimate_number, linked: d?.linked_existing };
   } catch (e) {
-    return { ok: false, message: e instanceof Error ? e.message : String(e) };
+    return { ok: false, message: netMsg(e) };
   }
 }
 
@@ -118,11 +119,11 @@ async function inv<T>(body: Record<string, unknown>): Promise<InvResult<T>> {
     let d = data as (T & { ok?: boolean; error?: string }) | null;
     if (error) {
       try { d = await (error as { context?: Response }).context?.json(); } catch { /* keep */ }
-      if (!d) return { ok: false, message: error.message };
+      if (!d) return { ok: false, message: netMsg(error) };
     }
     if (!d || d.ok === false) return { ok: false, message: d?.error ?? "Zoho did not answer." };
     return { ok: true, data: d };
-  } catch (e) { return { ok: false, message: e instanceof Error ? e.message : String(e) }; }
+  } catch (e) { return { ok: false, message: netMsg(e) }; }
 }
 export type ShipResult = { package_number: string; shipment_number: string; shipment_status: string; already?: boolean };
 /** Fulfil when Zoho holds the stock: package + shipment (delivered) from the order's Zoho SO. */
@@ -142,7 +143,7 @@ export const refreshZohoStock = () => inv<{ items_read?: number; parts_changed?:
  *  Zoho sales order. The note is required and goes on the order. */
 export async function overrideFulfilGate(orderId: number, note: string): Promise<void> {
   const { error } = await supabase.rpc("override_fulfil_gate", { p_order_id: orderId, p_note: note });
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(netMsg(error));
 }
 
 /** 0059: why "Fulfil" is not allowed yet — the same rules as the database's
@@ -176,7 +177,7 @@ export function fulfilBlockReason(o: {
 /** 0061: admin sets a customer to account (fulfil after invoice) or cash (after payment). */
 export async function setCustomerOnAccount(customerId: number, onAccount: boolean): Promise<void> {
   const { error } = await supabase.rpc("set_customer_on_account", { p_customer_id: customerId, p_on_account: onAccount });
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(netMsg(error));
 }
 
 /** How a Zoho status reads to staff. Zoho's own word is kept in the data;
@@ -228,7 +229,7 @@ const utc = (s: unknown) =>
 export async function sendReceiptToCloud(payload: Record<string, unknown>): Promise<ZohoOutcome> {
   const body = { ...payload, received_at: utc(payload.received_at), posted_at: utc(payload.posted_at) };
   const { data, error } = await supabase.rpc("submit_goods_receipt", { p: body });
-  if (error) return { ok: false, message: `NOT sent to the cloud or Zoho: ${error.message}` };
+  if (error) return { ok: false, message: `NOT sent to the cloud or Zoho: ${netMsg(error)}` };
   const id = Number((data as { receipt_id?: number })?.receipt_id);
   if (!id) return { ok: false, message: "NOT sent to Zoho: the cloud did not return a receipt id" };
   return pushToZoho("bill", id);
@@ -254,7 +255,7 @@ export async function uploadPo(customerId: number, orderId: number, file: File):
   const safe = file.name.replace(/[^A-Za-z0-9._-]+/g, "_").slice(-80) || "po";
   const path = `${customerId}/${orderId}/${Date.now()}-${safe}`;
   const { error } = await supabase.storage.from("po-docs").upload(path, file, { contentType: file.type || undefined, upsert: false });
-  if (error) throw new Error(`The PO file did not upload: ${error.message}`);
+  if (error) throw new Error(`The PO file did not upload: ${netMsg(error)}`);
   return path;
 }
 
