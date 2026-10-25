@@ -45,6 +45,34 @@ const Ctx = createContext<AuthCtx>({
 });
 export const useAuth = () => useContext(Ctx);
 
+/** How long to wait for getSession() before opening with the stored session. */
+const STORED_SESSION_AFTER_MS = 2500;
+
+/** The session supabase-js persisted, read straight from storage: no network,
+ *  no lock. Its access token may be expired; local reads do not need it. */
+function readStoredSession(): Session | null {
+  try {
+    const key = (supabase.auth as unknown as { storageKey?: string }).storageKey;
+    const raw = key ? localStorage.getItem(key) : null;
+    if (!raw) return null;
+    const s = JSON.parse(raw) as Session;
+    return s?.access_token && s?.refresh_token && s?.user?.id ? s : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Refresh an expired/expiring token now. auth-js caches a failed refresh for
+ *  60 s (keyed on the refresh token), so a reconnect would otherwise wait it out. */
+async function refreshNow() {
+  const stored = readStoredSession();
+  if (!stored || (stored.expires_at ?? 0) * 1000 > Date.now() + 90_000) return;
+  try {
+    (supabase.auth as unknown as { lastRefreshFailure: unknown }).lastRefreshFailure = null;
+    await supabase.auth.refreshSession();
+  } catch { /* the auto-refresh ticker tries again */ }
+}
+
 export function AuthProvider(
   { children, sync }: { children: React.ReactNode; sync?: SyncAdapter }
 ) {
@@ -57,18 +85,49 @@ export function AuthProvider(
   const [mustSetPassword, setMustSetPassword] = useState(initialAuthIntent !== null);
 
   useEffect(() => {
+    // SO-3: opened offline with an expired access token, getSession() tries to
+    // refresh it, retries for ~30 s, then resolves with session null — the app
+    // sat on "Loading…" and then fell to the login screen. auth-js itself KEEPS
+    // the stored session when a refresh fails for want of a network, and all
+    // the app shows offline comes from the local PowerSync database, which
+    // needs no token. So when offline, or when the network does not answer in
+    // a moment, open with the stored session; auth-js refreshes it later.
+    let settled = false;
+    const useStored = () => {
+      if (settled) return;
+      const stored = readStoredSession();
+      if (!stored) return;
+      settled = true;
+      setSession(stored);
+      setLoading(false);
+    };
+    if (typeof navigator !== "undefined" && navigator.onLine === false) useStored();
+    const slow = window.setTimeout(useStored, STORED_SESSION_AFTER_MS);
     supabase.auth.getSession().then(({ data }) => {
-      setSession(data.session);
+      window.clearTimeout(slow);
+      settled = true;
+      // null with the session still in storage = the refresh failed on the
+      // network (a rejected refresh token is removed from storage): keep it.
+      setSession(data.session ?? readStoredSession());
       setLoading(false);
     });
+    // Back online: refresh now rather than waiting out auth-js's failure cooldown.
+    const onOnline = () => { void refreshNow(); };
+    window.addEventListener("online", onOnline);
     const { data: sub } = supabase.auth.onAuthStateChange((e, s) => {
-      setSession(s);
+      // INITIAL_SESSION arrives as null when the refresh failed offline. Only a
+      // real sign-out (or a session auth-js removed) drops us to the login.
+      setSession(s ?? (e === "SIGNED_OUT" ? null : readStoredSession()));
       if (e === "PASSWORD_RECOVERY") setMustSetPassword(true);
       // A deliberate sign-out clears it, so the next person to use this browser
       // gets the normal login screen rather than somebody else's reset flow.
       if (e === "SIGNED_OUT") setMustSetPassword(false);
     });
-    return () => sub.subscription.unsubscribe();
+    return () => {
+      window.clearTimeout(slow);
+      window.removeEventListener("online", onOnline);
+      sub.subscription.unsubscribe();
+    };
   }, []);
 
   useEffect(() => {
