@@ -202,7 +202,9 @@ const GAPS = [
 ];
 let gapsLogged = false;
 function noteGaps(): void {
-  if (gapsLogged) return;
+  // Dev builds only: in production this was a developer note in a customer's
+  // console, and part of its text is obsolete (perf PERF-10).
+  if (!import.meta.env.DEV || gapsLogged) return;
   gapsLogged = true;
   console.info("[CTP web] known data gaps in this build:\n  - " + GAPS.join("\n  - "));
 }
