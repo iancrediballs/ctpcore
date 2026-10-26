@@ -1,4 +1,4 @@
--- CTP Core 0087 (QA sweep "flow", 26 Oct 2026): cancel guard + timeline fixes. NOT applied yet — the lead applies it.
+-- CTP Core 0089 (renumbered from 0087) (QA sweep "flow", 26 Oct 2026): cancel guard + timeline fixes. NOT applied yet — the lead applies it.
 --
 -- FLOW-1  cancel_order() refuses an order accounts have already invoiced in Zoho (the invoice needs a
 --         credit note first; voiding the SO would not undo it). The cancel reason goes on the timeline
