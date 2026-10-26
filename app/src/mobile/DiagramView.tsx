@@ -25,6 +25,7 @@ import type { DiagramPart, WebHotspot } from "../data/api";
 import { assetUrl } from "../assets";
 import { DiagramCanvas, Marker, MarkerHalo, loadMarkerScale, markerRadius, calloutRect, FOCUS_SCALE, type CanvasApi, type Frame, type Rect } from "./DiagramCanvas";
 import { markerState, markerTitle } from "./hotspotState";
+import { withTimeout } from "../data/timeout";
 
 export type Drawing = { path: string; label: string; key?: string };
 
@@ -63,6 +64,11 @@ export function DiagramView({ drawings, start, onClose, canEdit, staff, onOpenPa
   const [hots, setHots] = useState<WebHotspot[]>([]);
   const [key, setKey] = useState<string | null>(null);
   const [parts, setParts] = useState<Record<number, DiagramPart>>({});
+  /** CAT-15: the parts read (stock, price, photo, Open/Add) is the part of a row that can go
+   *  missing. Its state is shown, never left blank, and a retry re-runs the load. */
+  const [partsState, setPartsState] = useState<"loading" | "ok" | "error">("loading");
+  const [retry, setRetry] = useState(0);
+  const loadedPath = useRef<string | null>(null);
   const [sel, setSel] = useState<string | null>(null);           // Row.key
   const [qty, setQty] = useState<Record<number, number>>({});
   const [split, setSplit] = useState(loadSplit);
@@ -81,7 +87,12 @@ export function DiagramView({ drawings, start, onClose, canEdit, staff, onOpenPa
 
   // ── load the drawing's markers, then the parts they point at ────────────
   useEffect(() => {
-    setHots([]); setParts({}); setFrame(null); setKey(null); setSel(null); setZoomed(false);
+    // A retry keeps what is on screen (markers, frame, selection); a new drawing starts clean.
+    if (loadedPath.current !== d.path) {
+      loadedPath.current = d.path;
+      setHots([]); setParts({}); setFrame(null); setKey(null); setSel(null); setZoomed(false);
+    }
+    setPartsState("loading");
     let live = true;
     api.listHotspots(d.path).then(async (r) => {
       if (!live) return;
@@ -89,12 +100,13 @@ export function DiagramView({ drawings, start, onClose, canEdit, staff, onOpenPa
       setKey(r.drawing_key ?? null);
       setHots(r.hotspots);
       const ids = [...new Set(r.hotspots.filter((h) => h.link === "ok" && h.part_id != null).map((h) => h.part_id!))];
-      const ps = ids.length ? await api.diagramParts(ids) : [];
+      const ps = ids.length ? await withTimeout(api.diagramParts(ids), 12000, "the parts list (device database)") : [];
       if (!live) return;
       setParts(Object.fromEntries(ps.map((p) => [p.id, p])));
-    }).catch((e) => console.error("diagram:", e));
+      setPartsState("ok");
+    }).catch((e) => { console.error("diagram:", e); if (live) setPartsState("error"); });
     return () => { live = false; };
-  }, [d.path]);
+  }, [d.path, retry]);
 
   // ── rows: one per part, callouts sorted; faulty/unlinked markers on their own ─
   const rows = useMemo<Row[]>(() => {
@@ -202,12 +214,18 @@ export function DiagramView({ drawings, start, onClose, canEdit, staff, onOpenPa
           looking for it in the list and did not find it (20 Sep). Staff only;
           a customer login sees neither, by design. */}
       <div className="dv-list-head">
-        <span>{rows.length} part{rows.length === 1 ? "" : "s"} on this drawing{rows.length === 0 ? " — none marked up yet" : ""}</span>
+        <span>{rows.length} part{rows.length === 1 ? "" : "s"} on this drawing{rows.length === 0 && partsState !== "loading" ? " — none marked up yet" : ""}</span>
         {canEdit && onEditMarkers && (
           <button className="dv-edit" onClick={() => onEditMarkers(d.path, d.label)}>{rows.length ? "✎ Edit markers" : "✎ Add markers"}</button>
         )}
       </div>
-      {rows.length === 0 && canEdit && onEditMarkers && (
+      {partsState === "error" && (
+        <div className="dv-empty dv-err" role="alert">
+          <p>Couldn't load stock, prices and photos for this drawing.</p>
+          <button className="mb-chip on" onClick={() => setRetry((n) => n + 1)}>Retry</button>
+        </div>
+      )}
+      {rows.length === 0 && canEdit && onEditMarkers && partsState === "ok" && (
         <div className="dv-empty">
           <p>No callouts on this drawing yet. Place a ring on each printed callout and link it to its part — the list fills in as you go.</p>
           <button className="mb-chip on" onClick={() => onEditMarkers(d.path, d.label)}>Start marking up</button>

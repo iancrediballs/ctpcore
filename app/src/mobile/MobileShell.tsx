@@ -24,6 +24,7 @@ import AddCustomer from "../admin/AddCustomer";
 import { assetUrl, photoWebUrl } from "../assets";
 import { DiagramCanvas, Marker, loadMarkerScale, saveMarkerScale, markerRadius, MARKER_SCALE_MIN, MARKER_SCALE_MAX, type CanvasApi, type Frame, type Pt } from "./DiagramCanvas";
 import { DiagramView, readDiagramHash, type Drawing } from "./DiagramView";
+import { withTimeout, TimeoutError } from "../data/timeout";
 import { markerState, markerTitle } from "./hotspotState";
 import type { DiagramPart } from "../data/api";
 import { makeUuid } from "../data/uuid";
@@ -827,15 +828,24 @@ export default function MobileShell() {
     }
   };
 
+  const openSeq = useRef(0);
   const openPart = useCallback(async (partId: number) => {
+    // CAT-15: the latest tap wins (a slow earlier read must not replace it), and a read that
+    // never answers says so instead of leaving "Open" looking dead.
+    const seq = ++openSeq.current;
     try {
-      setDetail(await api.partDetail<Detail>(partId));
+      const d = await withTimeout(api.partDetail<Detail>(partId), 12000, "the part sheet (device database)");
+      if (seq !== openSeq.current) return;
+      setDetail(d);
       setShot(0);                       // a new part starts on its primary photo
       setSheetOpen(true);
       setCounterOpen(false);
     } catch (e) {
       console.error(e);
-      showToast({ text: "Could not open that part.", err: true });
+      if (seq !== openSeq.current) return;
+      showToast({ text: e instanceof TimeoutError
+        ? "That part is taking too long to load. Try again; if it keeps happening, reload the app."
+        : "Could not open that part.", err: true });
     }
   }, [showToast]);
 

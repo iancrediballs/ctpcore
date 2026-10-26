@@ -695,6 +695,7 @@ textarea.st-in{resize:vertical;line-height:1.45;font-size:15px}
 .dv-edit:hover{background:var(--amber);color:#12161A}
 .dv-empty{margin:8px 6px;padding:14px;border:1.5px dashed var(--line);border-radius:12px;color:var(--dim);font-size:13px;line-height:1.4}
 .dv-empty p{margin:0 0 10px}
+.dv-empty.dv-err{border-color:var(--red,#e5484d);color:var(--txt)}
 .dv-head .mb-chip{flex:0 0 auto}   /* never squeezed out by a long breadcrumb */
 /* 2026-09-26: on a wide monitor the list column can be 800px+, and a row that
    stretches to fill it throws "Open" and the price half a screen away from the
