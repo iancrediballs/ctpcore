@@ -288,3 +288,35 @@ For a customer in **accrual mode**:
 4. Remove the Price List from the Hermans contact (`assign_pricebook` to none). It has **not** been touched.
 5. On the 1st of each month: `rebate_statement` with `apply`, for the month just ended. Michelle opens the
    draft credit note and settles it (offset or pay-out).
+
+---
+
+## Hermans live on accrual (Ian GO, 26 Oct 2026)
+
+**Done:**
+- **Rebate account:** "Hermans Panel Beaters – Rebate" (Zoho contact 1429405000000537015) was created,
+  with no email address, and linked to Hermans.
+- **Accrual mode:** Hermans switched over, cutover **2026-10-26**, scheme "FAW JH6 – Rebate", settlement
+  **offset**.
+- **Price list removed from the main Hermans contact.** Read back afterwards: no other field changed. The
+  "FAW JH6 – Rebate" book is kept (113 items).
+- **PWA v49** is deployed.
+
+**Verified** in a rolled-back simulation (no Zoho documents created):
+- A sent invoice dated today at list accrues the expected R1,348.99.
+- A re-entered historical invoice (original date) accrues nothing and isn't flagged.
+- An "Opening balance — DS…" re-entry accrues nothing even if it's dated today.
+- A draft accrues nothing.
+- **The zero:** a deleted invoice reverses in full. Re-created with a new id and a restarted number, it accrues
+  once. A re-read adds nothing.
+- Hermans' order prices: full list with the rebate per line, and no book rates.
+- A live scan read 0 Hermans documents from 26 Oct on, so Zoho's date filter keeps the history out.
+
+**Fixed on the way:** `order_prices` overflowed its integer arithmetic on larger orders. It's fixed (numeric)
+and was live within minutes of the switch.
+
+**How it survives the zero:**
+- The ledger is keyed by Zoho document id and line.
+- Every 15 minutes, documents Zoho no longer has are reversed.
+- Re-entered history is excluded twice: by date (before the cutover) and by the "Opening balance" reference.
+- The rebate contact is a contact, and contacts are kept in the zero.

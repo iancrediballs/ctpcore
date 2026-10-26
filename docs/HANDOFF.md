@@ -1162,3 +1162,9 @@ Full write-up: `docs/READINESS_REPORT.md`; the demo walkthrough is `docs/DEMO_SC
   `is_draft: true`.
 - TEST credit notes CN-00004 and CN-00005 are voided. The rebate contacts "Test Co 2 – Rebate" and "Test
   Account (Ian) — CTP Core testing – Rebate" remain.
+- **26 Oct (later): Hermans is LIVE on accrual** (Ian GO): cutover 26 Oct, rebate account linked, price list
+  off the contact (book kept), PWA v49.
+  - Michelle still has to create "Sales Rebates" and "Rebate Clearing" (the token can't); then put their
+    ids on `rebate_scheme.zoho_rebate_account_id` and `zoho_config.rebate_clearing_account_id`.
+  - Until then, credit-note lines book to "Sales - FAW".
+  - On the 1st of the month: `rebate_statement {customer_code: HERMANS, period: "2026-10" or "2026-11", apply: true}`.
