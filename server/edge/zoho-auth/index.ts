@@ -465,6 +465,95 @@ Deno.serve(async (req: Request) => {
     return json({ ok: r.status === 200, status: r.status, limit: r.headers.get("x-rate-limit-limit"), remaining: r.headers.get("x-rate-limit-remaining"), body: j });
   }
 
+  // 26 Oct, THE ZERO (docs/cutover/2026-10-26/PLAN.md), Ian's "GO ZERO, scripted". Admin / server only,
+  // and every call must carry confirm = "GO ZERO 2026-10-26". One document per call so the caller checks
+  // each step and stops on the first surprise. Master data (items, contacts, price books, settings)
+  // can never be deleted here: only the transaction kinds below.
+  //   { op: "unapply_credits", id }            credit note → remove each invoice it is applied to (and refunds)
+  //   { op: "delete", kind, id }               one transaction document
+  //   { op: "accounts" }                       chart of accounts (to pick the opening-stock offset)
+  //   { op: "track_item", id }                 turn stock tracking on for one item
+  //   { op: "opening_stock", date, reason, account_id?, lines: [{item_id, qty, rate}] }  one adjustment
+  if (body.action === "cutover") {
+    if (body.confirm !== "GO ZERO 2026-10-26") return json({ ok: false, error: "confirm phrase missing" }, 400);
+    await zohoInit(db);
+    const op = String(body.op ?? ""), id = String(body.id ?? "");
+    const err = (e: unknown) => e instanceof Error ? e.message : String(e);
+    // server-side relay to zoho-push (rebate_accrue, stock_sync, adjust, ship…) as the scheduled caller
+    if (op === "push") {
+      const token = Deno.env.get("ZOHO_SYNC_TOKEN");
+      if (!token) return json({ ok: false, error: "ZOHO_SYNC_TOKEN not set" }, 500);
+      const r = await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/zoho-push`, { method: "POST",
+        headers: { "x-sync-token": token, Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`, "Content-Type": "application/json" },
+        body: JSON.stringify(body.push ?? {}) });
+      return json({ ok: r.ok, status: r.status, result: await r.json().catch(() => null) });
+    }
+    if (op === "unapply_credits") {
+      if (!/^\d+$/.test(id)) return json({ ok: false, error: "id" }, 400);
+      const done: string[] = [];
+      try {
+        const applied = (await zoho("GET", `/creditnotes/${id}/invoices`)).invoices_credited ?? [];
+        for (const a of applied) { await zoho("DELETE", `/creditnotes/${id}/invoices/${a.creditnote_invoice_id}`); done.push(`unapplied ${a.invoice_number ?? a.invoice_id} R${a.amount_applied ?? a.amount}`); }
+        const refunds = (await zoho("GET", `/creditnotes/${id}/refunds`)).creditnote_refunds ?? [];
+        for (const r of refunds) { await zoho("DELETE", `/creditnotes/${id}/refunds/${r.creditnote_refund_id}`); done.push(`refund ${r.creditnote_refund_id} removed`); }
+      } catch (e) { return json({ ok: false, done, error: err(e) }, 502); }
+      return json({ ok: true, done });
+    }
+    if (op === "delete") {
+      const kinds: Record<string, [path: string, inv: boolean]> = {
+        customerpayment: ["customerpayments", false], creditnote: ["creditnotes", false], shipment: ["shipmentorders", true],
+        package: ["packages", true], invoice: ["invoices", false], salesorder: ["salesorders", false], estimate: ["estimates", false],
+        vendorpayment: ["vendorpayments", false], purchasereceive: ["purchasereceives", true], bill: ["bills", false],
+        purchaseorder: ["purchaseorders", false], adjustment: ["inventoryadjustments", true] };
+      const k = kinds[String(body.kind ?? "")];
+      if (!k || !/^\d+$/.test(id)) return json({ ok: false, error: "kind/id" }, 400);
+      const call = k[1] ? zohoInv : zoho;
+      try { await call("GET", `/${k[0]}/${id}`); } catch (e) { return json({ ok: true, gone: true, note: err(e) }); }
+      if (body.kind === "shipment") { try { await zohoInv("POST", `/shipmentorders/${id}/status/undelivered`); } catch { /* not delivered */ } }
+      try { await call("DELETE", `/${k[0]}/${id}`); } catch (e) { return json({ ok: false, error: err(e) }, 502); }
+      return json({ ok: true, deleted: `${body.kind} ${id}` });
+    }
+    if (op === "accounts") {
+      // deno-lint-ignore no-explicit-any
+      let a: any[] = [];
+      try { a = (await zoho("GET", "/chartofaccounts", { per_page: "200" })).chartofaccounts ?? []; }
+      catch (e) {
+        try { a = (await zohoInv("GET", "/chartofaccounts", { per_page: "200" })).chartofaccounts ?? []; }
+        catch (e2) { return json({ ok: false, error: `books: ${err(e)} | inventory: ${err(e2)}` }, 502); }
+      }
+      // deno-lint-ignore no-explicit-any
+      return json({ ok: true, accounts: a.map((x: any) => ({ id: String(x.account_id), name: x.account_name, type: x.account_type, active: x.is_active })) });
+    }
+    if (op === "track_item") {
+      if (!/^\d+$/.test(id)) return json({ ok: false, error: "id" }, 400);
+      try {
+        const it = (await zohoInv("GET", `/items/${id}`)).item;
+        const r = await zohoInv("PUT", `/items/${id}`, {}, { item_type: "inventory", track_inventory: true,
+          ...(body.inventory_account_id ? { inventory_account_id: String(body.inventory_account_id) } : {}),
+          purchase_rate: it.purchase_rate });
+        return json({ ok: true, item_type: r.item?.item_type, track_inventory: r.item?.track_inventory ?? r.item?.is_track_inventory });
+      } catch (e) { return json({ ok: false, error: err(e) }, 502); }
+    }
+    if (op === "opening_stock") {
+      const lines = Array.isArray(body.lines) ? body.lines : [];
+      // deno-lint-ignore no-explicit-any
+      if (!lines.length || lines.some((l: any) => !/^\d+$/.test(String(l.item_id)) || !(Number(l.qty) > 0))) return json({ ok: false, error: "lines" }, 400);
+      const { data: cfg } = await db.from("zoho_config").select("zoho_location_id").eq("id", 1).maybeSingle();
+      try {
+        const r = await zohoInv("POST", "/inventoryadjustments", {}, {
+          date: String(body.date), reason: String(body.reason), adjustment_type: "quantity",
+          description: "CTP Core cut-over: opening stock (stock take, recommended figures approved by Ian 26 Oct)",
+          ...(body.account_id ? { account_id: String(body.account_id) } : {}),
+          // deno-lint-ignore no-explicit-any
+          line_items: lines.map((l: any) => ({ item_id: String(l.item_id), quantity_adjusted: Number(l.qty),
+            ...(l.rate != null ? { rate: Number(l.rate) } : {}), ...(cfg?.zoho_location_id ? { location_id: String(cfg.zoho_location_id) } : {}) })) });
+        const a = r.inventory_adjustment ?? {};
+        return json({ ok: true, id: String(a.inventory_adjustment_id ?? ""), status: a.status, lines: (a.line_items ?? []).length, total: a.total });
+      } catch (e) { return json({ ok: false, error: err(e) }, 502); }
+    }
+    return json({ ok: false, error: "op" }, 400);
+  }
+
   // Cut-over DRY RUN (docs/09). READ-ONLY: list endpoints only, nothing is written.
   // Every transaction the zero-Zoho step would delete, with what the delete order and
   // the itemised opening invoices / open bills need (number, date, due date, total,
