@@ -14,6 +14,7 @@ import { usePowerSync, useStatus } from "@powersync/react";
  *  "syncing" rather than "offline" — unless the browser itself says offline. */
 const FIRST_CONNECT_MS = 12_000;
 const POLL_MS = 2_000;
+const DOWNLOAD_SHOW_MS = 1_500;
 
 export function useSyncBadge(): { label: string; cls: string } {
   const status = useStatus();
@@ -41,10 +42,21 @@ export function useSyncBadge(): { label: string; cls: string } {
     return () => { live = false; window.clearInterval(t); };
   }, [db, status]);
 
+  // A connected stream downloads a small checkpoint every time anyone changes
+  // anything; shown raw, the badge flickered syncing/synced all day. Only a
+  // download that lasts DOWNLOAD_SHOW_MS (a real catch-up) reads as "syncing".
+  const downloading = !!status.dataFlowStatus?.downloading;
+  const [longDownload, setLongDownload] = useState(false);
+  useEffect(() => {
+    if (!downloading) { setLongDownload(false); return; }
+    const t = window.setTimeout(() => setLongDownload(true), DOWNLOAD_SHOW_MS);
+    return () => window.clearTimeout(t);
+  }, [downloading]);
+
   const browserOffline = typeof navigator !== "undefined" && navigator.onLine === false;
   if (pending > 0) return { label: `${pending} to send`, cls: " off" };
   if (status.connected) {
-    return status.dataFlowStatus?.downloading || !status.hasSynced
+    return !status.hasSynced || (downloading && longDownload)
       ? { label: "syncing", cls: " busy" }
       : { label: "synced", cls: "" };
   }
