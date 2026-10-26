@@ -114,6 +114,8 @@ export function DiagramCanvas({ href, frame, onFrame, children, onTap, onSwipe, 
   const pinch = useRef<{ d0: number; s0: number; c: Pt } | null>(null);
   const drag = useRef<{ sx: number; sy: number; tx0: number; ty0: number; moved: boolean; onMarker: boolean } | null>(null);
   const lastTap = useRef(0);
+  /** A pan that began on a halo must not end as a marker tap (the click lands on the halo). */
+  const panned = useRef(false);
   const [measured, setMeasured] = useState<Frame | null>(null);
   const fr = frame ?? measured;
 
@@ -263,7 +265,12 @@ export function DiagramCanvas({ href, frame, onFrame, children, onTap, onSwipe, 
   // ── pointers: pan, pinch, double-tap, swipe ─────────────────────────────
   const onDown = (e: React.PointerEvent) => {
     stopAnim();
-    const onMarker = !!(e.target as Element).closest("[data-marker]");
+    panned.current = false;
+    // A halo (MarkerHalo) is a marker for clicks but not for drags: halos cover a lot of a
+    // dense drawing once zoomed, and a pan must still start there. So no capture (the click
+    // must reach the halo), but the press may become a pan.
+    const onHalo = !!(e.target as Element).closest(".dg-mk-halo");
+    const onMarker = !onHalo && !!(e.target as Element).closest("[data-marker]");
     // NO capture when the press is on a marker. An element holding pointer
     // capture receives the derived `click` (Chrome dispatches it to the
     // capturing element, not the element under the pointer), so capturing on
@@ -272,7 +279,7 @@ export function DiagramCanvas({ href, frame, onFrame, children, onTap, onSwipe, 
     // leaves the pointer alone so its click reaches the <g>. An editor that
     // needs to drag a marker captures explicitly (CanvasApi.capture) and then
     // owns the press→release decision itself.
-    if (!onMarker) capturePointer(svgRef.current, e.pointerId);
+    if (!onMarker && !onHalo) capturePointer(svgRef.current, e.pointerId);
     ptrs.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
     if (ptrs.current.size === 2) {
       const [a, b] = [...ptrs.current.values()];
@@ -283,7 +290,7 @@ export function DiagramCanvas({ href, frame, onFrame, children, onTap, onSwipe, 
       drag.current = null;
     } else if (ptrs.current.size === 1) {
       const now = Date.now();
-      if (!onMarker && now - lastTap.current < 300) {
+      if (!onMarker && !onHalo && now - lastTap.current < 300) {
         const v = toView(e.clientX, e.clientY);
         if (v) zoomAt(v, t.current.s > 1.01 ? 1 : 2.6);
         lastTap.current = 0;
@@ -318,6 +325,7 @@ export function DiagramCanvas({ href, frame, onFrame, children, onTap, onSwipe, 
   };
   const onUp = (e: React.PointerEvent) => {
     const d = drag.current;
+    if (d?.moved) panned.current = true;
     ptrs.current.delete(e.pointerId);
     if (ptrs.current.size < 2) pinch.current = null;
     if (ptrs.current.size === 0) {
@@ -347,7 +355,8 @@ export function DiagramCanvas({ href, frame, onFrame, children, onTap, onSwipe, 
       <svg ref={svgRef} className="dg-svg"
         viewBox={fr ? `0 0 ${fr.w} ${fr.h}` : "0 0 1 1"}
         preserveAspectRatio="xMidYMid meet"
-        onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp}>
+        onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp}
+        onClickCapture={(e) => { if (panned.current) { panned.current = false; e.stopPropagation(); } }}>
         <g ref={gRef}>
           {fr && (
             <image href={href} x={0} y={0} width={fr.w} height={fr.h}
