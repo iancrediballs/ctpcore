@@ -1168,3 +1168,11 @@ Full write-up: `docs/READINESS_REPORT.md`; the demo walkthrough is `docs/DEMO_SC
     ids on `rebate_scheme.zoho_rebate_account_id` and `zoho_config.rebate_clearing_account_id`.
   - Until then, credit-note lines book to "Sales - FAW".
   - On the 1st of the month: `rebate_statement {customer_code: HERMANS, period: "2026-10" or "2026-11", apply: true}`.
+
+## 26 Oct, zero-Zoho PREPARED (nothing deleted; waiting for Ian's "GO ZERO")
+- Backup + per-document lists (local only, not in git): `C:\Users\iancr\OneDrive\Desktop\CTP Zoho Backup 2026-10-26\`
+  (Zoho JSON/CSV via zoho-auth read-only actions; CTP 64 tables as JSON, counts verified; delete_plan.csv,
+  opening_stock.csv, ctp_reset.csv). Backup script: ctpcore-qa/zbackup.mjs; lists: tools/cutover_plan_2026-10-26.mjs.
+- Plan + CTP reset SQL draft (not run): `docs/cutover/2026-10-26/`.
+- 70 Zoho docs to delete (39 real, 31 test). Journals/expenses unreadable on the token.
+- Blocked here: edge deploys and live DDL need Ian's permission (0091 not applied; no cutover_delete action).
