@@ -2,6 +2,52 @@
 
 Read with `docs/05_ZOHO_GO_LIVE_2026-10-19.md`. No secrets in this file.
 
+
+## 26 Oct (afternoon): ZOHO ZEROED, stock master = Zoho (Ian: "GO ZERO, scripted, accept stock")
+Full log: `CTP Zoho Backup 2026-10-26\ZERO_LOG.txt` (local; the backup and the per-document data stay out of git).
+- **Deletes (70 + 1 test):**
+  - Ian deleted the 3 test payments by hand: our token is READ-only for payments.
+  - Then, by script (`tools/cutover_2026-10-26/zero.mjs`, via `zoho-auth {action:"cutover"}`):
+    1. credit-note applications removed;
+    2. CN-00004/5;
+    3. 7 shipments, then 7 packages;
+    4. invoices, with CN-00001/2/3 deleted in between.
+       - Credit notes are now deleted *after* shipments, packages and invoices (Ian: "go, reordered"). A restocking credit note can't be deleted while Zoho lacks the stock (9205, Aerokit Top Deflector Panel), and an invoice can't be deleted while a credit note was raised from it (4306).
+       - CN-00003 went through once the other invoices had put the panel back, so **no temp adjustment was needed**.
+    5. 10 SOs, 4 estimates, 7 bills.
+- **Verified after:**
+  - 0 transactions of every type;
+  - items 165, with rates and status unchanged;
+  - contacts 13, both price books identical;
+  - settings, templates and webhooks: no difference from the backup.
+- **CTP reset** (`docs/cutover/2026-10-26/ctp_reset_RUN.sql`, go-live = 2026-10-26 14:22 UTC):
+  - every older order soft-deleted, `zoho_do_not_push`, links cleared, old refs in staff_log (0 live orders, 0 linked);
+  - 19 holds released (origin 'cutover');
+  - `rebate_doc_seen` kept;
+  - push_from = go-live and **push_enabled = true**.
+  - The draft needed client_uuid, actor_source 'server_session', and log doc_type 'config'.
+- **Rebate:**
+  - `rebate_accrue` run for TESTACC and TESTCO2: positions are 0.
+  - **HERMANS rebate_from = 2026-10-27, 0 accruals, 0 docs seen.**
+  - Accrual for Hermans errors (Zoho 1053 "date range") until 27 Oct, because rebate_from is in the future. A full `rebate_accrue` run fails on that until then, so run it per customer.
+- **Opening stock:**
+  - Zoho adjustment 1429405000000514144: 154 lines, 965 units, R575,168.56, 26 Oct.
+  - Offset = **Cost of Goods Sold - FAW**: the token can't read the chart of accounts, so Michelle reclasses it to Opening Balance Adjustments with one journal.
+  - CTP-CBY-001-C (1 unit, R0) is **not tracked**: Zoho demands Brand and Manufacturer, so it's on Michelle's list.
+- **Reconcile and flip** (`ctp_stock_rebase_RUN.sql`):
+  - 55 'cutover' adjustments: 53 lines of the missed Supalift shipment, CTP-CBY-001-C → 0, and deleted part CTP-CBY-002-C's 2 seed units → 0.
+  - CTP 965 = Zoho 965 (physical = accounting), 0 differing lines.
+  - `ctp_ledger_frozen = true`, **stock_master = 'zoho'**.
+- **Smoke test** (`cut_smoke.mjs`):
+  - CTP TEST order RQ-TEST-261026C (id 66) → Zoho TEST SO-00034 / INV-000021 → admin fulfil override (cash customer; the token can't record payments) → **Ship in Zoho from CTP**: PKG-00013 / SHP-00013 delivered, Zoho physical 11→10, CTP ledger untouched, order fulfilled.
+  - Then the shipment, package, invoice and SO were deleted, and the order soft-deleted and cancelled. Stock is back to 11.
+  - Zoho now holds only the opening adjustment.
+- **zoho-auth (deployed):**
+  - `cutover` ops: unapply_credits, delete, accounts (Books → Inventory fallback; both 401 on our token), track_item, opening_stock;
+  - **push**: relays to zoho-push with the scheduled caller's x-sync-token, so server scripts can run rebate_accrue, stock_sync and ship without a staff login.
+  - All ops need the confirm phrase "GO ZERO 2026-10-26". **Remove or disable the `cutover` action once Michelle's re-entry is done.**
+- **Michelle, 27 Oct:** `docs/cutover/2026-10-26/MICHELLE_TOMORROW.md`. The full copy, with the invoice and bill tables, is in the backup folder.
+
 ## Done
 - **Zoho connected.** New Edge Function `zoho-auth` (`server/edge/zoho-auth`,
   verify_jwt ON): `{code}` → refresh token stored in Supabase Vault

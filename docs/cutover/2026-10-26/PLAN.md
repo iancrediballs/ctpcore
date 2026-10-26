@@ -1,6 +1,6 @@
-# Zero Zoho: prepared 26 Oct 2026, waiting for Ian's "GO ZERO"
+# Zero Zoho: prepared 26 Oct 2026 — DONE 26 Oct (see HANDOFF "ZOHO ZEROED" and ZERO_LOG.txt)
 
-Nothing has been deleted, voided or changed in Zoho or CTP. Everything below was read only.
+This plan was written read-only before GO. It was carried out on 26 Oct; ctp_reset_RUN.sql and ctp_stock_rebase_RUN.sql are what ran.
 
 ## 1. Backup (done, verified)
 `C:\Users\iancr\OneDrive\Desktop\CTP Zoho Backup 2026-10-26\` (read 10:20 UTC)
