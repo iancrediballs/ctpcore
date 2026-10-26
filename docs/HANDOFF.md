@@ -1093,3 +1093,30 @@ correctly as you would see them on the truck, or in the diagram."
 - App: unchanged tonight (demo). The UI follow-ups (drawing per make, Find filters with universal parts,
   Jefrey per make, rusauto button from profile) are listed at the end of docs/13.
 - Note: the price-book preview runs inside the DB via pg_net (like the cron), so no secret leaves Vault.
+
+## 25–26 Oct overnight: QA sweep before Anton's demo (PWA v43–v46, migrations 0080–0089)
+Full write-up: `docs/READINESS_REPORT.md`; the demo walkthrough is `docs/DEMO_SCRIPT_ANTON.md`.
+- **QA harness** (outside the repo): `C:\Users\iancr\Projects\ctpcore-qa`.
+  - Playwright, plus `mint.mjs` for no-email QA sessions; findings are in `findings/*.md`.
+  - QA logins: qa.{admin,manager,sales,warehouse,cash,book}@ctpcore.test. cash → customer 8, book → customer 9.
+  - Customer 9 (Test Co 2) was set `on_account` and onto Hermans' book in CTP only. A Zoho terms read-back wipes it.
+- **Migrations applied on live:**
+  - 0080: the definer views are invokers and revoked.
+  - 0081: internal reservation RPCs revoked.
+  - 0082: app_user writes are admin-only.
+  - 0083: sales_order column allow-list. Reverted by 0085, because staff Settings reads those columns via REST.
+  - 0084: lead insert closed; search_path pinned.
+  - 0086: warehouse can't read cost / landed cost / tiers.
+  - 0087: the 0048 stock guard (never applied before).
+  - 0088: order_prices gives cost/floor only to can_see_cost.
+  - 0089: the cancel guard, plus timeline wording.
+- **Edge functions:**
+  - zoho-push: an unknown action now returns 400; a new action "cancel" voids an open SO or declines the estimate.
+  - accept-quote: salespersonFor skips "QA" names.
+- **PWA:**
+  - v43: WebP section and logo images; images in their own SW cache `ctp-img-v1`; security headers in **app/vercel.json** (Root Directory = app).
+  - v44: roles and flow fixes.
+  - v45: catalogue and search fixes.
+  - v46: offline fixes (SyncBadge, precache.json, offline sessions).
+- **Sync rules changed in the repo, NOT yet deployed:** warehouse is out of ctp_staff; the customer diagram stream has an explicit column list without `source`.
+- **Fix work** was done in worktree `C:\Users\iancr\Projects\ctpcore-fix` (branch qa-fixes, pushed to main), because the main checkout is shared with the Aerokit session.
