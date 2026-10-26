@@ -2649,7 +2649,7 @@ const parseRand = (s: string): number => {
         )}
         <div className="mb-note">
           Pricing here writes to the cloud, so the customer sees it. The desktop
-          app keeps its own separate database — pricing there does <b>not</b>
+          app keeps its own separate database — pricing there does <b>not</b>{" "}
           reach anyone's phone.
         </div>
       </div>
