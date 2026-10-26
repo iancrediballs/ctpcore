@@ -1134,3 +1134,18 @@ Full write-up: `docs/READINESS_REPORT.md`; the demo walkthrough is `docs/DEMO_SC
   - v47 shows completed-order VAT from the Zoho invoice and strikes a discount only when it is real;
   - customers now see Cancelled vs Declined correctly.
   Open items and the sync-rules diff are in `docs/READINESS_REPORT.md`.
+
+## 26 Oct, Michelle's login had no role (app_user ↔ auth mismatch)
+- Cause (auth logs): Staff & access invite at 06:58 created login 7d02d921 + its role row correctly.
+  At 07:02:53 that login was deleted from the Supabase dashboard and re-added there at 07:03:30
+  (d0e05d00, auto-confirmed). The dashboard never touches app_user, so the old row was orphaned
+  and the new login had no role. Not the QA cleanup (that only removed *@ctpcore.test logins).
+- Fixed on live: Ian added app_user for d0e05d00; orphan 7d02d921 removed (nothing referenced it);
+  "QA Sales" 2ae41598 removed after nulling actor_id on its 13 test stock moves (zoho_push_log and
+  timeline keep the id/name as text). Scan: no other orphan role rows, no logins without a role,
+  no customer/person pointing at a missing login.
+- Prevention, in repo, **NOT yet applied/deployed** (needs Ian's go):
+  - `server/0091_app_user_follows_login.sql`: deleting a login anywhere removes its role row and
+    parks the role by email; the next confirmed login for that email gets it back (30 days).
+  - `admin-users` invite: checks the role write; if it fails the login is withdrawn instead of
+    left role-less.

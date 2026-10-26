@@ -145,11 +145,17 @@ Deno.serve(async (req: Request) => {
         return json({ error: msg }, 400);
       }
 
-      await client.from("app_user").upsert({
+      // 26 Oct: the role row used to be written without checking. If it fails, the login
+      // would exist with no role and sync nothing, so take the login back out and say so.
+      const { error: roleErr } = await client.from("app_user").upsert({
         id: invited.user.id,
         role,
         display_name: name || email.split("@")[0],
       });
+      if (roleErr) {
+        await client.auth.admin.deleteUser(invited.user.id);
+        return json({ error: `Could not save the role, so the invite was withdrawn (its link will not work):${roleErr.message}` }, 500);
+      }
 
       // 0057: a customer invite can name the person (and so the company) the
       // login belongs to. Only an unlinked person is linked; nothing else changes.
