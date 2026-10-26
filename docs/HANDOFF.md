@@ -1149,3 +1149,16 @@ Full write-up: `docs/READINESS_REPORT.md`; the demo walkthrough is `docs/DEMO_SC
     parks the role by email; the next confirmed login for that email gets it back (30 days).
   - `admin-users` invite: checks the role write; if it fails the login is withdrawn instead of
     left role-less.
+
+### 26 Oct: rebates by accrual + credit note (Anton) — built behind a switch, TEST only
+- Design and proof: `docs/14_REBATE_ACCRUAL_CREDIT_NOTE.md`. 0092 is applied live; zoho-push and
+  accept-quote are redeployed; PWA v48.
+- Rebate customers are invoiced at list. Each sent invoice accrues the per-SKU % (frozen from "FAW JH6 –
+  Rebate") into `rebate_accrual`. Once a month, a statement becomes ONE draft credit note on "<name> –
+  Rebate".
+- `zoho_config.rebate_accrual_enabled` is ON, but only TESTCO2 and TESTACC are in accrual mode. **Hermans is
+  untouched:** price book, prices and contact are unchanged.
+- The token has no journals scope: the offset is done by hand from `rebate_offset`'s steps. Credit notes need
+  `is_draft: true`.
+- TEST credit notes CN-00004 and CN-00005 are voided. The rebate contacts "Test Co 2 – Rebate" and "Test
+  Account (Ian) — CTP Core testing – Rebate" remain.

@@ -222,3 +222,69 @@ For a customer in **accrual mode**:
    - a void reverses.
 
    Then the TEST documents are voided, not deleted.
+
+---
+
+## Built and proven, 26 Oct 2026 (TEST customers only)
+
+**What exists now:**
+- **Migration 0092** (applied live).
+- **zoho-push** `rebate_*` actions (`server/edge/zoho-push/rebate.ts`), deployed.
+- **PWA v48.**
+- **Global switch** `zoho_config.rebate_accrual_enabled`: **on**. Only customers whose `customer_rebate.mode`
+  is `accrual` take part, and those are **TESTCO2 and TESTACC**.
+- **Hermans** has no `customer_rebate` row. It stays on the price book: prices, SOs and the app are unchanged
+  (checked with `order_prices(45)`).
+- `rebate_setup` refuses accrual mode for a non-TEST customer unless `confirm: "Ian approved"` is sent.
+
+**Per-SKU % frozen from the live book.**
+- 25 % on 102 parts, 20 % on 2, 15 % on 8, 10 % on 1 and 0 % on 41. None off-tier.
+- This is the same split as the 24 Oct build.
+
+**Proof run:**
+1. **TESTCO2** set to accrual from 1 Oct. Its rebate account **"Test Co 2 – Rebate"** was created in Zoho,
+   copying the VAT number and address, with no email address.
+2. **Accrual:** 4 invoices were read.
+   - INV-000020 (sent): R1,533.64.
+   - INV-000014 (overdue): R188.36.
+   - INV-000013 (draft): 0, not counted.
+   - INV-000012 (paid): 0. Both its lines were already at the rebate price, and both are flagged.
+   - Total **R1,722.00 excl. VAT**. The amounts were checked by hand (R4,642.52 × 25 % = R1,160.63, and so
+     on).
+3. **Re-runs:** a forced re-read posted 0 rows.
+4. **Void test**, run on the ledger only: a voided INV-000014 reversed −R188.36, and the re-read restored it.
+   The history is kept.
+5. **Statement** RB-2026-10-TESTCO2 → **credit note CN-00004** on "Test Co 2 – Rebate":
+   - R1,980.30 incl. VAT, 2 account lines (one per invoice), standard rate 15 %.
+   - The read-back marked the statement **credited**.
+6. **TESTACC:** statement RB-2026-10-TESTACC → **CN-00005 created as a DRAFT** (R61.27). The "Michelle
+   opens it" step was done by API (TEST only), and the read-back marked it credited.
+7. **Offset preview:** the journal entry and Michelle's three click steps for RB-2026-10-TESTCO2.
+8. **Customer and staff views,** checked through the RPCs with a simulated login:
+   - staff: rebate per line + %;
+   - the TESTACC customer: rebate amount only, plus "credited R53.28, last credit note CN-00005".
+9. **Cleanup:**
+   - CN-00004 and CN-00005 are **voided** in Zoho, not deleted. The statements are void and the accruals are
+     back to "accruing".
+   - A new October statement for these customers would get the number "…-2".
+   - The two TEST rebate contacts stay, linked to the TEST customers, so Ian can see them.
+
+**What the run found:**
+- **The API opens credit notes straight away** unless `is_draft: true` is sent, and an open credit note can't
+  be turned back into a draft. CTP now sends `is_draft`. CN-00004 was created before that fix, which is why
+  it opened directly; it is voided.
+- **CTP's Zoho token can't post journals or read the chart of accounts** (401, code 57). So the offset
+  journal is **Michelle's**, from the exact steps `rebate_offset` prints. Alternatively, Ian re-consents the
+  Zoho connection with `ZohoBooks.accountants.ALL`, and CTP then drafts the journal too.
+- **There is no "Sales Rebates" account yet.** Lines are booked to "Sales - FAW" (the FAW JH6 profile's sales
+  account) until Michelle creates one and its id goes on `rebate_scheme.zoho_rebate_account_id`.
+
+**Before Hermans goes live (Ian's go):**
+1. Michelle creates the accounts "Sales Rebates" and "Rebate Clearing" and gives the ids. They go on
+   `rebate_scheme.zoho_rebate_account_id` and `zoho_config.rebate_clearing_account_id`.
+2. Run `rebate_account` for HERMANS, which creates "Hermans Panel Beaters – Rebate".
+3. Run `rebate_setup` for HERMANS: mode accrual, `rebate_from` on the 1st of a month, scheme "FAW JH6 –
+   Rebate", `confirm: "Ian approved"`.
+4. Remove the Price List from the Hermans contact (`assign_pricebook` to none). It has **not** been touched.
+5. On the 1st of each month: `rebate_statement` with `apply`, for the month just ended. Michelle opens the
+   draft credit note and settles it (offset or pay-out).
