@@ -88,8 +88,35 @@ const IMAGE_TIMEOUT_MS = 60000;
 const SHELL_TIMEOUT_MS = 3000;
 const SHELL_TIMEOUT_UNCACHED_MS = 60000;
 
+// INSTALL PRECACHES THE WHOLE SHELL (SO-6). It used to cache only "/". The
+// page that registers the worker has already loaded its scripts before the
+// worker controls it, so they never passed through the fetch handler, and a
+// first-time visitor who reloaded offline got "/" from the cache and a blank
+// page (index-*.js, the AuthedApp chunk and the CSS were missing). Now the
+// build's own list (precache.json, written by vite.config.ts) plus whatever
+// "/" references is fetched here. "/" is required; the rest is best effort, so
+// one failed file cannot stop the worker installing.
+async function precacheShell() {
+  const cache = await caches.open(CACHE);
+  const shell = await fetch("/", { cache: "no-cache" });
+  if (!shell.ok) throw new Error("shell fetch failed: " + shell.status);
+  const html = await shell.clone().text();
+  await cache.put("/", shell);
+  const urls = new Set();
+  for (const m of html.matchAll(/(?:src|href)="(\/[^"]+)"/g)) urls.add(m[1]);
+  try {
+    const r = await fetch("/precache.json", { cache: "no-cache" });
+    if (r.ok) for (const f of (await r.json()).files ?? []) urls.add(f);
+  } catch { /* an older build without the manifest: the html's own files only */ }
+  await Promise.allSettled([...urls].map(async (u) => {
+    if (await cache.match(u)) return;
+    const res = await fetch(u);
+    if (storable(res)) await cache.put(u, res);
+  }));
+}
+
 self.addEventListener("install", (e) => {
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(["/"])));
+  e.waitUntil(precacheShell());
   self.skipWaiting();
 });
 
