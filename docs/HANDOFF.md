@@ -1129,3 +1129,8 @@ Full write-up: `docs/READINESS_REPORT.md`; the demo walkthrough is `docs/DEMO_SC
   - v46: offline fixes (SyncBadge, precache.json, offline sessions).
 - **Sync rules changed in the repo, NOT yet deployed:** warehouse is out of ctp_staff; the customer diagram stream has an explicit column list without `source`.
 - **Fix work** was done in worktree `C:\Users\iancr\Projects\ctpcore-fix` (branch qa-fixes, pushed to main), because the main checkout is shared with the Aerokit session.
+- **Final regression** (four agents on v46): no P0. Since then:
+  - 0090 re-hid sales_order staff_log/timeline from customers (0085 had re-exposed them);
+  - v47 shows completed-order VAT from the Zoho invoice and strikes a discount only when it is real;
+  - customers now see Cancelled vs Declined correctly.
+  Open items and the sync-rules diff are in `docs/READINESS_REPORT.md`.
