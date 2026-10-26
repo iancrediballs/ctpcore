@@ -1,4 +1,4 @@
-# 13 — Add a new make, model or brand (Sonnet, "mechanical for all", …)
+# 13 — Add a new make, model or brand (Sinotruk C7H, "mechanical for all", …)
 
 **Who this is for:** whoever is loading a new range (Ian, Anton, Michelle with help).
 **What it does:** turns a set of filled-in sheets into CTP parts, drawings, hotspots, photos, suppliers and
@@ -22,7 +22,7 @@ Zoho items, the same way FAW JH6 is set up. It can be repeated safely and undone
 | # | What | Sheet | Must have? |
 |---|---|---|---|
 | 1 | Make and model names as they should appear. One **profile** row per model. | `profile` | yes |
-| 2 | Zoho GL accounts for this make. Michelle creates "Sales - Sonnet" and "Cost of Goods Sold - Sonnet", or decides to reuse existing ones. Inventory Asset is `1429405000000034001`. | `profile` | yes, before the Zoho step |
+| 2 | Zoho GL accounts for this make. Michelle creates "Sales - Sinotruk" and "Cost of Goods Sold - Sinotruk", or decides to reuse existing ones. Inventory Asset is `1429405000000034001`. | `profile` | yes, before the Zoho step |
 | 3 | Models, variants (cab or wheelbase) and model years | `vehicles` | yes |
 | 4 | **Part list**: part number (= SKU), name, section, side (L/R/C/B), OEM / Aftermarket / Universal | `parts` | yes |
 | 5 | Selling price excl. VAT for each NEW part | `parts.list_price_zar` | strongly advised (otherwise the Zoho rate is 0) |
@@ -41,13 +41,20 @@ Templates are in `docs/templates/`. Use either the CSV files or the single workb
 Rows that start with `#` are examples and are skipped. Put pictures in a `pictures/` folder next to the
 sheets.
 
+**Next make: Sinotruk C7H.** Start from `docs/templates/sinotruk_c7h_template.xlsx`. Its profile
+(make settings) and vehicle rows are already filled in: Zoho Manufacturer "Sinotruk", Brand "C7H", Inventory
+Asset as for FAW. The two GL account ids are empty on purpose. The placeholders are "Sales - Sinotruk" and
+"Cost of Goods Sold - Sinotruk" until Michelle confirms them; the Zoho step refuses until they are filled.
+The same entry as SQL, for review only and not applied, is `tools/onboard/profiles/sinotruk_c7h_profile.sql`.
+Ian adds the parts, suppliers, drawings and photos.
+
 A complete worked example is in `tools/onboard/sample_zztest/`, and a universal part is in
 `tools/onboard/sample_zztest_universal/`.
 
 **Some choices are fixed:**
 - **SKU = the maker's part number** (as for FAW since the Zoho-first migration). It must not already
-  exist for another make. If two makes share a number, add a suffix such as `-SON`.
-- **Profile code:** capitals, for example `SONNET_X`. Drawing keys: `SONNET_X-BMP` (never `SEC<number>`,
+  exist for another make. If two makes share a number, add a suffix such as `-SIN`.
+- **Profile code:** capitals, for example `SINOTRUK_C7H`. Drawing keys: `SINOTRUK_C7H-BMP` (never `SEC<number>`,
   which belongs to FAW JH6).
 - **"Mechanical for all" parts** use their own profile:
   - make `All makes`, model `All models`, `default_part_type` Universal;
@@ -57,11 +64,11 @@ A complete worked example is in `tools/onboard/sample_zztest/`, and a universal 
   Zoho requires a Brand on every item, so "All models" is used as the Brand.
 - **Zoho Manufacturer** must equal the make, and **Zoho Brand** must equal the model. Zoho copies these
   back into CTP every 15 minutes, so the tool refuses a mismatch.
-- **Sections are shared across makes.** Sonnet bumpers go in section BMP. New ones can be added.
+- **Sections are shared across makes.** Sinotruk bumpers go in section BMP. New ones can be added.
 
 ## 2. Check the sheets (changes nothing)
 
-    python tools/onboard/onboard.py validate path/to/sonnet
+    python tools/onboard/onboard.py validate path/to/sinotruk_c7h.xlsx
 
 This checks every rule: required columns, duplicate SKUs, a part number already used by another make,
 unknown sections, suppliers or models, a side that isn't L/R/C/B, prices that aren't numbers, missing
@@ -70,14 +77,14 @@ that doesn't match. Fix the errors and run it again. Warnings, such as a missing
 
 ## 3. Dry run into CTP (changes nothing)
 
-    python tools/onboard/onboard.py import path/to/sonnet --batch SONNET-2026-11-01
+    python tools/onboard/onboard.py import path/to/sinotruk_c7h.xlsx --batch SINOTRUK-C7H-2026-11-01
 
 The batch name is yours: use the make and a date. CTP does the whole import, reports the counts
 (parts created / updated, fitment, drawings …), and then **undoes all of it**.
 
 ## 4. Import into CTP
 
-    python tools/onboard/onboard.py import path/to/sonnet --batch SONNET-2026-11-01 --apply
+    python tools/onboard/onboard.py import path/to/sinotruk_c7h.xlsx --batch SINOTRUK-C7H-2026-11-01 --apply
 
 - Pictures are uploaded under names that include a content fingerprint. Phones cache pictures forever,
   so a changed photo gets a new name. Photos also get the small web version the app shows.
@@ -90,8 +97,8 @@ The batch name is yours: use the make and a date. CTP does the whole import, rep
 ## 5. Zoho items
 
     python tools/onboard/onboard.py accounts                                   # GL account ids in use
-    python tools/onboard/onboard.py zoho --batch SONNET-2026-11-01             # preview
-    python tools/onboard/onboard.py zoho --batch SONNET-2026-11-01 --apply
+    python tools/onboard/onboard.py zoho --batch SINOTRUK-C7H-2026-11-01             # preview
+    python tools/onboard/onboard.py zoho --batch SINOTRUK-C7H-2026-11-01 --apply
 
 - **A part number not yet in Zoho** gets a new item. It is set up like the FAW items:
   - unit pcs, inventory tracking;
@@ -109,33 +116,33 @@ The batch name is yours: use the make and a date. CTP does the whole import, rep
 
 ## 6. Photos onto the Zoho items
 
-    python tools/onboard/onboard.py images --batch SONNET-2026-11-01 --apply
+    python tools/onboard/onboard.py images --batch SINOTRUK-C7H-2026-11-01 --apply
 
 ## 7. Check it
 
-    python tools/onboard/onboard.py verify --batch SONNET-2026-11-01
-    python tools/onboard/onboard.py status --batch SONNET-2026-11-01
+    python tools/onboard/onboard.py verify --batch SINOTRUK-C7H-2026-11-01
+    python tools/onboard/onboard.py status --batch SINOTRUK-C7H-2026-11-01
 
 `verify` reads every Zoho item back: SKU, active, Manufacturer, Brand, unit and image. Then open the
 app: the parts show up on phones within a minute.
 
 ## 8. Price books (Ian decides)
 
-    python tools/onboard/onboard.py pricebook --batch SONNET-2026-11-01
+    python tools/onboard/onboard.py pricebook --batch SINOTRUK-C7H-2026-11-01
 
 This is a **preview only**. It shows the rebate each new part would get in the scheme the batch joined.
 Building the book changes the prices customers see in Zoho, so the tool never does it. When Ian agrees,
 an admin runs zoho-push `rebate_book` with `apply` (as on 24 Oct).
 
 Zoho allows **one price list per customer**. A customer on rebate across several makes therefore needs
-one book that holds all of them. Add the Sonnet SKUs to the same scheme through the `price_books`
+one book that holds all of them. Add the Sinotruk SKUs to the same scheme through the `price_books`
 sheet. Consider renaming "FAW JH6 – Rebate" to a customer name first, such as "Hermans – Rebate"
 (Ian's call; not done).
 
 ## 9. Undo a batch
 
-    python tools/onboard/onboard.py rollback --batch SONNET-2026-11-01           # preview
-    python tools/onboard/onboard.py rollback --batch SONNET-2026-11-01 --apply
+    python tools/onboard/onboard.py rollback --batch SINOTRUK-C7H-2026-11-01           # preview
+    python tools/onboard/onboard.py rollback --batch SINOTRUK-C7H-2026-11-01 --apply
 
 1. **Zoho:** the items this batch *created* are made **inactive** (never deleted). Items it only linked
    are left as they were.
@@ -170,7 +177,7 @@ the part rows.
 
 **Fixed now (server side; no change for FAW, checked live):**
 - `zoho-push catalogue_set` used to stamp **Manufacturer FAW / Brand JH6 on every active Zoho item missing
-  them**. That would have mislabelled every Sonnet and universal item. It now takes the values from each
+  them**. That would have mislabelled every Sinotruk and universal item. It now takes the values from each
   item's CTP part and its make profile, and refuses an explicit value without a SKU list. The live preview
   sets 0 items, as before.
 - Zoho item reads stopped after 2,000 items (catalogue sync, `catalogue_set`, rebate book). The limit is
@@ -182,15 +189,16 @@ the part rows.
   part-number pattern and rusauto lookup are now recorded in `make_profile` FAWJH6.
 
 **For after the demo (app screens; left alone tonight on purpose):**
+Items 1–4 are planned step by step as a ready-to-run task in `docs/14_MULTI_MAKE_APP_TASK.md`.
 1. **Drawings per make.**
    - The section drawing is found as `'SEC' || category id` (backend.web.ts:179, :548, MobileShell:495).
      That is FAW's one drawing per section.
-   - Sonnet drawings import fine and their hotspots work, but the section cards will keep opening FAW's
+   - Sinotruk drawings import fine and their hotspots work, but the section cards will keep opening FAW's
      drawing.
    - Fix: choose the diagram by (section, make/model) using the existing `diagram.make` / `diagram.model`
      columns, and add a make chooser on the home page.
 2. **Find filters.**
-   - Make=Sonnet should also show universal parts.
+   - Make=Sinotruk should also show universal parts.
    - The Model list should follow the chosen Make.
    - Search should respect the filters and show the make (MobileShell:1443-1452, 1585; SEARCH_SQL).
    - `part_fitment` is already on every phone, but the app never reads it.
