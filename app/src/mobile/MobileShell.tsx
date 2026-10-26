@@ -20,7 +20,7 @@ import { refreshZohoStatus, zohoStatusLabel, syncSalesOrder, cancelInZoho, syncE
          shipInZoho, countToZoho, openPurchaseOrders, receiveInZoho, type OpenPO,
          acceptPrecheck, uploadPo, poFileUrl, orderPrices, myPrices, type OrderPrices, type LinePrice,
          rebateCustomer, myRebate, type RebatePosition,
-         remoteBookPrices, bookLabel, type BookPrice, type BookCustomer } from "../data/zoho";
+         remoteBookPrices, staffAccrualRates, type AccrualRates, type BookPrice, type BookCustomer } from "../data/zoho";
 import AddCustomer from "../admin/AddCustomer";
 import { assetUrl } from "../assets";
 import { PhotoImg } from "./PhotoImg";
@@ -401,6 +401,20 @@ function RebateTag({ r, big }: { r: Rebate | null; big?: boolean }) {
   );
 }
 
+/** 0092: the accrual view of a part — full list stays the price; the rebate it earns is a
+ *  percentage, accrued and credited monthly. Never a struck-through list. Staff only. */
+type Accrual = { bps: number; who: string | null };
+const bpsPct = (bps: number) => `${Math.round(bps) / 100}%`;
+function AccrualTag({ a }: { a: Accrual | null }) {
+  if (!a) return null;
+  return (
+    <span className="mb-rebate">
+      <b>Rebate {bpsPct(a.bps)}</b>
+      <span className="mb-rlabel">(accrued, credited monthly){a.who ? ` · ${a.who}` : ""}</span>
+    </span>
+  );
+}
+
 /** 0077: one line under an order card's total — "rebate −R 1 234" and/or "R 567 above rebate". */
 function RebateSum({ r }: { r: { saving: number; over: number } | null }) {
   if (!r || (r.saving <= 0 && r.over <= 0)) return null;
@@ -472,6 +486,7 @@ function PriceInfo({ lp, priceMinor, qty, staff, seesCost, known }: { lp?: LineP
         ? <span><s>{fmtR(list)}</s> <b>{fmtR(book)}</b> each · −{pct}% rebate</span>
         : staff && list != null ? <span>List {fmtR(list)} each</span>
         : staff && (known || lp.list_minor === 0) ? <span className="mb-dim">No list price</span> : null}
+      {staff && lp.rebate_bps ? <span className="mb-pm ok">Rebate {bpsPct(lp.rebate_bps)} (accrued, credited monthly)</span> : null}
       {staff && book != null && priceMinor > 0 && (priceMinor > book
         ? <span className="mb-pm warn">{fmtR((priceMinor - book) * qty)} above the rebate price</span>
         : list != null && priceMinor < list ? <span className="mb-pm ok">saves {fmtR((list - priceMinor) * qty)} vs list</span> : null)}
@@ -704,22 +719,43 @@ export default function MobileShell() {
   }, [bookLocal, bookCustLocal, bookRemote]);
   // Whose prices staff are looking at: the counter sale's customer, else the open order's.
   const ctxCustomer = isClient ? null : (counterCustomer ?? orders?.find((o) => o.id === openOrder)?.customer_id ?? null);
-  /** The rebate to show for a part. A customer: their own book. Staff: the given customer's book
-   *  (`who`), else the context customer's, else (no customer picked) the book labelled with its
-   *  owner ("Hermans rebate"). A customer with no book gets nothing. */
+  // 0092: staff's accrual rates (who is on accrual, rate per SKU), read once online
+  const [accrual, setAccrual] = useState<AccrualRates | null>(null);
+  useEffect(() => {
+    if (!uid || isClient) return;
+    let live = true;
+    void staffAccrualRates().then((r) => { if (live) setAccrual(r); });
+    return () => { live = false; };
+  }, [uid, isClient]);
+  /** The book price to show for a part — only for a customer still on a Zoho price book. A
+   *  customer: their own book. Staff: the given customer's book (`who`), else the context
+   *  customer's. No customer picked: nothing — the accrual view (accrualFor) shows instead of a
+   *  struck-through list (0092: rebates are earned on full list, not given as a lower price). */
   const rebateFor = useCallback((partId: number, who?: { customerId: number | null }): Rebate | null => {
     const rows = book.byPart.get(Number(partId)) ?? [];
     if (!rows.length) return null;
-    if (isClient) return { book_minor: rows[0].book_minor, list_minor: rows[0].list_minor, label: "your price" };
+    // an accrual customer is never shown a book price, even if a price list comes back on their contact
+    if (isClient) return myRebatePos?.mode === "accrual" ? null : { book_minor: rows[0].book_minor, list_minor: rows[0].list_minor, label: "your price" };
     const cid = who ? who.customerId : ctxCustomer;
-    if (cid != null) {
-      const c = book.customers.find((x) => x.id === Number(cid));
-      const r = c && rows.find((x) => x.pricebook_id === c.book);
-      return c && r ? { book_minor: r.book_minor, list_minor: r.list_minor, label: `${c.name.split(/\s+/)[0]} rebate` } : null;
-    }
-    if (who) return null;
-    return { book_minor: rows[0].book_minor, list_minor: rows[0].list_minor, label: bookLabel(rows[0].pricebook_id, book.customers, rows[0].name) };
-  }, [book, isClient, ctxCustomer]);
+    if (cid == null || accrual?.customers.has(Number(cid))) return null;
+    const c = book.customers.find((x) => x.id === Number(cid));
+    const r = c && rows.find((x) => x.pricebook_id === c.book);
+    return c && r ? { book_minor: r.book_minor, list_minor: r.list_minor, label: `${c.name.split(/\s+/)[0]} rebate` } : null;
+  }, [book, isClient, ctxCustomer, myRebatePos, accrual]);
+  const skuOf = useMemo(() => new Map(parts.map((p) => [p.id, p.sku.toUpperCase()])), [parts]);
+  /** Staff: the rebate a part earns on full list. The given / context customer if they are on
+   *  accrual; no customer picked, the one rebate scheme. A customer on a price book, or on no
+   *  rebate, gets nothing here. */
+  const accrualFor = useCallback((partId: number, who?: { customerId: number | null; name?: string | null }): Accrual | null => {
+    if (isClient || !accrual) return null;
+    const cid = who ? who.customerId : ctxCustomer;
+    const scheme = cid != null ? accrual.customers.get(Number(cid)) : accrual.scheme;
+    const sku = skuOf.get(Number(partId));
+    const bps = scheme != null && sku ? accrual.rates.get(scheme)?.get(sku) : undefined;
+    if (!bps) return null;
+    const name = cid != null ? (who?.name ?? customers.find((c) => c.id === Number(cid))?.name ?? orders?.find((o) => o.customer_id === cid)?.customer_name ?? null) : null;
+    return { bps, who: name ? name.split(/\s+/)[0] : null };
+  }, [accrual, isClient, ctxCustomer, skuOf, customers, orders]);
   /** An order line's prices: the server's (list, book, cost, floor), with the on-device book
    *  filling any gap so the rebate shows even before order_prices answers. */
   const lpFor = useCallback((o: { id: number; customer_id?: number | null }, l: { id: number; part_id: number }): LinePrice => {
@@ -1754,6 +1790,7 @@ const parseRand = (s: string): number => {
               <span className="mb-cname">{p.name}</span>
               <span className="mb-csku mb-mono">{p.sku}</span>
               <RebateTag r={rebateFor(p.id)} />
+              {!rebateFor(p.id) && <AccrualTag a={accrualFor(p.id)} />}
               {/* A client's device holds no bins and no stock movements, so
                   these would not merely be private — they would be WRONG
                   (every count would read zero). Omitted, not blanked. What a
@@ -2755,6 +2792,7 @@ const parseRand = (s: string): number => {
                     <div className="mb-cname">{c.name}</div>
                     <div className="mb-csku mb-mono">{c.sku}</div>
                     <RebateTag r={rebateFor(c.id)} />
+                    {!rebateFor(c.id) && <AccrualTag a={accrualFor(c.id)} />}
                   </span>
                   <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
                     <button className="mb-chip" onClick={() => setCartQty(c.id, c.qty - 1)}>−</button>
@@ -3064,7 +3102,7 @@ const parseRand = (s: string): number => {
                 </div>
                 {(() => {
                   // 0076: on-device book first; the 0072 online read covers a device mid-sync
-                  const rb = rebateFor(d.id) ?? (myPrice && myPrice.part_id === d.id ? { ...myPrice, label: "your price" } : null);
+                  const rb = rebateFor(d.id) ?? (myPrice && myPrice.part_id === d.id && myRebatePos?.mode !== "accrual" ? { ...myPrice, label: "your price" } : null);
                   return rb && (
                     <div className="mb-box" style={{ marginTop: 8 }}>
                       <div className="mb-k">Your price (excl VAT)</div>
@@ -3101,12 +3139,19 @@ const parseRand = (s: string): number => {
                 </div>
               </div>
             )}
-            {!isClient && rebateFor(d.id) && (
+            {!isClient && rebateFor(d.id) ? (
               <div className="mb-box" style={{ marginTop: 8 }}>
                 <div className="mb-k">Price book (excl VAT)</div>
                 <RebateTag r={rebateFor(d.id)} big />
               </div>
-            )}
+            ) : !isClient && accrualFor(d.id) ? (() => { const a = accrualFor(d.id)!; return (
+              // 0092: accrual — the price stays full list; the rebate it earns is credited monthly
+              <div className="mb-box" style={{ marginTop: 8 }}>
+                <div className="mb-k">List price (excl VAT){a.who ? ` · ${a.who}` : ""}</div>
+                <div className="mb-v" style={{ fontSize: 20 }}>{d.price_cents != null && d.price_cents > 0 ? fmtR(d.price_cents) : "no list price"}</div>
+                <div className="mb-sub mb-rbsum">Rebate {bpsPct(a.bps)} (accrued, credited monthly)</div>
+              </div>
+            ); })() : null}
 
             {d.diagram_image && (
               <div className="mb-dgm" role="button"

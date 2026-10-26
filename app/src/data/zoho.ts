@@ -291,6 +291,27 @@ export async function rebateCustomer(customerId: number): Promise<RebatePosition
   if (error) { console.error(error); return null; }
   return data as RebatePosition;
 }
+/** Staff: who is on the accrual rebate (customer → scheme) and each scheme's rate per SKU (bps),
+ *  for the accrual view on parts. `scheme` is the one to show when no customer is picked (the
+ *  only scheme, else none). Online read under the staff RLS; customers never call it. */
+export type AccrualRates = { customers: Map<number, number>; rates: Map<number, Map<string, number>>; scheme: number | null };
+export async function staffAccrualRates(): Promise<AccrualRates | null> {
+  const [cr, ag, sk] = await Promise.all([
+    supabase.from("customer_rebate").select("customer_id").eq("mode", "accrual"),
+    supabase.from("rebate_agreement").select("customer_id, scheme_id").eq("party", "customer").eq("status", "active").is("deleted_at", null),
+    supabase.from("rebate_scheme_sku").select("scheme_id, sku, rebate_bps").gt("rebate_bps", 0),
+  ]);
+  for (const r of [cr, ag, sk]) if (r.error) { console.error(r.error); return null; }
+  const onAccrual = new Set((cr.data ?? []).map((r) => Number(r.customer_id)));
+  const customers = new Map<number, number>();
+  for (const a of ag.data ?? []) if (onAccrual.has(Number(a.customer_id))) customers.set(Number(a.customer_id), Number(a.scheme_id));
+  const rates = new Map<number, Map<string, number>>();
+  for (const s of sk.data ?? []) {
+    const m = rates.get(Number(s.scheme_id)) ?? new Map<string, number>();
+    m.set(String(s.sku).toUpperCase(), Number(s.rebate_bps)); rates.set(Number(s.scheme_id), m);
+  }
+  return { customers, rates, scheme: rates.size === 1 ? [...rates.keys()][0] : null };
+}
 /** A logged-in customer: their own rebate figures (mode price_book = nothing to show). */
 export async function myRebate(): Promise<RebatePosition | null> {
   const { data, error } = await supabase.rpc("my_rebate");
