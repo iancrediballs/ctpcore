@@ -47,12 +47,15 @@ export const useAuth = () => useContext(Ctx);
 
 /** How long to wait for getSession() before opening with the stored session. */
 const STORED_SESSION_AFTER_MS = 2500;
+/** How often an expired token is retried while the network seems dead. */
+const EXPIRED_RETRY_MS = 15_000;
 
-/** Refresh an expired/expiring token now. auth-js caches a failed refresh for
- *  60 s (keyed on the refresh token), so a reconnect would otherwise wait it out. */
+/** Refresh an EXPIRED token now (one still valid is auto-refresh's job).
+ *  auth-js caches a failed refresh for 60 s (keyed on the refresh token), so a
+ *  reconnect would otherwise wait that out. */
 async function refreshNow() {
   const stored = readStoredSession();
-  if (!stored || (stored.expires_at ?? 0) * 1000 > Date.now() + 90_000) return;
+  if (!stored || (stored.expires_at ?? 0) * 1000 > Date.now()) return;
   try {
     (supabase.auth as unknown as { lastRefreshFailure: unknown }).lastRefreshFailure = null;
     await supabase.auth.refreshSession();
@@ -100,6 +103,9 @@ export function AuthProvider(
     // Back online: refresh now rather than waiting out auth-js's failure cooldown.
     const onOnline = () => { void refreshNow(); };
     window.addEventListener("online", onOnline);
+    // A dead network often never fires "offline"/"online" (signal, not Wi-Fi),
+    // so an expired token is also retried on a timer. No-op while it is valid.
+    const retry = window.setInterval(onOnline, EXPIRED_RETRY_MS);
     const { data: sub } = supabase.auth.onAuthStateChange((e, s) => {
       // INITIAL_SESSION arrives as null when the refresh failed offline. Only a
       // real sign-out (or a session auth-js removed) drops us to the login.
@@ -111,6 +117,7 @@ export function AuthProvider(
     });
     return () => {
       window.clearTimeout(slow);
+      window.clearInterval(retry);
       window.removeEventListener("online", onOnline);
       sub.subscription.unsubscribe();
     };
