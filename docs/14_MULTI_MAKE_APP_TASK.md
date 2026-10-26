@@ -3,6 +3,7 @@
 **Status:** planned 26 Oct 2026, **not started**. App screens were frozen for the demo.
 **Why:** the server and the import pipeline (docs/13, 0079) handle any make. Four places in the app still
 assume FAW JH6. They must be fixed before customers see Sinotruk C7H parts.
+Line numbers are as of 26 Oct and will drift: find the spots with `grep -n "'SEC' |||\"SEC\" +|FAW JH6|rusauto43" -r app/src`.
 **Rule for this task:** FAW must look and behave exactly as it does today. Each step below has a "FAW
 unchanged" check.
 
@@ -35,9 +36,9 @@ profile counts as FAW JH6.
 ## 1. Drawings per make
 
 **Now:** the section drawing is found by `drawing_key = 'SEC' || category_id`:
-- `app/src/data/backend.web.ts:179` (part detail);
-- `app/src/data/backend.web.ts:548` (section list);
-- `app/src/mobile/MobileShell.tsx:495` (drawing keys).
+- `app/src/data/backend.web.ts:182` (part detail);
+- `app/src/data/backend.web.ts:635` (section list);
+- `app/src/mobile/MobileShell.tsx:517` (drawing keys).
 
 These are FAW's drawings. A Sinotruk part in section BMP would open FAW's bumper drawing.
 
