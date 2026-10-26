@@ -3005,14 +3005,15 @@ const parseRand = (s: string): number => {
                 <div className="mb-row"><span className="mb-rk">Received as</span><span className="mb-rv mb-mono">{d.inventory_pn}</span></div>}
               {d.brand && <div className="mb-row"><span className="mb-rk">Brand</span><span className="mb-rv">{d.brand}</span></div>}
               {(() => {
-                // CAT-5: fitment, one compact line per vehicle. The note is internal wording: staff only.
+                // CAT-5: fitment, one compact line per vehicle. The note is internal wording: a staff
+                // tooltip only (today it is the same "variant not yet differentiated" on every part).
                 const fits = (d.fitment ?? []).map((f) => {
                   const yrs = f.year_from || f.year_to ? `${f.year_from ?? "…"}–${f.year_to ?? "on"}` : "";
                   return { k: [f.make, f.model, f.variant].filter(Boolean).join(" ") + (f.engine ? ` · ${f.engine}` : "") + (yrs ? ` · ${yrs}` : ""), note: f.note };
                 }).filter((f) => f.k);
                 return fits.length > 0 && (
                   <div className="mb-row"><span className="mb-rk">Fits</span>
-                    <span className="mb-rv">{fits.map((f, i) => <div key={i}>{f.k}{!isClient && f.note ? <span className="mb-dim"> · {f.note}</span> : null}</div>)}</span>
+                    <span className="mb-rv">{fits.map((f, i) => <div key={i} title={!isClient && f.note ? f.note : undefined}>{f.k}</div>)}</span>
                   </div>
                 );
               })()}
