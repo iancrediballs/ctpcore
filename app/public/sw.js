@@ -213,7 +213,11 @@ self.addEventListener("fetch", (e) => {
   if (url.origin === self.location.origin && url.pathname.startsWith("/assets/")) {
     e.respondWith((async () => {
       const cache = await caches.open(CACHE);
-      const hit = await cache.match(e.request);
+      // ignoreVary: the copy precached at install was fetched by the worker
+      // (no Origin header) while the page asks with `crossorigin` (Origin
+      // set). A server that sends `Vary: Origin` would make them never match,
+      // and immutable files cannot differ by Origin anyway.
+      const hit = await cache.match(e.request, { ignoreVary: true });
       if (hit) return hit;
       try {
         const res = await fetch(e.request);
@@ -223,7 +227,7 @@ self.addEventListener("fetch", (e) => {
         }
         return res;
       } catch {
-        return (await cache.match(e.request)) ?? Response.error();
+        return (await cache.match(e.request, { ignoreVary: true })) ?? Response.error();
       }
     })());
     return;
