@@ -187,7 +187,9 @@ const jhbWhen = (iso: string): string => {
  *  undiscounted amount struck through beside it. */
 const LineAmt = ({ l }: { l: { qty: number; unit_price_minor: number; net_minor?: number | null } }) => {
   const gross = l.unit_price_minor * l.qty;
-  return l.net_minor != null && l.net_minor !== gross
+  // QA 26 Oct (REG-CAT-1): only a real discount (net below gross) is shown; a read-back net above
+  // the CTP amount (a re-priced or differently-rounded SO line) is not presented as a "saving".
+  return l.net_minor != null && l.net_minor < gross
     ? <span className="mb-rv"><s className="mb-was">{fmtR(gross)}</s>{fmtR(l.net_minor)}</span>
     : <span className="mb-rv">{fmtR(gross)}</span>;
 };
@@ -2501,6 +2503,11 @@ const parseRand = (s: string): number => {
           // FLOW-3: once accounts' Zoho invoice is linked, ITS total is the order's total (discounts included).
           const grand = (o: StaffOrder) => o.zoho_invoice_total_minor != null && o.zoho_invoice_id && !["void", "deleted"].includes(o.zoho_status ?? "")
             ? o.zoho_invoice_total_minor : o.total_minor + Math.floor((o.total_minor * o.tax_rate_bps + 5000) / 10000);
+          // QA 26 Oct (REG-CAT-1): the VAT inside a Zoho invoice total, not "invoice total − CTP lines"
+          // (the SO lines can differ from what was invoiced, which gave R 15k of VAT on a R 52k invoice).
+          const vatOf = (o: StaffOrder) => grand(o) === o.zoho_invoice_total_minor && o.zoho_invoice_total_minor != null
+            ? Math.round((o.zoho_invoice_total_minor * o.tax_rate_bps) / (10000 + o.tax_rate_bps))
+            : Math.floor((o.total_minor * o.tax_rate_bps + 5000) / 10000);
           return (
             <div key={cancelledGroup ? "cancelled" : "done"}>
               <div className="mb-count">{cancelledGroup ? `Cancelled · ${done.length}` : `Completed · ${done.length} — invoiced and closed`}</div>
@@ -2621,7 +2628,7 @@ const parseRand = (s: string): number => {
                         {o.tax_rate_bps > 0 && (
                           <div className="mb-row">
                             <span className="mb-rk">VAT {(o.tax_rate_bps / 100).toFixed(0)}%</span>
-                            <span className="mb-rv">{fmtR(grand(o) - o.total_minor)}</span>
+                            <span className="mb-rv">{fmtR(vatOf(o))}</span>
                           </div>
                         )}
                         <div className="mb-row">
@@ -2743,7 +2750,7 @@ const parseRand = (s: string): number => {
                       {awaiting ? <b style={{ color: "var(--amber)" }}>Quote ready</b>
                         : r.status === "quote" ? "With us for pricing"
                         : r.status === "confirmed" ? <b style={{ color: "var(--green)" }}>Accepted{r.zoho_salesorder_number ? ` · sales order ${r.zoho_salesorder_number}` : ""}</b>
-                        : r.status === "cancelled" ? "Declined"
+                        : r.status === "cancelled" ? (r.client_response === "declined" ? "Declined" : "Cancelled")
                         : r.status === "fulfilled" ? "Ready for collection"
                         : r.status === "invoiced" ? "Invoiced"
                         : r.status}
