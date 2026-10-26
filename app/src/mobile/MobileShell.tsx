@@ -2177,7 +2177,7 @@ const parseRand = (s: string): number => {
                 placeholder="Vehicle, urgency, who asked — anything the desk should see…"
                 onChange={(e) => setNote(e.target.value)} />
 
-              <div className="mb-actions" style={{ marginTop: 10 }}>
+              <div className="mb-actions inline" style={{ marginTop: 10 }}>
                 <button className="mb-btn s" disabled={sending}
                   onClick={() => { setCart([]); setNote(""); setCounterCustomer(null); }}>Clear</button>
                 <button className="mb-btn p" disabled={sending || counterCustomer == null}
