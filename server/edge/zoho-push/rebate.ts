@@ -164,9 +164,12 @@ export async function rebateAccrue(db: SupabaseClient, log: Logger, cfg: any, bo
       const prev = seenMap.get(`${d.type}:${id}`);
       if (!body.force && prev && prev.last_modified === String(d.row.last_modified_time ?? "") && prev.status === String(d.row.status)) continue;
       const full = d.type === "invoice" ? (await zoho("GET", `/invoices/${id}`)).invoice : (await zoho("GET", `/creditnotes/${id}`)).creditnote;
+      // cut-over (docs/09): Michelle's re-entered history ("Opening balance — DS0000xx") never earns a rebate,
+      // whatever date it carries — recorded as not counting, with no flag
+      const opening = /^\s*opening balance/i.test(String(full.reference_number ?? ""));
       const { data: r, error: e } = await db.rpc("rebate_accrue_doc", { p_customer_id: c.id, p: {
         type: d.type, id, number: d.type === "invoice" ? full.invoice_number : full.creditnote_number, date: full.date,
-        status: full.status, last_modified: String(d.row.last_modified_time ?? full.last_modified_time ?? ""), lines: lineTotals(full) } });
+        status: opening ? "opening_balance" : full.status, last_modified: String(d.row.last_modified_time ?? full.last_modified_time ?? ""), lines: lineTotals(full) } });
       if (e) { out.flags.push(`${id}: ${e.message}`); continue; }
       out.read++; out.posted += r.posted; out.flags.push(...(r.flags ?? []));
       if (r.posted) {
@@ -332,4 +335,28 @@ export async function rebateVoid(db: SupabaseClient, log: Logger, body: any) {
   await log({ doc_type: "creditnote", ctp_ref: st.number, action: "void", ok: cn.status === "void", zoho_id: st.zoho_creditnote_id,
               message: `${st.number}: TEST credit note ${cn.creditnote_number} voided` });
   return { statement: st.number, creditnote: cn.creditnote_number, status: cn.status, ...data };
+}
+
+// ── cut-over to accrual: take the Price List OFF the customer's main Zoho contact ─────────────────
+// Only pricebook_id is sent; the contact is read before and after and every other field compared.
+// The price book itself is kept. Needs the customer in accrual mode first (so nothing is left without
+// a rebate) unless force_without_accrual.
+// deno-lint-ignore no-explicit-any
+export async function unassignPricebook(db: SupabaseClient, log: Logger, body: any) {
+  const c = await customerByCode(db, String(body.customer_code ?? ""));
+  if (!c.zoho_contact_id) throw new Blocked(`${c.name} is not linked to a Zoho contact`);
+  const { data: cr } = await db.from("customer_rebate").select("mode").eq("customer_id", c.id).maybeSingle();
+  if (cr?.mode !== "accrual" && body.force_without_accrual !== true) throw new Blocked(`${c.name} is not in accrual mode — switch it first (rebate_setup).`);
+  const before = (await zoho("GET", `/contacts/${c.zoho_contact_id}`)).contact;
+  if (body.apply !== true) return { preview: true, customer: c.name, pricebook_now: before.pricebook_name || before.pricebook_id || null };
+  if (before.pricebook_id) await zoho("PUT", `/contacts/${c.zoho_contact_id}`, {}, { contact_name: before.contact_name, pricebook_id: "" });
+  const after = (await zoho("GET", `/contacts/${c.zoho_contact_id}`)).contact;
+  const skip = new Set(["pricebook_id", "pricebook_name", "last_modified_time", "price_precision"]);
+  const changed = Object.keys({ ...before, ...after }).filter((k) => !skip.has(k) && JSON.stringify(before[k]) !== JSON.stringify(after[k]));
+  const ok = !after.pricebook_id;
+  await db.from("customer").update({ zoho_pricebook_id: after.pricebook_id ? String(after.pricebook_id) : null,
+    zoho_pricebook_name: after.pricebook_name || null, zoho_pricebook_synced_at: new Date().toISOString() }).eq("id", c.id);
+  await log({ doc_type: "contact", ctp_id: c.id, ctp_ref: `customer:${c.code}`, action: "update", ok: ok && !changed.length, zoho_id: String(c.zoho_contact_id),
+              message: `${c.name}: Price List ${before.pricebook_name || "none"} → ${after.pricebook_name || "none"} (rebate by accrual)${changed.length ? ` — other fields changed: ${changed.join(", ")}` : ""}` });
+  return { customer: c.name, pricebook_before: before.pricebook_name || null, pricebook_after: after.pricebook_name || null, verified: ok, other_fields_changed: changed };
 }

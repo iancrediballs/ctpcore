@@ -480,7 +480,7 @@ begin
              'list_minor', (select pr.amount_minor from price pr where pr.part_id = sl.part_id and pr.tier = 'list' and pr.deleted_at is null
                              order by pr.valid_from desc limit 1),
              'book_minor', case when not v_accrual then (select i.rate_minor from price_book_item i where i.pricebook_id = v_o.book and i.part_id = sl.part_id limit 1) end,
-             'rebate_minor', case when v_accrual and rb.bps > 0 then round(sl.qty * sl.unit_price_minor * rb.bps / 10000.0)::bigint end,
+             'rebate_minor', case when v_accrual and rb.bps > 0 then round(sl.qty::numeric * sl.unit_price_minor * rb.bps / 10000)::bigint end,
              'rebate_bps', case when v_accrual and v_staff then rb.bps end,
              'cost_minor', case when v_staff and public.can_see_cost() then (select cc.cost_invoiced_minor from part_current_cost cc where cc.part_id = sl.part_id) end,
              'floor_minor', case when v_staff and public.can_see_cost() then public.price_floor_minor(sl.part_id, coalesce(sl.tier_at_add, v_o.tier)) end))

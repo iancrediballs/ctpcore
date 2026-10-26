@@ -62,7 +62,7 @@ import { createClient, type SupabaseClient } from "jsr:@supabase/supabase-js@2";
 import { env, zohoInit, zohoMissing, Blocked, zoho, rands, jhbDate, findByReference, resolveContact, itemIds, taxIdFor,
          rebateDiscount, linkToSalesOrder, salesOrderFor, deleteSalesOrder, estimateFor, estimatePayload, findLiveEstimate,
          zohoInv, salesOrderFromEstimate, type Logger } from "../_shared/zoho.ts";
-import { rebateProbe, rebateSetup, rebateAccount, rebateAccrue, rebateStatement, rebateOffset, rebateVoid } from "./rebate.ts";
+import { rebateProbe, rebateSetup, rebateAccount, rebateAccrue, rebateStatement, rebateOffset, rebateVoid, unassignPricebook } from "./rebate.ts";
 
 
 const CORS = {
@@ -1178,7 +1178,7 @@ Deno.serve(async (req: Request) => {
   // (Status read-back is allowed while sending is off: documents already in
   // Zoho still change status there.)
   if (!["test", "status", "so_sync", "cancel", "hook", "stock_sync", "receive_list", "rebate_book", "assign_pricebook", "pricebook_sync", "catalogue_set",
-        "rebate_probe", "rebate_setup", "rebate_account", "rebate_accrue", "rebate_statement", "rebate_offset", "rebate_void"].includes(body.action) && (!cfg?.push_enabled || !cfg?.push_from)) {
+        "rebate_probe", "rebate_setup", "rebate_account", "rebate_accrue", "rebate_statement", "rebate_offset", "rebate_void", "rebate_unassign_pricebook"].includes(body.action) && (!cfg?.push_enabled || !cfg?.push_from)) {
     return json({ ok: true, skipped: "Sending to Zoho is off (Settings → Zoho). Nothing was sent." });
   }
   await zohoInit(db);
@@ -1300,7 +1300,7 @@ Deno.serve(async (req: Request) => {
     }
     // 0092: customer rebates by accrual + credit note (rebate.ts, docs/14_REBATE_ACCRUAL_CREDIT_NOTE.md)
     if (typeof body.action === "string" && body.action.startsWith("rebate_") && body.action !== "rebate_book") {
-      const adminOnly = ["rebate_probe", "rebate_setup", "rebate_account", "rebate_statement", "rebate_offset", "rebate_void"];
+      const adminOnly = ["rebate_probe", "rebate_setup", "rebate_account", "rebate_statement", "rebate_offset", "rebate_void", "rebate_unassign_pricebook"];
       if (who.actor && !who.admin && adminOnly.includes(body.action)) return json({ error: "Only an admin can do that." }, 403);
       try {
         const r = body.action === "rebate_probe" ? await rebateProbe()
@@ -1310,6 +1310,7 @@ Deno.serve(async (req: Request) => {
                 : body.action === "rebate_statement" ? await rebateStatement(db, log, cfg, who, body)
                 : body.action === "rebate_offset" ? await rebateOffset(db, log, cfg, body)
                 : body.action === "rebate_void" ? await rebateVoid(db, log, body)
+                : body.action === "rebate_unassign_pricebook" ? await unassignPricebook(db, log, body)
                 : (() => { throw new Blocked(`Unknown action ${body.action}`); })();
         return json({ ok: true, ...r });
       } catch (e) { return json({ ok: false, error: e instanceof Error ? e.message : String(e) }, e instanceof Blocked ? 409 : 502); }
