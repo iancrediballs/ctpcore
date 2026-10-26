@@ -1,0 +1,8 @@
+-- 0090 (QA regression, 26 Oct): 0085 restored a TABLE-wide select on sales_order, which also
+-- re-exposed staff_log and timeline to customers (before 0083 they were column-hidden; the 0045
+-- price guard writes supplier cost into staff_log). Back to the pre-0083 state: every column
+-- except staff_log and timeline. Staff read those through PowerSync and SECURITY DEFINER RPCs.
+begin;
+revoke select on public.sales_order from authenticated, anon;
+grant select (id, number, customer_id, location_id, status, currency, notes, fulfilled_at, tax_rate_bps, rev, created_at, updated_at, deleted_at, origin, client_response, client_responded_at, client_uuid, invoice_no, invoiced_at, zoho_salesorder_id, zoho_salesorder_number, zoho_created_at, raised_by, zoho_invoice_id, zoho_invoice_number, zoho_status, zoho_pushed_at, zoho_error, zoho_status_at, zoho_do_not_push, zoho_so_status, zoho_so_status_at, zoho_so_error, accepted_by, accepted_note, zoho_so_emailed, zoho_so_modified_at, zoho_so_synced_at, zoho_so_terms_days, zoho_so_terms_label, zoho_so_readback_issue, fulfil_override_by, fulfil_override_note, fulfil_override_at, zoho_invoice_total_minor, zoho_invoice_balance_minor, zoho_invoice_paid_minor, zoho_invoice_payments, zoho_invoice_count, zoho_invoice_linked_at, zoho_estimate_id, zoho_estimate_number, zoho_estimate_status, zoho_estimate_status_at, zoho_estimate_error, zoho_estimate_modified_at, zoho_estimate_total_minor, zoho_estimate_expiry, zoho_estimate_emailed, zoho_estimate_synced_at, zoho_package_id, zoho_package_number, zoho_shipment_id, zoho_shipment_number, zoho_shipment_status, event_actor, po_number, po_file_path, po_file_name, credit_warning, accepted_via) on public.sales_order to authenticated;
+commit;
