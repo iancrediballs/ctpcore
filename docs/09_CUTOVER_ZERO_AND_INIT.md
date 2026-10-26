@@ -152,6 +152,14 @@ On the day:
 5b. Create the opening invoices (dry run sheet 2) and the opening bills (sheet 3), through the API
     from the approved file or by Michelle. Check: Hermans' balance = R1,757,210.30 and supplier
     balances = R2,024,950.90, to the cent (or the re-run figures on the day).
+5c. **Hermans rebate cutover (docs/14):** set it to the **first trading day after the zero**, once the
+    opening invoices are in. It is one setting, `customer_rebate.rebate_from`, set to 27 Oct on 26 Oct. If the
+    zero slips, bump it:
+    `zoho-push {"action":"rebate_setup","customer_code":"HERMANS","mode":"accrual","rebate_from":"YYYY-MM-DD","scheme":"FAW JH6 – Rebate","settle":"offset","confirm":"Ian approved"}`
+    or, in SQL, `update customer_rebate set rebate_from = 'YYYY-MM-DD' where customer_id = 6;`.
+    Check: `select count(*) from rebate_accrual where customer_id = 6 and doc_date < 'YYYY-MM-DD'` = 0.
+    Re-entered invoices keep their original dates and the "Opening balance" reference, so they never
+    accrue.
 6. Post the opening-stock adjustment; re-read the stock cache; reconcile → all match.
 7. CTP reset (§2): soft-delete pre-go-live orders, clear refs, freeze the ledger with a snapshot,
    `push_from = now`, `stock_master = 'zoho'`.
