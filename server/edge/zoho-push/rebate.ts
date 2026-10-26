@@ -229,7 +229,7 @@ export async function rebateStatement(db: SupabaseClient, log: Logger, cfg: any,
   const c = await customerByCode(db, String(body.customer_code ?? ""));
   const periodEnd = monthEnd(String(body.period ?? ""));
   // a statement that already has its credit note is not rebuilt: apply / open then only link, open or read it back
-  const { data: done } = await db.from("rebate_statement").select("*").eq("customer_id", c.id).eq("period_end", periodEnd).not("zoho_creditnote_id", "is", null).maybeSingle();
+  const { data: done } = await db.from("rebate_statement").select("*").eq("customer_id", c.id).eq("period_end", periodEnd).neq("status", "void").not("zoho_creditnote_id", "is", null).maybeSingle();
   // deno-lint-ignore no-explicit-any
   let built: any = done && body.apply === true ? done : null;
   if (!built) {

@@ -268,12 +268,34 @@ export async function poFileUrl(path: string): Promise<string> {
 
 // ── 0072: price books (Zoho stays the source) ───────────────────────────────
 /** Per order line: list + the customer's book rate; staff also get cost and the margin floor. */
-export type LinePrice = { line_id: number; part_id: number; list_minor?: number; book_minor?: number; cost_minor?: number; floor_minor?: number };
-export type OrderPrices = { order_id: number; pricebook: string | null; lines: LinePrice[] };
+export type LinePrice = { line_id: number; part_id: number; list_minor?: number; book_minor?: number; cost_minor?: number; floor_minor?: number;
+  /** 0092: an accrual-rebate customer — the rebate this line EARNS (credited monthly), and (staff) its % in bps */
+  rebate_minor?: number; rebate_bps?: number };
+export type OrderPrices = { order_id: number; pricebook: string | null; rebate_mode?: "accrual" | null; lines: LinePrice[] };
 export async function orderPrices(orderId: number): Promise<OrderPrices | null> {
   const { data, error } = await supabase.rpc("order_prices", { p_order_id: orderId });
   if (error) { console.error(error); return null; }
   return data as OrderPrices;
+}
+// ── 0092: rebates by accrual + credit note ──────────────────────────────────
+/** Earned = every accrual; accruing = not on a statement yet; credited = on an open credit note;
+ *  settled = used / paid out; outstanding = earned − settled. Minor units, excl. VAT. */
+export type RebatePosition = { mode: "price_book" | "accrual"; rebate_from?: string | null; earned_minor?: number; accruing_minor?: number;
+  this_month_minor?: number; on_statement_minor?: number; credited_minor?: number; settled_minor?: number; outstanding_minor?: number;
+  last_creditnote?: string | null;
+  statements?: { number: string; period_end: string; total_minor: number; status: string; creditnote: string | null; creditnote_status: string | null }[];
+  settings?: { zoho_rebate_contact_name: string | null; settle: string } | null };
+/** Staff: one customer's rebate position and statements. */
+export async function rebateCustomer(customerId: number): Promise<RebatePosition | null> {
+  const { data, error } = await supabase.rpc("rebate_customer", { p_customer_id: customerId });
+  if (error) { console.error(error); return null; }
+  return data as RebatePosition;
+}
+/** A logged-in customer: their own rebate figures (mode price_book = nothing to show). */
+export async function myRebate(): Promise<RebatePosition | null> {
+  const { data, error } = await supabase.rpc("my_rebate");
+  if (error) { console.error(error); return null; }
+  return data as RebatePosition;
 }
 /** A logged-in customer on a price book: list + their rebate price, keyed by part id. */
 export async function myPrices(partIds: number[]): Promise<Record<string, { list_minor: number | null; book_minor: number }>> {

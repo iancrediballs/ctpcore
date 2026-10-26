@@ -79,9 +79,11 @@ create table if not exists public.rebate_statement (
   zoho_journal_id text, zoho_journal_status text,
   zoho_error text,
   created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now(),
-  unique (customer_id, period_end)
+  updated_at timestamptz not null default now()
 );
+-- one LIVE statement per customer per month; a voided one makes room for a new one (…-2)
+alter table public.rebate_statement drop constraint if exists rebate_statement_customer_id_period_end_key;
+create unique index if not exists rebate_statement_live_idx on public.rebate_statement (customer_id, period_end) where status <> 'void';
 alter table public.rebate_statement enable row level security;
 revoke all on public.rebate_statement from anon, authenticated;
 grant select on public.rebate_statement to authenticated;
@@ -307,7 +309,10 @@ begin
   select c.id, c.code, c.name into v_c from customer c where c.id = p_customer_id;
   v_start := date_trunc('month', p_period_end)::date;
   v_number := format('RB-%s-%s', to_char(p_period_end, 'YYYY-MM'), v_c.code);
-  select * into v_st from rebate_statement where customer_id = p_customer_id and period_end = p_period_end;
+  select * into v_st from rebate_statement where customer_id = p_customer_id and period_end = p_period_end and status <> 'void';
+  if v_st.id is null and exists (select 1 from rebate_statement where number = v_number) then
+    v_number := v_number || '-' || (select count(*) + 1 from rebate_statement where customer_id = p_customer_id and period_end = p_period_end);
+  end if;
   if v_st.id is not null and (v_st.zoho_creditnote_id is not null or v_st.status <> 'draft') then
     raise exception 'Statement % already has credit note % (%): later accruals go on the next month''s statement.',
       v_st.number, v_st.zoho_creditnote_number, v_st.status using errcode = '23505';
@@ -335,11 +340,14 @@ begin
   if v_total <= 0 then
     return jsonb_build_object('skipped', format('Nothing to credit (%s): carried to the next statement', v_total), 'total_minor', v_total);
   end if;
-  insert into rebate_statement (number, customer_id, period_start, period_end, total_minor, lines, status, settle)
-  values (v_number, p_customer_id, v_start, p_period_end, v_total, v_lines, 'draft',
-          (select settle from customer_rebate where customer_id = p_customer_id))
-  on conflict (customer_id, period_end) do update set total_minor = excluded.total_minor, lines = excluded.lines, updated_at = now()
-  returning id into v_id;
+  if v_st.id is not null then
+    update rebate_statement set total_minor = v_total, lines = v_lines, updated_at = now() where id = v_st.id returning id into v_id;
+  else
+    insert into rebate_statement (number, customer_id, period_start, period_end, total_minor, lines, status, settle)
+    values (v_number, p_customer_id, v_start, p_period_end, v_total, v_lines, 'draft',
+            (select settle from customer_rebate where customer_id = p_customer_id))
+    returning id into v_id;
+  end if;
   update rebate_accrual r set statement_id = v_id, state = case when r.state = 'accrued' then 'claimable' else r.state end
    where r.customer_id = p_customer_id and r.doc_date <= p_period_end and r.statement_id is null;
   return (select to_jsonb(s) from rebate_statement s where s.id = v_id);
@@ -400,7 +408,7 @@ returns jsonb language sql stable security definer set search_path = public, pg_
     'rebate_from', (select rebate_from from customer_rebate where customer_id = p_customer_id),
     'earned_minor', coalesce(sum(r.amount_minor), 0),
     'accruing_minor', coalesce(sum(r.amount_minor) filter (where r.statement_id is null), 0),
-    'this_month_minor', coalesce(sum(r.amount_minor) filter (where r.statement_id is null and r.doc_date >= date_trunc('month', current_date)), 0),
+    'this_month_minor', coalesce(sum(r.amount_minor) filter (where r.doc_date >= date_trunc('month', current_date)), 0),
     'on_statement_minor', coalesce(sum(r.amount_minor) filter (where s.status = 'draft'), 0),
     'credited_minor', coalesce(sum(r.amount_minor) filter (where s.status in ('credited', 'settled')), 0),
     'settled_minor', coalesce(sum(r.amount_minor) filter (where s.status = 'settled'), 0),

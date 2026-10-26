@@ -19,6 +19,7 @@ import * as api from "../data/api";
 import { refreshZohoStatus, zohoStatusLabel, syncSalesOrder, cancelInZoho, syncEstimate, recreateEstimate, overrideFulfilGate, fulfilBlockReason, setCustomerOnAccount,
          shipInZoho, countToZoho, openPurchaseOrders, receiveInZoho, type OpenPO,
          acceptPrecheck, uploadPo, poFileUrl, orderPrices, myPrices, type OrderPrices, type LinePrice,
+         rebateCustomer, myRebate, type RebatePosition,
          remoteBookPrices, bookLabel, type BookPrice, type BookCustomer } from "../data/zoho";
 import AddCustomer from "../admin/AddCustomer";
 import { assetUrl } from "../assets";
@@ -412,6 +413,42 @@ function RebateSum({ r }: { r: { saving: number; over: number } | null }) {
   );
 }
 
+/** 0092: an accrual-rebate customer is quoted at full price; the rebate the order EARNS is shown
+ *  instead of a lower price, and credited to their rebate account each month. Nothing for others. */
+function AccrualRebate({ p, client }: { p?: OrderPrices; client?: boolean }) {
+  if (p?.rebate_mode !== "accrual") return null;
+  const earn = p.lines.reduce((t, l) => t + (l.rebate_minor ?? 0), 0);
+  if (earn <= 0) return null;
+  return (
+    <div className="mb-row">
+      <span className="mb-rk">Rebate</span>
+      <span className="mb-rv">
+        <b>{fmtR(earn)}</b> excl VAT
+        <div className="mb-csku mb-rbsum">{client
+          ? "your rebate on this order — credited to your rebate account each month"
+          : "accrues when the invoice is sent · settled monthly by credit note"}</div>
+      </span>
+    </div>
+  );
+}
+
+/** 0092: rebate earned / credited / outstanding (staff: a customer's; customer: their own). */
+function RebatePositionRow({ r }: { r: RebatePosition | null | undefined }) {
+  if (!r || r.mode !== "accrual") return null;
+  return (
+    <div className="mb-row">
+      <span className="mb-rk">Rebate</span>
+      <span className="mb-rv">
+        earned this month <b>{fmtR(r.this_month_minor ?? 0)}</b>
+        {" · "}credited to date {fmtR(r.credited_minor ?? 0)}
+        {" · "}outstanding {fmtR(r.outstanding_minor ?? 0)}
+        {r.last_creditnote ? <> · last credit note {r.last_creditnote}</> : null}
+        <div className="mb-csku">excl VAT{r.settings?.zoho_rebate_contact_name ? ` · rebate account "${r.settings.zoho_rebate_contact_name}"` : ""}</div>
+      </span>
+    </div>
+  );
+}
+
 // ─── the shell ───────────────────────────────────────────────────────────────
 
 /** 0072: one line's price, book-aware. Customers: ~~list~~ their price. Staff also see cost,
@@ -543,6 +580,14 @@ export default function MobileShell() {
     void orderPrices(openOrder).then((p) => { if (live && p) setPrices((x) => ({ ...x, [openOrder]: p })); });
     return () => { live = false; };
   }, [openOrder]);
+  // 0092: an accrual-rebate customer's position, read when one of their orders is opened
+  const [rebatePos, setRebatePos] = useState<Record<number, RebatePosition | null>>({});
+  useEffect(() => {
+    if (openOrder == null || prices[openOrder]?.rebate_mode !== "accrual") return;
+    const cid = orders?.find((x) => x.id === openOrder)?.customer_id;
+    if (!cid || cid in rebatePos) return;
+    void rebateCustomer(cid).then((r) => setRebatePos((x) => ({ ...x, [cid]: r })));
+  }, [openOrder, prices, orders, rebatePos]);
   // A blocked save is held here until the person chooses. Clearing it is the
   // only way past, so the choice cannot be missed by looking away.
   const [floorBlock, setFloorBlock] = useState<{ order: StaffOrder; message: string } | null>(null);
@@ -615,6 +660,14 @@ export default function MobileShell() {
   // order desk. Least privilege is the only safe default for a value that can
   // legitimately be missing.
   const role = tokenRole(session?.access_token) ?? dbRole;
+  // 0092: a customer's own rebate figures (accrual customers only; others get mode price_book → nothing shown)
+  const [myRebatePos, setMyRebatePos] = useState<RebatePosition | null>(null);
+  useEffect(() => {
+    if (role !== "customer") return;
+    let live = true;
+    void myRebate().then((r) => { if (live) setMyRebatePos(r); });
+    return () => { live = false; };
+  }, [role, mine]);
   const isClient = role == null || role === "customer";
   // QA 26 Oct: who may see cost, margin and the floor. Same list as 0086's can_see_cost(), and an
   // allow-list so an unknown role sees none. Warehouse is staff but not this.
@@ -1245,6 +1298,7 @@ const parseRand = (s: string): number => {
             onClick={() => { void toggleAccount(o); }}>{o.cust_on_account ? "Make cash…" : "Make account…"}</button></> : null}
         </span>
       </div>
+      {o.customer_id ? <RebatePositionRow r={rebatePos[o.customer_id]} /> : null}
     </>
   );
 
@@ -1881,6 +1935,7 @@ const parseRand = (s: string): number => {
             })}
           </div>
         )}
+        {isClient && <RebatePositionRow r={myRebatePos} />}
         <button className="mb-btn s" style={{ width: "100%", marginTop: 14 }}
           onClick={() => { void signOut(); }}>
           Sign out
@@ -2265,6 +2320,7 @@ const parseRand = (s: string): number => {
                             )}
                           </div>
                         ))}
+                        <AccrualRebate p={prices[o.id]} />
                         {(() => { const rb = orderRebate(o); return rb && (
                           <div className="mb-row">
                             <span className="mb-rk">Rebate · {rb.n} line{rb.n === 1 ? "" : "s"}</span>
@@ -2616,6 +2672,7 @@ const parseRand = (s: string): number => {
                             <LineAmt l={l} />
                           </div>
                         ))}
+                        <AccrualRebate p={prices[o.id]} />
                         {(() => { const rb = orderRebate(o); return rb && (
                           <div className="mb-row">
                             <span className="mb-rk">Rebate · {rb.n} line{rb.n === 1 ? "" : "s"}</span>
@@ -2808,6 +2865,7 @@ const parseRand = (s: string): number => {
                       </div>
                     );
                   })()}
+                  {priced && <AccrualRebate p={minePrices[r.id]} client />}
                   {priced && estInfo[r.id]?.total_minor != null && (
                     <div className="mb-row">
                       <span className="mb-rk">Total</span>
