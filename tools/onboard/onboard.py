@@ -178,7 +178,7 @@ def build(sheets: dict, base: Path, rep: Report, existing: dict | None = None) -
     if "parts" not in sheets: rep.err("parts: the sheet is missing"); return {}
     pr = dict(sheets["profile"][0])
     make, model = pr.get("make", ""), pr.get("model", "")
-    if not re.fullmatch(r"[A-Z0-9_]{2,20}", pr.get("code", "")): rep.err("profile: code must be 2-20 capitals/digits/_ (e.g. SONNET_X)")
+    if not re.fullmatch(r"[A-Z0-9_]{2,20}", pr.get("code", "")): rep.err("profile: code must be 2-20 capitals/digits/_ (e.g. SINOTRUK_C7H)")
     if pr.get("zoho_manufacturer") and pr["zoho_manufacturer"] != make:
         rep.err(f"profile: zoho_manufacturer '{pr['zoho_manufacturer']}' ≠ make '{make}' — Zoho's Manufacturer is copied back into CTP's make, so they must match")
     if not pr.get("zoho_brand"): rep.err("profile: zoho_brand is empty — Zoho requires a Brand on every item (universal parts: model and zoho_brand 'All models')")

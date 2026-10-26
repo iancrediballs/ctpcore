@@ -1093,3 +1093,13 @@ correctly as you would see them on the truck, or in the diagram."
 - App: unchanged tonight (demo). The UI follow-ups (drawing per make, Find filters with universal parts,
   Jefrey per make, rusauto button from profile) are listed at the end of docs/13.
 - Note: the price-book preview runs inside the DB via pg_net (like the cron), so no secret leaves Vault.
+
+### 26 Oct (later): next make is Sinotruk C7H, not "Sonnet"
+- docs/13 and the checklist now say Sinotruk C7H. Templates' example rows are Sinotruk too.
+- `docs/templates/sinotruk_c7h_template.xlsx` is pre-filled with the profile and vehicle rows. It passes
+  `validate --offline` with 2 warnings: the GL account ids are empty until Michelle confirms "Sales -
+  Sinotruk" / "Cost of Goods Sold - Sinotruk".
+- `tools/onboard/profiles/sinotruk_c7h_profile.sql` holds the same entry as SQL. It is **not applied**;
+  nothing has gone live.
+- The app follow-ups (drawings per make, make filter with universal parts, Jefrey heading, lookup button)
+  are planned in `docs/14_MULTI_MAKE_APP_TASK.md`, to run after the Anton demo. No app change tonight.
