@@ -24,8 +24,9 @@ import * as api from "../data/api";
 import type { DiagramPart, WebHotspot } from "../data/api";
 import { assetUrl } from "../assets";
 import { PhotoImg } from "./PhotoImg";
-import { DiagramCanvas, Marker, loadMarkerScale, markerRadius, calloutRect, FOCUS_SCALE, type CanvasApi, type Frame, type Rect } from "./DiagramCanvas";
+import { DiagramCanvas, Marker, MarkerHalo, loadMarkerScale, markerRadius, calloutRect, FOCUS_SCALE, type CanvasApi, type Frame, type Rect } from "./DiagramCanvas";
 import { markerState, markerTitle } from "./hotspotState";
+import { withTimeout } from "../data/timeout";
 
 export type Drawing = { path: string; label: string; key?: string };
 
@@ -41,10 +42,13 @@ type Row = {
   sku: string | null; name: string; badges: string[]; link: WebHotspot["link"];
 };
 
-export function DiagramView({ drawings, start, onClose, canEdit, onOpenPart, onEditMarkers, onAddToRequest, inRequest, deepPart, headerExtra }: {
+export function DiagramView({ drawings, start, onClose, canEdit, staff, onOpenPart, onEditMarkers, onAddToRequest, inRequest, deepPart, headerExtra }: {
   drawings: Drawing[]; start: number;
   onClose: () => void;
   canEdit?: boolean;
+  /** Staff wording and prices: "Add to order" (the counter), and "no list price" for an
+   *  unpriced part. A customer device has no list prices to show at all. */
+  staff?: boolean;
   onOpenPart?: (partId: number) => void;
   onEditMarkers?: (path: string, label: string) => void;
   /** Customers: add to the request list (the confirm step is the qty box + button). */
@@ -61,6 +65,11 @@ export function DiagramView({ drawings, start, onClose, canEdit, onOpenPart, onE
   const [hots, setHots] = useState<WebHotspot[]>([]);
   const [key, setKey] = useState<string | null>(null);
   const [parts, setParts] = useState<Record<number, DiagramPart>>({});
+  /** CAT-15: the parts read (stock, price, photo, Open/Add) is the part of a row that can go
+   *  missing. Its state is shown, never left blank, and a retry re-runs the load. */
+  const [partsState, setPartsState] = useState<"loading" | "ok" | "error">("loading");
+  const [retry, setRetry] = useState(0);
+  const loadedPath = useRef<string | null>(null);
   const [sel, setSel] = useState<string | null>(null);           // Row.key
   const [qty, setQty] = useState<Record<number, number>>({});
   const [split, setSplit] = useState(loadSplit);
@@ -79,7 +88,12 @@ export function DiagramView({ drawings, start, onClose, canEdit, onOpenPart, onE
 
   // ── load the drawing's markers, then the parts they point at ────────────
   useEffect(() => {
-    setHots([]); setParts({}); setFrame(null); setKey(null); setSel(null); setZoomed(false);
+    // A retry keeps what is on screen (markers, frame, selection); a new drawing starts clean.
+    if (loadedPath.current !== d.path) {
+      loadedPath.current = d.path;
+      setHots([]); setParts({}); setFrame(null); setKey(null); setSel(null); setZoomed(false);
+    }
+    setPartsState("loading");
     let live = true;
     api.listHotspots(d.path).then(async (r) => {
       if (!live) return;
@@ -87,12 +101,13 @@ export function DiagramView({ drawings, start, onClose, canEdit, onOpenPart, onE
       setKey(r.drawing_key ?? null);
       setHots(r.hotspots);
       const ids = [...new Set(r.hotspots.filter((h) => h.link === "ok" && h.part_id != null).map((h) => h.part_id!))];
-      const ps = ids.length ? await api.diagramParts(ids) : [];
+      const ps = ids.length ? await withTimeout(api.diagramParts(ids), 12000, "the parts list (device database)") : [];
       if (!live) return;
       setParts(Object.fromEntries(ps.map((p) => [p.id, p])));
-    }).catch((e) => console.error("diagram:", e));
+      setPartsState("ok");
+    }).catch((e) => { console.error("diagram:", e); if (live) setPartsState("error"); });
     return () => { live = false; };
-  }, [d.path]);
+  }, [d.path, retry]);
 
   // ── rows: one per part, callouts sorted; faulty/unlinked markers on their own ─
   const rows = useMemo<Row[]>(() => {
@@ -146,6 +161,15 @@ export function DiagramView({ drawings, start, onClose, canEdit, onOpenPart, onE
     }, 0);
   }, [rows, key]);
 
+  /** A tap on a marker or its halo. Targets overlap on dense drawings (BMP, DEF, FWL), so
+   *  the tap goes to the marker whose centre is NEAREST the finger, not whichever target
+   *  happens to be on top. */
+  const pickAt = useCallback((e: React.MouseEvent, h: WebHotspot) => {
+    e.stopPropagation();
+    const pt = canvas.current?.toDrawing(e.clientX, e.clientY);
+    pick(pt ? hots.reduce((a, b) => Math.hypot(b.x - pt.x, b.y - pt.y) < Math.hypot(a.x - pt.x, a.y - pt.y) ? b : a, h) : h);
+  }, [hots, pick]);
+
   // deep link: once the rows and the frame exist, land on the part
   useEffect(() => {
     const pid = pendingDeep.current;
@@ -191,12 +215,18 @@ export function DiagramView({ drawings, start, onClose, canEdit, onOpenPart, onE
           looking for it in the list and did not find it (20 Sep). Staff only;
           a customer login sees neither, by design. */}
       <div className="dv-list-head">
-        <span>{rows.length} part{rows.length === 1 ? "" : "s"} on this drawing{rows.length === 0 ? " — none marked up yet" : ""}</span>
+        <span>{rows.length} part{rows.length === 1 ? "" : "s"} on this drawing{rows.length === 0 && partsState !== "loading" ? " — none marked up yet" : ""}</span>
         {canEdit && onEditMarkers && (
           <button className="dv-edit" onClick={() => onEditMarkers(d.path, d.label)}>{rows.length ? "✎ Edit markers" : "✎ Add markers"}</button>
         )}
       </div>
-      {rows.length === 0 && canEdit && onEditMarkers && (
+      {partsState === "error" && (
+        <div className="dv-empty dv-err" role="alert">
+          <p>Couldn't load stock, prices and photos for this drawing.</p>
+          <button className="mb-chip on" onClick={() => setRetry((n) => n + 1)}>Retry</button>
+        </div>
+      )}
+      {rows.length === 0 && canEdit && onEditMarkers && partsState === "ok" && (
         <div className="dv-empty">
           <p>No callouts on this drawing yet. Place a ring on each printed callout and link it to its part — the list fills in as you go.</p>
           <button className="mb-chip on" onClick={() => onEditMarkers(d.path, d.label)}>Start marking up</button>
@@ -229,7 +259,9 @@ export function DiagramView({ drawings, start, onClose, canEdit, onOpenPart, onE
               </div>
             </div>
             <div className="dv-side" onClick={(e) => e.stopPropagation()}>
-              {p && p.list_minor != null && <div className="dv-price">{fmtR(p.list_minor)}</div>}
+              {p && (p.list_minor != null && p.list_minor > 0
+                ? <div className="dv-price">{fmtR(p.list_minor)}</div>
+                : staff && <div className="dv-price dim">no list price</div>)}
               {/* Open is offered to EVERYONE now, customers included — it is the
                   only way to the part's details, and the detail sheet is where
                   the photo carousel lives. It used to appear for staff only. */}
@@ -238,7 +270,7 @@ export function DiagramView({ drawings, start, onClose, canEdit, onOpenPart, onE
                 <div className="dv-add">
                   <input className="dv-qty" inputMode="numeric" value={q}
                     onChange={(e) => setQty((s) => ({ ...s, [p.id]: Math.max(1, Math.min(999, parseInt(e.target.value, 10) || 1)) }))} />
-                  <button className="mb-chip on" onClick={() => onAddToRequest(p, q)}>{already ? `+ (${already} in list)` : "Add to request"}</button>
+                  <button className="mb-chip on" onClick={() => onAddToRequest(p, q)}>{already ? `+ (${already} ${staff ? "on counter" : "in list"})` : staff ? "Add to order" : "Add to request"}</button>
                 </div>
               )}
             </div>
@@ -252,10 +284,14 @@ export function DiagramView({ drawings, start, onClose, canEdit, onOpenPart, onE
     <div className="dv-stage">
       <DiagramCanvas key={d.path} href={assetUrl(d.path)} frame={frame} onFrame={setFrame} onZoomed={setZoomed} bind={bind}
         onSwipe={!wide && drawings.length > 1 ? (dir) => step(idx + dir) : undefined}>
+        {/* CAT-6: the near-miss targets first, under every marker */}
+        {frame && hots.map((h) => (
+          <MarkerHalo key={"halo" + h.id} x={h.x} y={h.y} r={r} onClick={(e) => pickAt(e, h)} />
+        ))}
         {frame && hots.map((h) => (
           <Marker key={h.id} x={h.x} y={h.y} r={r} state={markerState(h)} title={markerTitle(h)}
             pulse={!!selRow && selRow.hots.some((x) => x.id === h.id)}
-            onClick={(e) => { e.stopPropagation(); pick(h); }} />
+            onClick={(e) => pickAt(e, h)} />
         ))}
       </DiagramCanvas>
       {drawings.length > 1 && (

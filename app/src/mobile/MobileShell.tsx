@@ -25,6 +25,7 @@ import { assetUrl } from "../assets";
 import { PhotoImg } from "./PhotoImg";
 import { DiagramCanvas, Marker, loadMarkerScale, saveMarkerScale, markerRadius, MARKER_SCALE_MIN, MARKER_SCALE_MAX, type CanvasApi, type Frame, type Pt } from "./DiagramCanvas";
 import { DiagramView, readDiagramHash, type Drawing } from "./DiagramView";
+import { withTimeout, TimeoutError } from "../data/timeout";
 import { markerState, markerTitle } from "./hotspotState";
 import type { DiagramPart } from "../data/api";
 import { makeUuid } from "../data/uuid";
@@ -54,6 +55,8 @@ type Section = {
 type PartRow = {
   id: number; sku: string; name: string; category_code: string | null;
   qty_on_hand: number; bin: string | null; price_cents: number | null;
+  /** 0047: of qty_on_hand, units held for accepted orders (staff devices only). */
+  qty_held?: number;
   // 0050: the one stock fact a customer gets. null = not synced yet (unknown).
   in_stock?: boolean | null;
   image?: string | null;
@@ -63,7 +66,7 @@ type PartRow = {
 
 type Hit = {
   id: number; sku: string; name: string; brand: string | null;
-  on_hand: number; in_stock?: boolean | null; price_cents: number | null; matched_on: string;
+  on_hand: number; held?: number; in_stock?: boolean | null; price_cents: number | null; matched_on: string;
   bin?: string | null; thumb?: string | null;
 };
 
@@ -89,6 +92,10 @@ type Detail = {
   diagram_image: string | null; diagram_item: string | null;
   // 0065: Zoho Inventory's physical stock for this part (staff; null until synced)
   zoho_stock?: { on_hand: number; available: number | null; committed: number | null; at: string | null } | null;
+  // CAT-5: cross-references and vehicle fitment
+  xrefs?: { type: string; number: string; brand: string | null }[];
+  fitment?: { make: string | null; model: string | null; variant: string | null; engine: string | null;
+    year_from: number | null; year_to: number | null; note: string | null }[];
 };
 
 type Toast = { text: string; err?: boolean; undo?: () => void };
@@ -408,9 +415,12 @@ function RebateSum({ r }: { r: { saving: number; over: number } | null }) {
  *  margin (R and %) and the 0041 floor, coloured against it.
  *  QA 26 Oct: cost / margin / floor only with `seesCost` (sales, manager, admin; 0086's
  *  can_see_cost). order_prices still returns them to warehouse, so the line is gated here too. */
-function PriceInfo({ lp, priceMinor, qty, staff, seesCost }: { lp?: LinePrice; priceMinor: number; qty: number; staff: boolean; seesCost: boolean }) {
+function PriceInfo({ lp, priceMinor, qty, staff, seesCost, known }: { lp?: LinePrice; priceMinor: number; qty: number; staff: boolean; seesCost: boolean;
+  /** The server's order_prices has answered, so a missing list price is a fact, not "still loading". */
+  known?: boolean }) {
   if (!lp) return null;
-  const list = lp.list_minor ?? null, book = lp.book_minor ?? null;
+  // CAT-1: a list of 0 is "never priced in Zoho", not "free". Treated as no list price.
+  const list = lp.list_minor != null && lp.list_minor > 0 ? lp.list_minor : null, book = lp.book_minor ?? null;
   const pct = list && book != null && book < list ? Math.round((1 - book / list) * 1000) / 10 : null;
   const cost = staff && seesCost ? lp.cost_minor ?? null : null, floor = staff && seesCost ? lp.floor_minor ?? null : null;
   const m = cost != null && priceMinor > 0 ? priceMinor - cost : null;
@@ -420,7 +430,8 @@ function PriceInfo({ lp, priceMinor, qty, staff, seesCost }: { lp?: LinePrice; p
     <div className="mb-pinfo">
       {list != null && book != null && book < list
         ? <span><s>{fmtR(list)}</s> <b>{fmtR(book)}</b> each · −{pct}% rebate</span>
-        : staff && list != null ? <span>List {fmtR(list)} each</span> : null}
+        : staff && list != null ? <span>List {fmtR(list)} each</span>
+        : staff && (known || lp.list_minor === 0) ? <span className="mb-dim">No list price</span> : null}
       {staff && book != null && priceMinor > 0 && (priceMinor > book
         ? <span className="mb-pm warn">{fmtR((priceMinor - book) * qty)} above the rebate price</span>
         : list != null && priceMinor < list ? <span className="mb-pm ok">saves {fmtR((list - priceMinor) * qty)} vs list</span> : null)}
@@ -628,7 +639,11 @@ export default function MobileShell() {
     const rows = bookLocal.length ? bookLocal : bookRemote?.rows ?? [];
     const customers = bookCustLocal.length ? bookCustLocal : bookRemote?.customers ?? [];
     const byPart = new Map<number, BookPrice[]>();
-    for (const r of rows) { const k = Number(r.part_id); byPart.set(k, [...(byPart.get(k) ?? []), r]); }
+    for (const r0 of rows) {
+      // CAT-1: list 0 = never priced; no strikethrough, no "-100%" against it
+      const r = r0.list_minor != null && r0.list_minor <= 0 ? { ...r0, list_minor: null } : r0;
+      const k = Number(r.part_id); byPart.set(k, [...(byPart.get(k) ?? []), r]);
+    }
     return { byPart, customers };
   }, [bookLocal, bookCustLocal, bookRemote]);
   // Whose prices staff are looking at: the counter sale's customer, else the open order's.
@@ -683,12 +698,11 @@ export default function MobileShell() {
   const refresh = useCallback(() => {
     api.listParts<PartRow[]>().then(setParts).catch(console.error);
     api.listSections<Section[]>().then(setSections).catch(console.error);
-  }, []);
-  useEffect(() => {
-    refresh();
+    // CAT-2: categories too. On a fresh sign-in the mount-time read ran before the first
+    // sync landed, so the Find chips stayed at "All" until a reload.
     api.listCategories<Cat[]>().then(setCats).catch(console.error);
-    api.listSections<Section[]>().then(setSections).catch(console.error);
-  }, [refresh]);
+  }, []);
+  useEffect(() => { refresh(); }, [refresh]);
 
   // Re-pull the catalogue when sync completes a cycle, so counts posted by
   // someone else's phone show up without a manual action.
@@ -828,15 +842,24 @@ export default function MobileShell() {
     }
   };
 
+  const openSeq = useRef(0);
   const openPart = useCallback(async (partId: number) => {
+    // CAT-15: the latest tap wins (a slow earlier read must not replace it), and a read that
+    // never answers says so instead of leaving "Open" looking dead.
+    const seq = ++openSeq.current;
     try {
-      setDetail(await api.partDetail<Detail>(partId));
+      const d = await withTimeout(api.partDetail<Detail>(partId), 12000, "the part sheet (device database)");
+      if (seq !== openSeq.current) return;
+      setDetail(d);
       setShot(0);                       // a new part starts on its primary photo
       setSheetOpen(true);
       setCounterOpen(false);
     } catch (e) {
       console.error(e);
-      showToast({ text: "Could not open that part.", err: true });
+      if (seq !== openSeq.current) return;
+      showToast({ text: e instanceof TimeoutError
+        ? "That part is taking too long to load. Try again; if it keeps happening, reload the app."
+        : "Could not open that part.", err: true });
     }
   }, [showToast]);
 
@@ -1486,7 +1509,7 @@ const parseRand = (s: string): number => {
     if (hits) {
       return hits.map((h) => ({
         id: h.id, sku: h.sku, name: h.name, category_code: null,
-        qty_on_hand: h.on_hand, in_stock: h.in_stock ?? null, bin: h.bin ?? null, price_cents: h.price_cents,
+        qty_on_hand: h.on_hand, qty_held: h.held ?? 0, in_stock: h.in_stock ?? null, bin: h.bin ?? null, price_cents: h.price_cents,
         image: h.thumb ?? null,
       }));
     }
@@ -1661,7 +1684,10 @@ const parseRand = (s: string): number => {
             demoted. Closing the viewer drops you here, on this section's parts,
             which is what the tile was standing in front of. */}
         <div className="mb-count">
-          {hits ? `${cards.length} match${cards.length === 1 ? "" : "es"}` : `${cards.length} parts`}
+          {hits ? `${cards.length} match${cards.length === 1 ? "" : "es"}`
+            /* CAT-11: search starts at 3 characters; say so rather than silently browsing */
+            : q.trim().length > 0 && q.trim().length < 3 ? `Type at least 3 characters to search · ${cards.length} parts`
+            : `${cards.length} parts`}
         </div>
         {/* .mb-cards is a plain block on a phone; at desktop widths it is the
             auto-fill card grid (mobile.css, desktop skin). */}
@@ -1690,8 +1716,9 @@ const parseRand = (s: string): number => {
               ) : (
                 <span className="mb-cmeta">
                   {p.bin && <span className="mb-bin"><IcPin />{p.bin}</span>}
-                  <span className={"mb-qty" + qtyClass(p.qty_on_hand)}>
-                    {p.qty_on_hand <= 0 ? "out" : `${p.qty_on_hand} on hand`}
+                  {/* CAT-14: held units are on the shelf but promised; coloured by what is free */}
+                  <span className={"mb-qty" + qtyClass(p.qty_on_hand - Math.max(0, p.qty_held ?? 0))}>
+                    {p.qty_on_hand <= 0 ? "out" : `${p.qty_on_hand} on hand`}{(p.qty_held ?? 0) > 0 && p.qty_on_hand > 0 ? ` · ${p.qty_held} held` : ""}
                   </span>
                 </span>
               )}
@@ -1703,7 +1730,7 @@ const parseRand = (s: string): number => {
           <div className="mb-empty">
             <h3>{hits ? "No matches" : "Nothing synced yet"}</h3>
             <p>{hits
-              ? "Try fewer characters, or a different number — search covers SKU, OEM numbers, locators, cross-references and names."
+              ? `Try fewer words, or a different number — search covers SKU, OEM numbers${isClient ? "" : ", locators, aliases"}, cross-references and names.`
               : "Once the first sync completes the catalogue appears here by itself."}</p>
           </div>
         )}
@@ -2231,7 +2258,7 @@ const parseRand = (s: string): number => {
                             <span style={{ flex: 1, minWidth: 0 }}>
                               <div className="mb-cname">{l.qty} × {l.name}</div>
                               <div className="mb-csku mb-mono">{l.sku}</div>
-                              <PriceInfo lp={lpFor(o, l)} qty={l.qty} staff seesCost={seesCost}
+                              <PriceInfo lp={lpFor(o, l)} qty={l.qty} staff seesCost={seesCost} known={!!prices[o.id]}
                                 priceMinor={draftPrices[l.id] != null && draftPrices[l.id] !== "" ? Math.round(Number(draftPrices[l.id]) * 100) || 0 : defaultMinor(o, l)} />
                             </span>
                             {stageOf(o) === "to_price" ? (
@@ -2584,7 +2611,7 @@ const parseRand = (s: string): number => {
                             <span style={{ flex: 1, minWidth: 0 }}>
                               <div className="mb-cname">{l.qty} × {l.name}</div>
                               <div className="mb-csku mb-mono">{l.sku}</div>
-                              <PriceInfo lp={lpFor(o, l)} qty={l.qty} staff seesCost={seesCost} priceMinor={l.unit_price_minor} />
+                              <PriceInfo lp={lpFor(o, l)} qty={l.qty} staff seesCost={seesCost} known={!!prices[o.id]} priceMinor={l.unit_price_minor} />
                             </span>
                             <LineAmt l={l} />
                           </div>
@@ -3014,7 +3041,7 @@ const parseRand = (s: string): number => {
                 <div className="mb-box">
                   <div className="mb-k">On hand</div>
                   <div className={"mb-v" + (d.total_on_hand <= 0 ? " z" : " g")}>{d.total_on_hand}</div>
-                  <div className="mb-sub">{fmtR(d.price_cents)} list</div>
+                  <div className="mb-sub">{d.price_cents != null && d.price_cents > 0 ? `${fmtR(d.price_cents)} list` : "no list price"}</div>
                 </div>
               </div>
             )}
@@ -3050,6 +3077,33 @@ const parseRand = (s: string): number => {
               {d.inventory_pn && d.inventory_pn !== d.catalogue_pn &&
                 <div className="mb-row"><span className="mb-rk">Received as</span><span className="mb-rv mb-mono">{d.inventory_pn}</span></div>}
               {d.brand && <div className="mb-row"><span className="mb-rk">Brand</span><span className="mb-rv">{d.brand}</span></div>}
+              {(() => {
+                // CAT-5: fitment, one compact line per vehicle. The note is internal wording: a staff
+                // tooltip only (today it is the same "variant not yet differentiated" on every part).
+                const fits = (d.fitment ?? []).map((f) => {
+                  const yrs = f.year_from || f.year_to ? `${f.year_from ?? "…"}–${f.year_to ?? "on"}` : "";
+                  return { k: [f.make, f.model, f.variant].filter(Boolean).join(" ") + (f.engine ? ` · ${f.engine}` : "") + (yrs ? ` · ${yrs}` : ""), note: f.note };
+                }).filter((f) => f.k);
+                return fits.length > 0 && (
+                  <div className="mb-row"><span className="mb-rk">Fits</span>
+                    <span className="mb-rv">{fits.map((f, i) => <div key={i} title={!isClient && f.note ? f.note : undefined}>{f.k}</div>)}</span>
+                  </div>
+                );
+              })()}
+              {(() => {
+                // CAT-5: cross-references, minus numbers already on the sheet. A customer sees the OEM
+                // numbers only; supersessions include CTP's internal legacy codes.
+                const shown = new Set([d.sku, d.catalogue_pn, d.inventory_pn].filter(Boolean).map((v) => String(v).toLowerCase()));
+                const xs = (d.xrefs ?? []).filter((x) => x.number && !shown.has(x.number.toLowerCase()) && (!isClient || x.type === "oem"));
+                return xs.length > 0 && (
+                  <div className="mb-row"><span className="mb-rk">Cross-refs</span>
+                    <span className="mb-rv mb-xrefs">{xs.map((x, i) => (
+                      <span key={i} className="mb-xref"><span className="mb-mono">{x.number}</span>
+                        <span className="mb-dim"> {[x.brand, x.type === "oem" ? "OEM" : x.type].filter(Boolean).join(" · ")}</span></span>
+                    ))}</span>
+                  </div>
+                );
+              })()}
               {!isClient && d.stock.filter((s) => s.on_hand !== 0 || s.bin).map((s) => (
                 <div className="mb-row" key={s.location_id}>
                   <span className="mb-rk">{s.location_code}</span>
@@ -3209,7 +3263,7 @@ const parseRand = (s: string): number => {
         : listView}
       {sheet}
       {diagram && !hotspotEditor && (
-        <DiagramView drawings={drawings} start={diagram.idx} deepPart={diagram.part} canEdit={!isClient}
+        <DiagramView drawings={drawings} start={diagram.idx} deepPart={diagram.part} canEdit={!isClient} staff={!isClient}
           onClose={() => { setDiagram(null); if (/^#dg=/.test(location.hash)) history.replaceState(null, "", location.pathname + location.search); }}
           onOpenPart={(pid) => { void openPart(pid); }}
           onEditMarkers={(path, label) => setHotspotEditor({ path, label })}

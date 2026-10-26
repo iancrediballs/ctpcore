@@ -103,6 +103,8 @@ function capturePointer(el: Element | null, pointerId: number) {
 export function DiagramCanvas({ href, frame, onFrame, children, onTap, onSwipe, onZoomed, className, controls = true, bind }: DiagramCanvasProps) {
   const svgRef = useRef<SVGSVGElement>(null);
   const gRef = useRef<SVGGElement>(null);
+  /** viewBox unit → screen px at fit (the SVG's own CTM scale). Measured on resize. */
+  const viewK = useRef(0);
   // Pan/zoom, in drawing units. s is uniform; (tx, ty) is where the drawing's
   // origin sits inside the viewBox.
   const t = useRef({ s: 1, tx: 0, ty: 0 });
@@ -112,6 +114,8 @@ export function DiagramCanvas({ href, frame, onFrame, children, onTap, onSwipe, 
   const pinch = useRef<{ d0: number; s0: number; c: Pt } | null>(null);
   const drag = useRef<{ sx: number; sy: number; tx0: number; ty0: number; moved: boolean; onMarker: boolean } | null>(null);
   const lastTap = useRef(0);
+  /** A pan that began on a halo must not end as a marker tap (the click lands on the halo). */
+  const panned = useRef(false);
   const [measured, setMeasured] = useState<Frame | null>(null);
   const fr = frame ?? measured;
 
@@ -124,6 +128,9 @@ export function DiagramCanvas({ href, frame, onFrame, children, onTap, onSwipe, 
     if (g) {
       const { s, tx, ty } = t.current;
       g.setAttribute("transform", `translate(${tx} ${ty}) scale(${s})`);
+      // screen px per drawing unit, for screen-sized tap targets (MarkerHalo). viewK is
+      // measured on resize, never here: this stays a pure write.
+      if (viewK.current > 0) g.style.setProperty("--dg-k", String(viewK.current * s));
     }
     const z = t.current.s > 1.01;
     if (z !== zoomedRef.current) { zoomedRef.current = z; setZoomedState(z); onZoomed?.(z); }
@@ -210,6 +217,16 @@ export function DiagramCanvas({ href, frame, onFrame, children, onTap, onSwipe, 
     return { x: cl((v.x - tx) / s, fr.w), y: cl((v.y - ty) / s, fr.h) };
   }, [toView, fr]);
 
+  useEffect(() => {
+    const svg = svgRef.current;
+    if (!svg || !fr) return;
+    const measure = () => { const m = svg.getScreenCTM(); if (m && m.a > 0) { viewK.current = m.a; apply(); } };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(svg);
+    return () => ro.disconnect();
+  }, [fr, apply]);
+
   useEffect(() => { bind?.({ toDrawing, svg: () => svgRef.current, capture: (id) => capturePointer(svgRef.current, id), reset, zoomTo, focus, fit }); }, [bind, toDrawing, reset, zoomTo, focus, fit]);
 
   /** Zoom so the viewBox point `v` stays under the pointer. */
@@ -248,7 +265,12 @@ export function DiagramCanvas({ href, frame, onFrame, children, onTap, onSwipe, 
   // ── pointers: pan, pinch, double-tap, swipe ─────────────────────────────
   const onDown = (e: React.PointerEvent) => {
     stopAnim();
-    const onMarker = !!(e.target as Element).closest("[data-marker]");
+    panned.current = false;
+    // A halo (MarkerHalo) is a marker for clicks but not for drags: halos cover a lot of a
+    // dense drawing once zoomed, and a pan must still start there. So no capture (the click
+    // must reach the halo), but the press may become a pan.
+    const onHalo = !!(e.target as Element).closest(".dg-mk-halo");
+    const onMarker = !onHalo && !!(e.target as Element).closest("[data-marker]");
     // NO capture when the press is on a marker. An element holding pointer
     // capture receives the derived `click` (Chrome dispatches it to the
     // capturing element, not the element under the pointer), so capturing on
@@ -257,7 +279,7 @@ export function DiagramCanvas({ href, frame, onFrame, children, onTap, onSwipe, 
     // leaves the pointer alone so its click reaches the <g>. An editor that
     // needs to drag a marker captures explicitly (CanvasApi.capture) and then
     // owns the press→release decision itself.
-    if (!onMarker) capturePointer(svgRef.current, e.pointerId);
+    if (!onMarker && !onHalo) capturePointer(svgRef.current, e.pointerId);
     ptrs.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
     if (ptrs.current.size === 2) {
       const [a, b] = [...ptrs.current.values()];
@@ -268,7 +290,7 @@ export function DiagramCanvas({ href, frame, onFrame, children, onTap, onSwipe, 
       drag.current = null;
     } else if (ptrs.current.size === 1) {
       const now = Date.now();
-      if (!onMarker && now - lastTap.current < 300) {
+      if (!onMarker && !onHalo && now - lastTap.current < 300) {
         const v = toView(e.clientX, e.clientY);
         if (v) zoomAt(v, t.current.s > 1.01 ? 1 : 2.6);
         lastTap.current = 0;
@@ -303,6 +325,7 @@ export function DiagramCanvas({ href, frame, onFrame, children, onTap, onSwipe, 
   };
   const onUp = (e: React.PointerEvent) => {
     const d = drag.current;
+    if (d?.moved) panned.current = true;
     ptrs.current.delete(e.pointerId);
     if (ptrs.current.size < 2) pinch.current = null;
     if (ptrs.current.size === 0) {
@@ -332,7 +355,8 @@ export function DiagramCanvas({ href, frame, onFrame, children, onTap, onSwipe, 
       <svg ref={svgRef} className="dg-svg"
         viewBox={fr ? `0 0 ${fr.w} ${fr.h}` : "0 0 1 1"}
         preserveAspectRatio="xMidYMid meet"
-        onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp}>
+        onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp}
+        onClickCapture={(e) => { if (panned.current) { panned.current = false; e.stopPropagation(); } }}>
         <g ref={gRef}>
           {fr && (
             <image href={href} x={0} y={0} width={fr.w} height={fr.h}
@@ -383,6 +407,25 @@ export function calloutRect(pts: { x: number; y: number }[], r: number): Rect {
   const x0 = Math.min(...xs) - pad, x1 = Math.max(...xs) + pad;
   const y0 = Math.min(...ys) - pad, y1 = Math.max(...ys) + pad;
   return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+}
+
+/** CAT-6: a phone-sized tap target for a marker, drawn nowhere. The ring scales with the
+ *  drawing (about 7-10 px on a phone at fit), so on its own it is a poor target. This is an
+ *  invisible disc on the marker's centre whose radius is `px / 2` SCREEN pixels: the canvas
+ *  publishes --dg-k (screen px per drawing unit, zoom included) on its group, and CSS turns
+ *  that into drawing units. Never smaller than the marker's own hit disc (r × 1.9), which is
+ *  also the fallback where CSS geometry properties are unsupported. The marker itself does
+ *  not move or grow. Render every halo BEFORE the markers: a tap right on a ring still goes
+ *  to that ring, and the halos only catch the near misses around it. data-marker keeps the
+ *  canvas from capturing the pointer, as for a real marker. (A non-scaling stroke would be
+ *  simpler, but Chrome hit-tests the stroke at its scaled width.) */
+export function MarkerHalo({ x, y, r, px = 32, onClick }: {
+  x: number; y: number; r: number; px?: number;
+  onClick?: (e: React.MouseEvent<SVGCircleElement>) => void;
+}) {
+  const base = r * 1.9;
+  return <circle className="dg-mk-halo" data-marker="1" cx={x} cy={y} r={base}
+    style={{ r: `max(${base}px, calc(${px / 2}px / var(--dg-k, 1000)))` } as React.CSSProperties} onClick={onClick} />;
 }
 
 /** A callout marker in drawing units: an open ring, no number — the drawing's
