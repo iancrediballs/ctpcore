@@ -62,6 +62,7 @@ import { createClient, type SupabaseClient } from "jsr:@supabase/supabase-js@2";
 import { env, zohoInit, zohoMissing, Blocked, zoho, rands, jhbDate, findByReference, resolveContact, itemIds, taxIdFor,
          rebateDiscount, linkToSalesOrder, salesOrderFor, deleteSalesOrder, estimateFor, estimatePayload, findLiveEstimate,
          zohoInv, salesOrderFromEstimate, type Logger } from "../_shared/zoho.ts";
+import { rebateProbe, rebateSetup, rebateAccount, rebateAccrue, rebateStatement, rebateOffset, rebateVoid } from "./rebate.ts";
 
 
 const CORS = {
@@ -1176,7 +1177,8 @@ Deno.serve(async (req: Request) => {
   // invoice issued before go-live does not report a failure that isn't one.
   // (Status read-back is allowed while sending is off: documents already in
   // Zoho still change status there.)
-  if (!["test", "status", "so_sync", "cancel", "hook", "stock_sync", "receive_list", "rebate_book", "assign_pricebook", "pricebook_sync", "catalogue_set"].includes(body.action) && (!cfg?.push_enabled || !cfg?.push_from)) {
+  if (!["test", "status", "so_sync", "cancel", "hook", "stock_sync", "receive_list", "rebate_book", "assign_pricebook", "pricebook_sync", "catalogue_set",
+        "rebate_probe", "rebate_setup", "rebate_account", "rebate_accrue", "rebate_statement", "rebate_offset", "rebate_void"].includes(body.action) && (!cfg?.push_enabled || !cfg?.push_from)) {
     return json({ ok: true, skipped: "Sending to Zoho is off (Settings → Zoho). Nothing was sent." });
   }
   await zohoInit(db);
@@ -1186,10 +1188,15 @@ Deno.serve(async (req: Request) => {
   try {
     if (body.action === "status") {
       const st = await refreshStatus(db, log, body.force === true);
+      // 0092: the rebate accruals ride on the same read-back (only when switched on)
+      let rebates: unknown = null;
+      if (cfg?.rebate_accrual_enabled) {
+        try { rebates = await rebateAccrue(db, log, cfg, {}); } catch (e) { rebates = { error: e instanceof Error ? e.message : String(e) }; }
+      }
       // 0065: the Zoho stock cache rides on the same 10-min schedule (itself throttled to 15 min)
       let stock: unknown = null;
       try { stock = await stockSync(db, log, false); } catch (e) { stock = { error: e instanceof Error ? e.message : String(e) }; }
-      return json({ ok: true, ...st, stock });
+      return json({ ok: true, ...st, stock, rebates });
     }
     if (body.action === "hook") {
       try { return json({ ok: true, module: body.module, ...(await hook(db, log, body)) }); }
@@ -1290,6 +1297,22 @@ Deno.serve(async (req: Request) => {
       if (who.actor && !who.admin) return json({ error: "Only an admin can assign a price book." }, 403);
       try { return json({ ok: true, ...(await assignPricebook(db, log, body)) }); }
       catch (e) { return json({ ok: false, error: e instanceof Error ? e.message : String(e) }, e instanceof Blocked ? 409 : 502); }
+    }
+    // 0092: customer rebates by accrual + credit note (rebate.ts, docs/14_REBATE_ACCRUAL_CREDIT_NOTE.md)
+    if (typeof body.action === "string" && body.action.startsWith("rebate_") && body.action !== "rebate_book") {
+      const adminOnly = ["rebate_probe", "rebate_setup", "rebate_account", "rebate_statement", "rebate_offset", "rebate_void"];
+      if (who.actor && !who.admin && adminOnly.includes(body.action)) return json({ error: "Only an admin can do that." }, 403);
+      try {
+        const r = body.action === "rebate_probe" ? await rebateProbe()
+                : body.action === "rebate_setup" ? await rebateSetup(db, log, body)
+                : body.action === "rebate_account" ? await rebateAccount(db, log, body)
+                : body.action === "rebate_accrue" ? await rebateAccrue(db, log, cfg, body)
+                : body.action === "rebate_statement" ? await rebateStatement(db, log, cfg, who, body)
+                : body.action === "rebate_offset" ? await rebateOffset(db, log, cfg, body)
+                : body.action === "rebate_void" ? await rebateVoid(db, log, body)
+                : (() => { throw new Blocked(`Unknown action ${body.action}`); })();
+        return json({ ok: true, ...r });
+      } catch (e) { return json({ ok: false, error: e instanceof Error ? e.message : String(e) }, e instanceof Blocked ? 409 : 502); }
     }
     if (body.action === "estimate_recreate") {
       // admin only; the server's own sync token is trusted like the live test (actor null)

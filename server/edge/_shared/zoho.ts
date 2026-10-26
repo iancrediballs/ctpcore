@@ -275,6 +275,16 @@ export function zohoMissing(): string[] {
   return m;
 }
 
+/** 0092: true when this Zoho contact's CTP customer rebates by accrual (and the global switch is on). */
+export async function inAccrualMode(db: SupabaseClient, zohoContactId: string): Promise<boolean> {
+  const { data: cfg } = await db.from("zoho_config").select("rebate_accrual_enabled").eq("id", 1).maybeSingle();
+  if (!cfg?.rebate_accrual_enabled) return false;
+  const { data: c } = await db.from("customer").select("id").eq("zoho_contact_id", zohoContactId).limit(1).maybeSingle();
+  if (!c) return false;
+  const { data: cr } = await db.from("customer_rebate").select("mode").eq("customer_id", c.id).maybeSingle();
+  return cr?.mode === "accrual";
+}
+
 // ── sales orders (accept-quote) ──────────────────────────────────────────────
 export type SalesOrderRef = { salesorder_id: string; salesorder_number: string; status: string; created: boolean; warning?: string };
 
@@ -322,7 +332,8 @@ export async function salesOrderFor(db: SupabaseClient, cfg: any, orderId: numbe
   // deno-lint-ignore no-explicit-any
   const customerId = await resolveContact(db, "customer", o.customer as any, "customer", log);
   const { data: pbc } = await db.from("customer").select("zoho_pricebook_id").eq("zoho_contact_id", customerId).limit(1).maybeSingle();
-  const pricebookId = pbc?.zoho_pricebook_id ?? null;
+  // 0092: an accrual-rebate customer is invoiced at full list — no price book on the SO, even if the contact has one
+  const pricebookId = (await inAccrualMode(db, customerId)) ? null : pbc?.zoho_pricebook_id ?? null;
   const b = await zoho("POST", "/salesorders", {}, {
     customer_id: customerId, reference_number: po ?? o.number, date: jhbDate(new Date().toISOString()),
     is_inclusive_tax: false,

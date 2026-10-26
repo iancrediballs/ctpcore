@@ -1,0 +1,490 @@
+-- CTP Core 0092 — customer rebates by ACCRUAL + CREDIT NOTE (26 Oct 2026, Anton / Ian).
+-- Design: docs/14_REBATE_ACCRUAL_CREDIT_NOTE.md.
+--
+-- Rebate customers are invoiced at full list on their main Zoho account. Every SENT invoice accrues
+-- the rebate per line (the scheme's per-SKU %, frozen from the live price book); once a month the
+-- accruals become a rebate statement and ONE draft credit note on the customer's second Zoho account
+-- "<name> – Rebate". Settlement (offset against the main account, or pay-out) is Michelle's, read back.
+--
+--   * customer_rebate      per customer: mode ('price_book' | 'accrual'), cutover date, settle mode,
+--                          the linked rebate contact. A separate table — `customer` is synced to phones
+--                          with column grants, so it is not widened.
+--   * rebate_scheme_sku.rebate_bps   the per-SKU % (frozen by rebate_freeze_bps from the live book).
+--   * rebate_scheme.zoho_rebate_account_id   the Zoho account credit-note lines are booked to.
+--   * rebate_agreement     reused (0039, supplier rebates) for customers too: party = 'customer'.
+--   * rebate_accrual       reused: source 'invoice' / 'credit_note', per Zoho line, append-only;
+--                          a change posts the DIFFERENCE, a void reverses. statement_id links it.
+--   * rebate_statement     one per customer per month → the Zoho credit note (+ offset journal).
+--   * rebate_doc_seen      which Zoho invoices / credit notes were read, so unchanged ones are skipped.
+--   * zoho_config.rebate_accrual_enabled  the GLOBAL switch (off). Only customers in 'accrual' mode take
+--                          part even when it is on — Hermans stays 'price_book' until Ian says go.
+-- Staff-only reads; customers get only their own totals through my_rebate() / order_prices().
+-- Sync rules: NO change (nothing new is synced).
+begin;
+
+alter table public.zoho_config add column if not exists rebate_accrual_enabled boolean not null default false;
+alter table public.zoho_config add column if not exists rebate_clearing_account_id text;   -- "Rebate Clearing" (offset journal)
+
+-- ── per customer ──────────────────────────────────────────────────────────────
+create table if not exists public.customer_rebate (
+  customer_id bigint primary key references public.customer(id),
+  mode text not null default 'price_book' check (mode in ('price_book', 'accrual')),
+  rebate_from date,                                  -- invoices dated on/after this accrue (the cutover)
+  settle text not null default 'offset' check (settle in ('offset', 'payout')),
+  zoho_rebate_contact_id text,                       -- the second Zoho account "<name> – Rebate"
+  zoho_rebate_contact_name text,
+  notes text,
+  updated_at timestamptz not null default now(),
+  updated_by uuid,
+  check (mode = 'price_book' or rebate_from is not null)
+);
+alter table public.customer_rebate enable row level security;
+revoke all on public.customer_rebate from anon, authenticated;
+grant select on public.customer_rebate to authenticated;
+drop policy if exists customer_rebate_staff on public.customer_rebate;
+create policy customer_rebate_staff on public.customer_rebate for select to authenticated using (public.is_staff());
+
+-- ── the rule, per SKU ─────────────────────────────────────────────────────────
+alter table public.rebate_scheme_sku add column if not exists rebate_bps integer check (rebate_bps is null or rebate_bps between 0 and 10000);
+alter table public.rebate_scheme_sku add column if not exists bps_source text;
+alter table public.rebate_scheme_sku add column if not exists bps_at timestamptz;
+alter table public.rebate_scheme add column if not exists zoho_rebate_account_id text;    -- "Sales Rebates" (contra income)
+alter table public.rebate_scheme add column if not exists zoho_rebate_account_name text;
+
+-- ── agreements: customers too ─────────────────────────────────────────────────
+alter table public.rebate_agreement alter column supplier_id drop not null;
+alter table public.rebate_agreement add column if not exists party text not null default 'supplier';
+alter table public.rebate_agreement add column if not exists customer_id bigint references public.customer(id);
+alter table public.rebate_agreement add column if not exists scheme_id bigint references public.rebate_scheme(id);
+alter table public.rebate_agreement drop constraint if exists rebate_agreement_party_check;
+alter table public.rebate_agreement add constraint rebate_agreement_party_check check (
+  (party = 'supplier' and supplier_id is not null) or
+  (party = 'customer' and customer_id is not null and scheme_id is not null));
+create unique index if not exists ra_customer_scheme_idx on public.rebate_agreement (customer_id, scheme_id)
+  where party = 'customer' and deleted_at is null and status in ('draft', 'active');
+
+-- ── statements ────────────────────────────────────────────────────────────────
+create table if not exists public.rebate_statement (
+  id bigint generated by default as identity primary key,
+  number text not null unique,                       -- RB-2026-10-HERMANS
+  customer_id bigint not null references public.customer(id),
+  period_start date not null,
+  period_end date not null,
+  total_minor bigint not null default 0,             -- excl. VAT
+  lines jsonb not null default '[]'::jsonb,          -- one per invoice / credit note (+ scheme account)
+  status text not null default 'draft' check (status in ('draft', 'credited', 'settled', 'void')),
+  settle text,
+  zoho_creditnote_id text, zoho_creditnote_number text, zoho_creditnote_status text,
+  zoho_creditnote_total numeric, zoho_creditnote_balance numeric,
+  zoho_journal_id text, zoho_journal_status text,
+  zoho_error text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (customer_id, period_end)
+);
+alter table public.rebate_statement enable row level security;
+revoke all on public.rebate_statement from anon, authenticated;
+grant select on public.rebate_statement to authenticated;
+drop policy if exists rebate_statement_staff on public.rebate_statement;
+create policy rebate_statement_staff on public.rebate_statement for select to authenticated using (public.is_staff());
+
+-- ── the ledger: invoice / credit-note lines ──────────────────────────────────
+alter table public.rebate_accrual drop constraint if exists rebate_accrual_source_type_check;
+alter table public.rebate_accrual add constraint rebate_accrual_source_type_check check (source_type in
+  ('goods_receipt', 'sales_order', 'manual_adjustment', 'tier_uplift', 'invoice', 'credit_note'));
+alter table public.rebate_accrual add column if not exists customer_id bigint references public.customer(id);
+alter table public.rebate_accrual add column if not exists zoho_doc_id text;
+alter table public.rebate_accrual add column if not exists zoho_doc_number text;
+alter table public.rebate_accrual add column if not exists zoho_line_id text;
+alter table public.rebate_accrual add column if not exists doc_date date;
+alter table public.rebate_accrual add column if not exists sku text;
+alter table public.rebate_accrual add column if not exists statement_id bigint references public.rebate_statement(id);
+create index if not exists acc_customer_idx on public.rebate_accrual (customer_id, statement_id) where customer_id is not null;
+create index if not exists acc_doc_idx on public.rebate_accrual (zoho_doc_id, zoho_line_id) where zoho_doc_id is not null;
+
+create table if not exists public.rebate_doc_seen (
+  doc_type text not null check (doc_type in ('invoice', 'credit_note')),
+  zoho_doc_id text not null,
+  customer_id bigint not null references public.customer(id),
+  doc_number text, status text, last_modified text,
+  accrued_minor bigint not null default 0,
+  flags text[],
+  seen_at timestamptz not null default now(),
+  primary key (doc_type, zoho_doc_id)
+);
+alter table public.rebate_doc_seen enable row level security;
+revoke all on public.rebate_doc_seen from anon, authenticated;
+grant select on public.rebate_doc_seen to authenticated;
+drop policy if exists rebate_doc_seen_staff on public.rebate_doc_seen;
+create policy rebate_doc_seen_staff on public.rebate_doc_seen for select to authenticated using (public.is_staff());
+
+-- ── freeze the per-SKU % from the scheme's live Zoho price book ──────────────
+-- % = 1 − book rate / Zoho list rate, snapped to the scheme's nearest tier. A SKU not in the book
+-- earned 0 % under the rule (0 % parts are left out of the book). Dry run by default.
+create or replace function public.rebate_freeze_bps(p_scheme_id bigint, p_apply boolean default false)
+returns jsonb language plpgsql security definer set search_path = public, pg_temp as $$
+declare v_sc record; v_rows jsonb;
+begin
+  if auth.uid() is not null then raise exception 'Server only.' using errcode = '42501'; end if;
+  select * into v_sc from rebate_scheme where id = p_scheme_id;
+  if v_sc.id is null then raise exception 'No scheme %', p_scheme_id; end if;
+  if v_sc.zoho_pricebook_id is null then raise exception 'Scheme % has no built price book', v_sc.name; end if;
+  with x as (
+    select s.sku, z.rate_minor as list_minor, i.rate_minor as book_minor,
+           case when i.rate_minor is null or coalesce(z.rate_minor, 0) <= 0 then 0::numeric
+                else 1 - i.rate_minor::numeric / z.rate_minor end as raw
+      from rebate_scheme_sku s
+      left join zoho_item z on upper(z.sku) = upper(s.sku) and z.status = 'active'
+      left join price_book_item i on i.pricebook_id = v_sc.zoho_pricebook_id and i.zoho_item_id = z.zoho_item_id
+     where s.scheme_id = v_sc.id
+  ), snapped as (
+    select x.*, (select round(t * 10000)::int from unnest(v_sc.tiers) t order by abs(t - x.raw) limit 1) as bps
+      from x
+  ), upd as (
+    update rebate_scheme_sku s set rebate_bps = sn.bps, bps_source = 'book ' || v_sc.zoho_pricebook_id, bps_at = now()
+      from snapped sn where p_apply and s.scheme_id = v_sc.id and s.sku = sn.sku
+    returning 1
+  )
+  select jsonb_build_object('scheme', v_sc.name, 'applied', p_apply, 'updated', (select count(*) from upd),
+           'tiers', (select jsonb_object_agg(bps, n) from (select bps, count(*) n from snapped group by bps) t),
+           'off_tier', (select coalesce(jsonb_agg(jsonb_build_object('sku', sku, 'raw', round(raw, 4), 'bps', bps)), '[]')
+                          from snapped where book_minor is not null and abs(raw * 10000 - bps) > 50))
+    into v_rows;
+  return v_rows;
+end $$;
+revoke all on function public.rebate_freeze_bps(bigint, boolean) from public, anon, authenticated;
+grant execute on function public.rebate_freeze_bps(bigint, boolean) to service_role;
+
+-- ── set a customer's mode (admin, or the server) ─────────────────────────────
+create or replace function public.rebate_set_customer(p_customer_id bigint, p jsonb)
+returns jsonb language plpgsql security definer set search_path = public, pg_temp as $$
+declare v_mode text := coalesce(p->>'mode', 'price_book'); v_from date := nullif(p->>'rebate_from', '')::date;
+        v_scheme bigint := nullif(p->>'scheme_id', '')::bigint; v_c record; v_ag bigint;
+begin
+  if auth.uid() is not null and not exists (select 1 from app_user where id = auth.uid() and role = 'admin') then
+    raise exception 'Only an admin can change rebate settings.' using errcode = '42501';
+  end if;
+  select id, code into v_c from customer where id = p_customer_id and deleted_at is null;
+  if v_c.id is null then raise exception 'No such customer.' using errcode = '42704'; end if;
+  if v_mode = 'accrual' and v_from is null then raise exception 'rebate_from (the cutover date) is required for accrual.'; end if;
+  insert into customer_rebate (customer_id, mode, rebate_from, settle, notes, updated_at, updated_by)
+  values (v_c.id, v_mode, v_from, coalesce(p->>'settle', 'offset'), p->>'notes', now(), auth.uid())
+  on conflict (customer_id) do update set mode = excluded.mode, rebate_from = coalesce(excluded.rebate_from, customer_rebate.rebate_from),
+    settle = excluded.settle, notes = coalesce(excluded.notes, customer_rebate.notes), updated_at = now(), updated_by = auth.uid();
+  if v_scheme is not null then
+    select id into v_ag from rebate_agreement where party = 'customer' and customer_id = v_c.id and scheme_id = v_scheme
+       and deleted_at is null and status in ('draft', 'active');
+    if v_ag is null then
+      insert into rebate_agreement (code, party, customer_id, scheme_id, name, basis, measure, scope, period_start, period_end,
+                                    settlement, status, is_provisional, notes)
+      values ('CUST-' || v_c.code || '-' || v_scheme, 'customer', v_c.id, v_scheme,
+              (select name from rebate_scheme where id = v_scheme), 'sales', 'flat_percent', 'part',
+              coalesce(v_from, current_date), date '2099-12-31', 'credit_note', 'active', false,
+              'Customer rebate: per-SKU % of the scheme, accrued per sent invoice, settled by credit note (0092).')
+      returning id into v_ag;
+    end if;
+  end if;
+  return (select to_jsonb(r) from customer_rebate r where customer_id = v_c.id) || jsonb_build_object('agreement_id', v_ag);
+end $$;
+revoke all on function public.rebate_set_customer(bigint, jsonb) from public, anon;
+grant execute on function public.rebate_set_customer(bigint, jsonb) to authenticated, service_role;
+
+-- ── accrue ONE Zoho invoice or credit note (server) ─────────────────────────
+-- p: { type: invoice|credit_note, id, number, date, status, lines: [{ line_id, item_id, sku, qty, item_total,
+--      invoice_id?, invoice_item_id? }] }  (item_total = the line excl. VAT, after line discount, in rands)
+-- Target per line = item_total × the SKU's %; the ledger gets the DIFFERENCE from what it already holds.
+create or replace function public.rebate_accrue_doc(p_customer_id bigint, p jsonb)
+returns jsonb language plpgsql security definer set search_path = public, pg_temp as $$
+declare
+  v_type text := p->>'type'; v_id text := p->>'id'; v_date date := nullif(p->>'date', '')::date;
+  v_status text := coalesce(p->>'status', ''); v_sign int; v_counts boolean; v_cr record;
+  v_line jsonb; v_key text; v_have bigint; v_target bigint; v_bps int; v_ag bigint; v_part bigint; v_sku text;
+  v_total numeric; v_qty numeric; v_list bigint; v_delta bigint; v_n int; v_last bigint;
+  v_flags text[] := '{}'; v_keys text[] := '{}'; v_posted int := 0; v_net bigint := 0;
+begin
+  if auth.uid() is not null then raise exception 'Server only.' using errcode = '42501'; end if;
+  if v_type not in ('invoice', 'credit_note') or v_id is null then raise exception 'type and id are required'; end if;
+  select * into v_cr from customer_rebate where customer_id = p_customer_id;
+  v_sign := case when v_type = 'invoice' then 1 else -1 end;
+  v_counts := v_cr.mode = 'accrual' and v_date is not null and v_date >= v_cr.rebate_from and (
+    (v_type = 'invoice' and v_status in ('sent', 'viewed', 'unpaid', 'overdue', 'partially_paid', 'paid')) or
+    (v_type = 'credit_note' and v_status in ('open', 'closed')));
+
+  for v_line in select * from jsonb_array_elements(coalesce(p->'lines', '[]'::jsonb)) loop
+    v_key := v_line->>'line_id';
+    v_keys := v_keys || v_key;
+    v_sku := upper(trim(coalesce(v_line->>'sku', '')));
+    v_part := (select z.part_id from zoho_item z where z.zoho_item_id = v_line->>'item_id' limit 1);
+    if v_sku = '' then v_sku := upper((select z.sku from zoho_item z where z.zoho_item_id = v_line->>'item_id' limit 1)); end if;
+    v_total := coalesce((v_line->>'item_total')::numeric, 0);
+    v_qty := coalesce((v_line->>'qty')::numeric, 0);
+    v_target := 0; v_bps := 0; v_ag := null;
+    if v_counts and coalesce(v_sku, '') <> '' then
+      select a.id, s.rebate_bps into v_ag, v_bps
+        from rebate_agreement a join rebate_scheme_sku s on s.scheme_id = a.scheme_id and upper(s.sku) = v_sku
+       where a.party = 'customer' and a.customer_id = p_customer_id and a.status = 'active' and a.deleted_at is null
+         and v_date between a.period_start and a.period_end and coalesce(s.rebate_bps, 0) > 0
+       order by s.rebate_bps desc limit 1;
+      if v_ag is not null then
+        if v_type = 'invoice' then
+          -- already rebated in the price (old price-book route, or a hand discount at/below the rebate price) → 0
+          v_list := (select z.rate_minor from zoho_item z where z.zoho_item_id = v_line->>'item_id' limit 1);
+          if v_qty > 0 and v_list > 0 and round(v_total * 100 / v_qty) <= round(v_list * (10000 - v_bps) / 10000.0) + 1 then
+            v_flags := v_flags || format('%s line %s: priced at or below the rebate price — no rebate', v_sku, v_key);
+            v_ag := null;
+          end if;
+        elsif v_line ? 'invoice_item_id' and coalesce(v_line->>'invoice_item_id', '') <> '' then
+          -- a return of an invoice line: the % that line actually earned (0 if it earned none)
+          select r.rate_bps_applied into v_bps from rebate_accrual r
+           where r.source_type = 'invoice' and r.zoho_line_id = v_line->>'invoice_item_id' and r.amount_minor > 0
+           order by r.id desc limit 1;
+          if v_bps is null then v_ag := null; end if;
+        else
+          v_flags := v_flags || format('%s credit-note line %s is not linked to an invoice line — rebate reversed at the scheme %%', v_sku, v_key);
+        end if;
+        if v_ag is not null then v_target := v_sign * round(v_total * 100 * v_bps / 10000.0); end if;
+      end if;
+    end if;
+    select coalesce(sum(amount_minor), 0), count(*), max(id) into v_have, v_n, v_last
+      from rebate_accrual where source_type = v_type and zoho_doc_id = v_id and zoho_line_id = v_key;
+    v_delta := v_target - v_have;
+    if v_delta <> 0 then
+      if v_ag is null then   -- reversing to 0: post against the agreement the line was accrued under
+        select agreement_id into v_ag from rebate_accrual where id = v_last;
+      end if;
+      insert into rebate_accrual (agreement_id, period_start, period_end, source_type, part_id, qty, measured_value_minor,
+                                  rate_bps_applied, amount_minor, state, reverses_id, note, client_uuid, actor_label, actor_source,
+                                  origin, customer_id, zoho_doc_id, zoho_doc_number, zoho_line_id, doc_date, sku)
+      values (v_ag, date_trunc('month', v_date)::date, (date_trunc('month', v_date) + interval '1 month - 1 day')::date, v_type,
+              v_part, round(v_qty)::int, round(v_total * 100)::bigint, coalesce(v_bps, 0), v_delta,
+              case when v_delta < 0 and v_n > 0 then 'reversed' else 'accrued' end,
+              case when v_n > 0 then v_last end,
+              format('%s %s %s (%s)', case when v_type = 'invoice' then 'Invoice' else 'Credit note' end, p->>'number', v_status,
+                     case when v_n = 0 then 'first read' else 'changed: difference' end),
+              format('rb:%s:%s:%s:%s', v_type, v_id, v_key, v_n + 1), 'Zoho (accounts)', 'zoho-push', 'zoho',
+              p_customer_id, v_id, p->>'number', v_key, v_date, nullif(v_sku, ''));
+      v_posted := v_posted + 1;
+    end if;
+    v_net := v_net + v_target;
+  end loop;
+
+  -- lines the ledger has but the document no longer has (removed, or the whole document deleted) → back to 0
+  for v_key, v_have, v_last in
+    select zoho_line_id, sum(amount_minor), max(id) from rebate_accrual
+     where source_type = v_type and zoho_doc_id = v_id and not (zoho_line_id = any (v_keys))
+     group by zoho_line_id having sum(amount_minor) <> 0
+  loop
+    insert into rebate_accrual (agreement_id, period_start, period_end, source_type, part_id, sku, qty, measured_value_minor,
+                                rate_bps_applied, amount_minor, state, reverses_id, note, client_uuid, actor_label, actor_source,
+                                origin, customer_id, zoho_doc_id, zoho_doc_number, zoho_line_id, doc_date)
+    select r.agreement_id, r.period_start, r.period_end, v_type, r.part_id, r.sku, 0, 0, r.rate_bps_applied, -v_have, 'reversed', v_last,
+           format('%s %s: line gone (%s) — reversed', v_type, p->>'number', v_status),
+           format('rb:%s:%s:%s:%s', v_type, v_id, v_key, (select count(*) + 1 from rebate_accrual x where x.source_type = v_type and x.zoho_doc_id = v_id and x.zoho_line_id = v_key)),
+           'Zoho (accounts)', 'zoho-push', 'zoho', p_customer_id, v_id, coalesce(p->>'number', r.zoho_doc_number), v_key, r.doc_date
+      from rebate_accrual r where r.id = v_last;
+    v_posted := v_posted + 1;
+  end loop;
+
+  insert into rebate_doc_seen (doc_type, zoho_doc_id, customer_id, doc_number, status, last_modified, accrued_minor, flags, seen_at)
+  values (v_type, v_id, p_customer_id, p->>'number', v_status, p->>'last_modified',
+          (select coalesce(sum(amount_minor), 0) from rebate_accrual where source_type = v_type and zoho_doc_id = v_id), v_flags, now())
+  on conflict (doc_type, zoho_doc_id) do update set doc_number = excluded.doc_number, status = excluded.status,
+    last_modified = excluded.last_modified, accrued_minor = excluded.accrued_minor, flags = excluded.flags, seen_at = now();
+  return jsonb_build_object('type', v_type, 'id', v_id, 'number', p->>'number', 'status', v_status, 'counts', v_counts,
+                            'rebate_minor', v_net, 'posted', v_posted, 'flags', to_jsonb(v_flags));
+end $$;
+revoke all on function public.rebate_accrue_doc(bigint, jsonb) from public, anon, authenticated;
+grant execute on function public.rebate_accrue_doc(bigint, jsonb) to service_role;
+
+-- ── build (or rebuild) the month's statement (server) ────────────────────────
+-- Takes every accrual row of the customer not yet on a statement, dated up to the period end.
+-- A statement whose credit note exists is never changed: later rows go on the next one.
+create or replace function public.rebate_statement_build(p_customer_id bigint, p_period_end date, p_apply boolean default false)
+returns jsonb language plpgsql security definer set search_path = public, pg_temp as $$
+declare v_c record; v_st record; v_number text; v_lines jsonb; v_total bigint; v_id bigint; v_start date;
+begin
+  if auth.uid() is not null then raise exception 'Server only.' using errcode = '42501'; end if;
+  select c.id, c.code, c.name into v_c from customer c where c.id = p_customer_id;
+  v_start := date_trunc('month', p_period_end)::date;
+  v_number := format('RB-%s-%s', to_char(p_period_end, 'YYYY-MM'), v_c.code);
+  select * into v_st from rebate_statement where customer_id = p_customer_id and period_end = p_period_end;
+  if v_st.id is not null and (v_st.zoho_creditnote_id is not null or v_st.status <> 'draft') then
+    raise exception 'Statement % already has credit note % (%): later accruals go on the next month''s statement.',
+      v_st.number, v_st.zoho_creditnote_number, v_st.status using errcode = '23505';
+  end if;
+  with rows as (
+    select r.* from rebate_accrual r
+     where r.customer_id = p_customer_id and r.doc_date <= p_period_end
+       and (r.statement_id is null or r.statement_id = v_st.id)
+  ), per as (
+    select r.source_type, r.zoho_doc_id, max(r.zoho_doc_number) as number, max(r.doc_date) as doc_date, a.scheme_id,
+           sum(r.amount_minor) as amount_minor, count(*) as entries
+      from rows r join rebate_agreement a on a.id = r.agreement_id
+     group by r.source_type, r.zoho_doc_id, a.scheme_id having sum(r.amount_minor) <> 0
+  )
+  select coalesce(jsonb_agg(jsonb_build_object('doc_type', p.source_type, 'zoho_doc_id', p.zoho_doc_id, 'number', p.number,
+           'date', p.doc_date, 'scheme_id', p.scheme_id, 'scheme', s.name, 'account_id', s.zoho_rebate_account_id,
+           'amount_minor', p.amount_minor) order by p.doc_date, p.number), '[]'::jsonb),
+         coalesce(sum(p.amount_minor), 0)
+    into v_lines, v_total
+    from per p join rebate_scheme s on s.id = p.scheme_id;
+  if not p_apply then
+    return jsonb_build_object('preview', true, 'number', v_number, 'customer', v_c.name, 'period_start', v_start,
+                              'period_end', p_period_end, 'total_minor', v_total, 'lines', v_lines);
+  end if;
+  if v_total <= 0 then
+    return jsonb_build_object('skipped', format('Nothing to credit (%s): carried to the next statement', v_total), 'total_minor', v_total);
+  end if;
+  insert into rebate_statement (number, customer_id, period_start, period_end, total_minor, lines, status, settle)
+  values (v_number, p_customer_id, v_start, p_period_end, v_total, v_lines, 'draft',
+          (select settle from customer_rebate where customer_id = p_customer_id))
+  on conflict (customer_id, period_end) do update set total_minor = excluded.total_minor, lines = excluded.lines, updated_at = now()
+  returning id into v_id;
+  update rebate_accrual r set statement_id = v_id, state = case when r.state = 'accrued' then 'claimable' else r.state end
+   where r.customer_id = p_customer_id and r.doc_date <= p_period_end and r.statement_id is null;
+  return (select to_jsonb(s) from rebate_statement s where s.id = v_id);
+end $$;
+revoke all on function public.rebate_statement_build(bigint, date, boolean) from public, anon, authenticated;
+grant execute on function public.rebate_statement_build(bigint, date, boolean) to service_role;
+
+-- ── what Zoho says about a statement's credit note / journal (server) ────────
+-- p: { creditnote_id?, creditnote_number?, creditnote_status?, total?, balance?, journal_id?, journal_status?, error? }
+-- open/closed credit note → credited (rows 'claimed'); its credit fully used (balance 0, closed) → settled;
+-- void → the statement is void and its rows go back to 'accrued' for the next statement.
+create or replace function public.rebate_statement_zoho(p_statement_id bigint, p jsonb)
+returns jsonb language plpgsql security definer set search_path = public, pg_temp as $$
+declare v_st record; v_new text; v_cn text;
+begin
+  if auth.uid() is not null then raise exception 'Server only.' using errcode = '42501'; end if;
+  select * into v_st from rebate_statement where id = p_statement_id for update;
+  if v_st.id is null then raise exception 'No statement %', p_statement_id; end if;
+  v_cn := coalesce(p->>'creditnote_status', v_st.zoho_creditnote_status);
+  v_new := case when v_cn = 'void' then 'void'
+                when v_cn = 'closed' and coalesce((p->>'balance')::numeric, v_st.zoho_creditnote_balance, 1) = 0 then 'settled'
+                when v_cn in ('open', 'closed') then 'credited'
+                else v_st.status end;
+  update rebate_statement set
+    zoho_creditnote_id = coalesce(p->>'creditnote_id', zoho_creditnote_id),
+    zoho_creditnote_number = coalesce(p->>'creditnote_number', zoho_creditnote_number),
+    zoho_creditnote_status = v_cn,
+    zoho_creditnote_total = coalesce((p->>'total')::numeric, zoho_creditnote_total),
+    zoho_creditnote_balance = coalesce((p->>'balance')::numeric, zoho_creditnote_balance),
+    zoho_journal_id = coalesce(p->>'journal_id', zoho_journal_id),
+    zoho_journal_status = coalesce(p->>'journal_status', zoho_journal_status),
+    zoho_error = case when p ? 'error' then p->>'error' else zoho_error end,
+    status = v_new, updated_at = now()
+   where id = v_st.id;
+  if v_new <> v_st.status then
+    if v_new = 'void' then
+      update rebate_accrual set statement_id = null, state = case when amount_minor < 0 then 'reversed' else 'accrued' end
+       where statement_id = v_st.id;
+    else
+      update rebate_accrual set state = case when amount_minor < 0 then 'reversed'
+                                             when v_new = 'settled' then 'settled' else 'claimed' end
+       where statement_id = v_st.id;
+    end if;
+  end if;
+  return jsonb_build_object('statement', v_st.number, 'from', v_st.status, 'to', v_new);
+end $$;
+revoke all on function public.rebate_statement_zoho(bigint, jsonb) from public, anon, authenticated;
+grant execute on function public.rebate_statement_zoho(bigint, jsonb) to service_role;
+
+-- ── positions ─────────────────────────────────────────────────────────────────
+-- earned = all accruals; accruing = not on a statement yet; on_statement = draft statement (no credit
+-- note yet); credited = credit note open; settled = used / paid out; outstanding = earned − settled.
+create or replace function public.rebate_position_of(p_customer_id bigint)
+returns jsonb language sql stable security definer set search_path = public, pg_temp as $$
+  select jsonb_build_object(
+    'customer_id', p_customer_id,
+    'mode', coalesce((select mode from customer_rebate where customer_id = p_customer_id), 'price_book'),
+    'rebate_from', (select rebate_from from customer_rebate where customer_id = p_customer_id),
+    'earned_minor', coalesce(sum(r.amount_minor), 0),
+    'accruing_minor', coalesce(sum(r.amount_minor) filter (where r.statement_id is null), 0),
+    'this_month_minor', coalesce(sum(r.amount_minor) filter (where r.statement_id is null and r.doc_date >= date_trunc('month', current_date)), 0),
+    'on_statement_minor', coalesce(sum(r.amount_minor) filter (where s.status = 'draft'), 0),
+    'credited_minor', coalesce(sum(r.amount_minor) filter (where s.status in ('credited', 'settled')), 0),
+    'settled_minor', coalesce(sum(r.amount_minor) filter (where s.status = 'settled'), 0),
+    'outstanding_minor', coalesce(sum(r.amount_minor) filter (where s.status is distinct from 'settled'), 0),
+    'last_creditnote', (select zoho_creditnote_number from rebate_statement x
+                         where x.customer_id = p_customer_id and x.zoho_creditnote_number is not null and x.status <> 'void'
+                         order by x.period_end desc limit 1))
+    from rebate_accrual r left join rebate_statement s on s.id = r.statement_id and s.status <> 'void'
+   where r.customer_id = p_customer_id
+$$;
+revoke all on function public.rebate_position_of(bigint) from public, anon, authenticated;
+grant execute on function public.rebate_position_of(bigint) to service_role;
+
+-- staff: one customer's position + statements + the latest documents read
+create or replace function public.rebate_customer(p_customer_id bigint)
+returns jsonb language plpgsql stable security definer set search_path = public, pg_temp as $$
+begin
+  if not public.is_staff() then raise exception 'Staff only.' using errcode = '42501'; end if;
+  return public.rebate_position_of(p_customer_id) || jsonb_build_object(
+    'settings', (select to_jsonb(r) from customer_rebate r where r.customer_id = p_customer_id),
+    'agreements', (select coalesce(jsonb_agg(jsonb_build_object('id', a.id, 'scheme', s.name, 'status', a.status, 'from', a.period_start)), '[]')
+                     from rebate_agreement a join rebate_scheme s on s.id = a.scheme_id
+                    where a.party = 'customer' and a.customer_id = p_customer_id and a.deleted_at is null),
+    'statements', (select coalesce(jsonb_agg(jsonb_build_object('id', id, 'number', number, 'period_end', period_end, 'total_minor', total_minor,
+                     'status', status, 'creditnote', zoho_creditnote_number, 'creditnote_status', zoho_creditnote_status,
+                     'journal_id', zoho_journal_id, 'lines', jsonb_array_length(lines)) order by period_end desc), '[]')
+                     from rebate_statement where customer_id = p_customer_id),
+    'documents', (select coalesce(jsonb_agg(jsonb_build_object('type', doc_type, 'number', doc_number, 'status', status,
+                     'rebate_minor', accrued_minor, 'flags', flags) order by seen_at desc), '[]')
+                     from (select * from rebate_doc_seen where customer_id = p_customer_id order by seen_at desc limit 50) d));
+end $$;
+revoke all on function public.rebate_customer(bigint) from public, anon;
+grant execute on function public.rebate_customer(bigint) to authenticated;
+
+-- a logged-in customer: their own rebate figures (no %, no rule)
+create or replace function public.my_rebate()
+returns jsonb language sql stable security definer set search_path = public, pg_temp as $$
+  select case when (select mode from customer_rebate where customer_id = public.my_customer_id()) = 'accrual'
+              then (select p - 'customer_id' from public.rebate_position_of(public.my_customer_id()) p)
+              else jsonb_build_object('mode', 'price_book') end
+$$;
+revoke all on function public.my_rebate() from public, anon;
+grant execute on function public.my_rebate() to authenticated;
+
+-- ── order_prices (0088 body) + the rebate an accrual customer EARNS on each line ─
+-- Accrual customers: no book rate (they are quoted at list), and per line rebate_minor (everyone allowed
+-- to see the order) + rebate_bps (staff only). Price-book customers: unchanged.
+CREATE OR REPLACE FUNCTION public.order_prices(p_order_id bigint)
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ STABLE SECURITY DEFINER
+ SET search_path TO 'public', 'pg_temp'
+AS $function$
+declare v_o record; v_staff boolean := public.is_staff(); v_tier text; v_accrual boolean;
+begin
+  select so.id, so.customer_id, c.zoho_pricebook_id as book, c.zoho_pricebook_name as book_name, coalesce(c.price_tier, 'list') as tier
+    into v_o from sales_order so join customer c on c.id = so.customer_id
+   where so.id = p_order_id and so.deleted_at is null;
+  if v_o.id is null then raise exception 'No such order.' using errcode = '42704'; end if;
+  if not v_staff and public.my_customer_id() is distinct from v_o.customer_id then
+    raise exception 'That order belongs to a different customer.' using errcode = '42501';
+  end if;
+  v_accrual := coalesce((select cr.mode = 'accrual' from customer_rebate cr where cr.customer_id = v_o.customer_id), false)
+               and coalesce((select rebate_accrual_enabled from zoho_config where id = 1), false);
+  return jsonb_build_object('order_id', v_o.id, 'pricebook', case when v_accrual then null else v_o.book_name end,
+    'rebate_mode', case when v_accrual then 'accrual' end, 'lines', coalesce((
+    select jsonb_agg(jsonb_strip_nulls(jsonb_build_object(
+             'line_id', sl.id, 'part_id', sl.part_id,
+             'list_minor', (select pr.amount_minor from price pr where pr.part_id = sl.part_id and pr.tier = 'list' and pr.deleted_at is null
+                             order by pr.valid_from desc limit 1),
+             'book_minor', case when not v_accrual then (select i.rate_minor from price_book_item i where i.pricebook_id = v_o.book and i.part_id = sl.part_id limit 1) end,
+             'rebate_minor', case when v_accrual and rb.bps > 0 then round(sl.qty * sl.unit_price_minor * rb.bps / 10000.0)::bigint end,
+             'rebate_bps', case when v_accrual and v_staff then rb.bps end,
+             'cost_minor', case when v_staff and public.can_see_cost() then (select cc.cost_invoiced_minor from part_current_cost cc where cc.part_id = sl.part_id) end,
+             'floor_minor', case when v_staff and public.can_see_cost() then public.price_floor_minor(sl.part_id, coalesce(sl.tier_at_add, v_o.tier)) end))
+           order by sl.id)
+      from sales_line sl
+      left join lateral (
+        select max(s.rebate_bps) as bps from rebate_agreement a
+          join rebate_scheme_sku s on s.scheme_id = a.scheme_id
+          join part pt on pt.id = sl.part_id and upper(s.sku) = upper(pt.sku)
+         where v_accrual and a.party = 'customer' and a.customer_id = v_o.customer_id and a.status = 'active' and a.deleted_at is null
+      ) rb on true
+     where sl.order_id = v_o.id and sl.deleted_at is null), '[]'::jsonb));
+end $function$;
+
+commit;
