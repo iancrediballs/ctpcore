@@ -463,10 +463,59 @@ async function applySalesOrder(db: SupabaseClient, orderId: number, ref: string,
   return data;
 }
 
+// ── 24 Nov: customer PO onto accounts' invoice ───────────────────────────────
+// Converting a sales order in Zoho fills the invoice's Reference# (printed as
+// "P.O.#") with the SO NUMBER (INV-000026 got "SO-00039"; its SO held PO 21585).
+// The customer's PO lives on the SO's reference_number and CTP's po_number.
+// Only an empty Reference# or one that is an SO number is replaced: anything
+// else was typed by a person and is left alone. Zoho's invoice update replaces
+// the line items with what is sent, so every existing line is sent back
+// unchanged, and the total is re-read afterwards and must not move.
+// deno-lint-ignore no-explicit-any
+const isSoNumber = (s: string, inv: any) => /^SO-?\d+$/i.test(s) ||
+  s === String(inv.salesorder_number ?? "") ||
+  ((inv.salesorders ?? []) as { salesorder_number?: unknown }[]).some((x) => s === String(x.salesorder_number ?? ""));
+// deno-lint-ignore no-explicit-any
+export async function carryPo(inv: any, po: string | null, orderId: number | null, ref: string, log: Logger | null) {
+  const want = String(po ?? "").trim();
+  const have = String(inv?.reference_number ?? "").trim();
+  if (!inv || !want || have === want) return { changed: false, reason: !want ? "no PO" : "already set" };
+  if (["void", "deleted"].includes(String(inv.status))) return { changed: false, reason: `invoice ${inv.status}` };
+  if (have && !isSoNumber(have, inv)) return { changed: false, reason: `Reference# "${have}" typed by a person — left alone` };
+  // deno-lint-ignore no-explicit-any
+  const lines = (inv.line_items ?? []).map((l: any) => ({
+    line_item_id: l.line_item_id, item_id: l.item_id, name: l.name, description: l.description,
+    quantity: l.quantity, rate: l.rate, unit: l.unit, discount: l.discount, tax_id: l.tax_id,
+    account_id: l.account_id, location_id: l.location_id, item_order: l.item_order,
+    ...(l.salesorder_item_id ? { salesorder_item_id: l.salesorder_item_id } : {}),
+  }));
+  try {
+    await zoho("PUT", `/invoices/${inv.invoice_id}`, {}, { customer_id: inv.customer_id, reference_number: want, line_items: lines });
+    const after = (await zoho("GET", `/invoices/${inv.invoice_id}`)).invoice;
+    const sameTotal = Number(after.total) === Number(inv.total);
+    const sameLines = (after.line_items ?? []).length === lines.length;
+    const ok = sameTotal && sameLines && String(after.reference_number) === want;
+    if (log) await log({ doc_type: "invoice", ctp_id: orderId ?? undefined, ctp_ref: ref, action: "update", ok, zoho_id: String(inv.invoice_id),
+      message: `${inv.invoice_number}: P.O.# "${have || "(empty)"}" → "${want}"` +
+               (ok ? "" : ` — CHECK IN ZOHO: total ${inv.total} → ${after.total}, lines ${lines.length} → ${(after.line_items ?? []).length}`) });
+    if (ok) inv.reference_number = want;
+    return { changed: true, ok, before: have, after: after.reference_number, total_before: inv.total, total_after: after.total,
+             lines_before: lines.length, lines_after: (after.line_items ?? []).length };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (log) await log({ doc_type: "invoice", ctp_id: orderId ?? undefined, ctp_ref: ref, action: "error", ok: false, zoho_id: String(inv.invoice_id),
+      message: `${inv.invoice_number}: could not set P.O.# to "${want}" (${msg})` });
+    return { changed: false, error: msg };
+  }
+}
+
 // The SO's invoice(s) → the order: first invoice's id/number, totals summed,
 // status = paid only when every invoice is paid.
 // deno-lint-ignore no-explicit-any
 async function linkInvoices(db: SupabaseClient, orderId: number, ref: string, invs: any[], log: Logger) {
+  // 24 Nov: accounts' invoice gets the customer's PO, not the SO number Zoho puts there on convert
+  const { data: po } = await db.from("sales_order").select("po_number").eq("id", orderId).maybeSingle();
+  for (const inv of invs) await carryPo(inv, po?.po_number ?? null, orderId, ref, log);
   const sum = (k: string) => invs.reduce((t, i) => t + Number(i[k] ?? 0), 0);
   const st = invs.every((i) => i.status === "paid") ? "paid" : String((invs.find((i) => i.status !== "paid") ?? invs[0]).status ?? "");
   const { data, error } = await db.rpc("apply_zoho_invoice_link", { p_order_id: orderId, p_inv: {
@@ -683,6 +732,14 @@ async function liveTest(db: SupabaseClient, cfg: any, log: Logger) {
     }
     note("invoice", String(soInv.invoice_id), `${soInv.invoice_number} from SO status=${soInv.status}`);
     out.invoice_from_so_status = soInv.status;
+    // 24 Nov: the customer PO replaces the SO number on an SO-converted invoice, lines and total untouched
+    const full = (await zoho("GET", `/invoices/${soInv.invoice_id}`)).invoice;
+    full.reference_number = so.salesorder_number;   // what Zoho's own Convert puts there
+    await zoho("PUT", `/invoices/${soInv.invoice_id}`, {}, { customer_id: full.customer_id, reference_number: so.salesorder_number,
+      // deno-lint-ignore no-explicit-any
+      line_items: (full.line_items ?? []).map((l: any) => ({ line_item_id: l.line_item_id, item_id: l.item_id, quantity: l.quantity, rate: l.rate,
+        tax_id: l.tax_id, description: l.description, ...(l.salesorder_item_id ? { salesorder_item_id: l.salesorder_item_id } : {}) })) });
+    out.po_carry = await carryPo(full, `CTP-TEST-PO-${stamp}`, null, "test", null);
     out.salesorder_status_after_invoice = (await zoho("GET", `/salesorders/${so.salesorder_id}`)).salesorder?.status;
     out.invoice_default_status = inv.status;
     out.bill_default_status = bill.status;
