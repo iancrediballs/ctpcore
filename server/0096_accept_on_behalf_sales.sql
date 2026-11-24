@@ -9,6 +9,10 @@
 -- Change: accept_quote_on_behalf() accepts sales, manager or admin. Nothing else differs; the
 -- caller is still recorded in accepted_by / accepted_note / notes, and the note stays required.
 -- Warehouse is deliberately left out. The edge function's own check is changed to match.
+--
+-- APPLIED on live 24 Nov 2026 (Ian GO), accept-quote v30 deployed the same minute (files verified
+-- identical to this branch). Same day: Andre (ajh@hermans.co.za, owner of Hermans) moved from
+-- staff role sales to customer, linked to Hermans (customer 6) via customer_person.
 begin;
 
 do $mig$
