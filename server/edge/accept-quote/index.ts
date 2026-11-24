@@ -18,7 +18,7 @@
 // then the linked SO raised; if CTP's transaction fails the SO is deleted and
 // the estimate stays accepted (logged; a retry links normally).
 //
-// 2026-10-22 (0058): { order_id, on_behalf_note } lets an ADMIN accept for the
+// 2026-10-22 (0058): { order_id, on_behalf_note } lets an ADMIN (0096: or sales/manager) accept for the
 // customer (confirmed by phone/email). Same Zoho SO + stock hold; the admin and
 // the note are recorded on the order by accept_quote_on_behalf().
 //
@@ -92,7 +92,8 @@ Deno.serve(async (req: Request) => {
   const note = String(body.on_behalf_note ?? "").trim();
   if (onBehalf) {
     const { data: me } = await db.from("app_user").select("role").eq("id", uid).maybeSingle();
-    if (me?.role !== "admin") return json({ error: "Only an admin can accept a quote on the customer's behalf." }, 403);
+    // 0096 (24 Nov): sales reps too, not only admins (Delen at the counter for Hermans)
+    if (!["sales", "manager", "admin"].includes(String(me?.role ?? ""))) return json({ error: "Only CTP sales staff can accept a quote on the customer's behalf." }, 403);
     if (note.length < 3) return json({ error: "Say how the customer confirmed it, e.g. \"Confirmed by Denver via phone\"." }, 400);
   }
 
