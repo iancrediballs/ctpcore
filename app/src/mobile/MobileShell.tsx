@@ -1208,7 +1208,12 @@ const parseRand = (s: string): number => {
     }
     const soNote = o.zoho_salesorder_id && !["void", "deleted"].includes(o.zoho_so_status ?? "")
       ? ` Its Zoho sales order ${o.zoho_salesorder_number ?? ""} is voided.` : "";
-    const reason = window.prompt(`Cancel ${o.number}? Any stock held for it is released.${soNote} Reason:`);
+    // 24 Nov: a quote (Needs pricing / Quote sent) is cancelled from its card too — nothing is held for it
+    const estNote = o.zoho_estimate_id && ["draft", "sent"].includes(o.zoho_estimate_status ?? "draft")
+      ? ` Its Zoho estimate ${o.zoho_estimate_number ?? ""} is marked declined.` : "";
+    const reason = window.prompt(o.status === "quote"
+      ? `Cancel quote ${o.number}? The customer can no longer accept it; it moves to Cancelled.${estNote} Reason:`
+      : `Cancel ${o.number}? Any stock held for it is released.${soNote} Reason:`);
     if (reason == null) return;
     setSavingOrder(true);
     try {
@@ -2454,6 +2459,12 @@ const parseRand = (s: string): number => {
                             </div>
                           );
                         })()}
+                        {o.status === "quote" && (
+                          <div className="mb-row">
+                            <button className="mb-btn s" style={{ height: 46 }} disabled={savingOrder}
+                              onClick={() => { void cancelOrder(o); }}>Cancel quote</button>
+                          </div>
+                        )}
                         {(o.po_number || o.credit_warning) && (
                           <div className="mb-row" style={{ display: "block" }}>
                             {o.po_number && <span className="mb-rk">Customer PO <b className="mb-mono">{o.po_number}</b></span>}
