@@ -1229,7 +1229,7 @@ const parseRand = (s: string): number => {
     finally { setSavingOrder(false); }
   }, [showToast, loadOrders]);
 
-  /** 0058: admin accepts for a customer who confirmed by phone/email. Same path
+  /** 0058: staff (0096: sales, manager or admin) accept for a customer who confirmed by phone/email. Same path
    *  as the customer's accept (confirmed Zoho sales order + stock hold); the
    *  admin and the note are recorded on the order. */
   const [behalf, setBehalf] = useState<{ order: StaffOrder; note: string; po: string; file: File | null;
@@ -2446,7 +2446,7 @@ const parseRand = (s: string): number => {
                             )}
                           </>
                         )}
-                        {stageOf(o) === "with_customer" && role === "admin" && (() => {
+                        {stageOf(o) === "with_customer" && (role === "sales" || role === "manager" || role === "admin") && (() => {
                           // 0063: only once accounts have SENT the Zoho estimate
                           const notYet = (estimatesOn || !!o.zoho_estimate_id) && !(o.zoho_estimate_id && ["sent", "accepted"].includes(o.zoho_estimate_status ?? ""));
                           return (
