@@ -6,7 +6,7 @@
 // throttled per record. Accepts the id in the JSON body or as ?module=…&id=… query parameters.
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 
-const MODULES = new Set(["item", "salesorder", "invoice", "estimate", "package", "shipment", "bill", "purchasereceive", "adjustment"]);
+const MODULES = new Set(["item", "salesorder", "invoice", "estimate", "package", "shipment", "bill", "purchasereceive", "adjustment", "purchaseorder"]);
 
 Deno.serve(async (req: Request) => {
   if (req.method !== "POST" && req.method !== "GET") return new Response("POST", { status: 405 });

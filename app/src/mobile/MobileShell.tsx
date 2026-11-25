@@ -17,7 +17,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useStatus } from "@powersync/react";
 import * as api from "../data/api";
 import { refreshZohoStatus, zohoStatusLabel, syncSalesOrder, cancelInZoho, syncEstimate, recreateEstimate, overrideFulfilGate, fulfilBlockReason, setCustomerOnAccount,
-         shipInZoho, countToZoho, openPurchaseOrders, receiveInZoho, type OpenPO,
+         shipInZoho, countToZoho, openPurchaseOrders, receiveInZoho, type OpenPO, backOrderFor, refreshBackOrders, type BackOrder,
          acceptPrecheck, uploadPo, poFileUrl, orderPrices, myPrices, type OrderPrices, type LinePrice,
          rebateCustomer, myRebate, type RebatePosition,
          remoteBookPrices, staffAccrualRates, type AccrualRates, type BookPrice, type BookCustomer } from "../data/zoho";
@@ -163,6 +163,11 @@ const fmtR = (cents: number | null | undefined): string =>
 
 const qtyClass = (n: number): string => (n <= 0 ? " zero" : n <= 2 ? " low" : "");
 
+/** 0097: a Zoho date (YYYY-MM-DD) as "19 Dec 2026". */
+const fmtEta = (ymd: string): string => {
+  const t = new Date(`${ymd}T12:00:00Z`);
+  return Number.isNaN(t.getTime()) ? ymd : t.toLocaleDateString("en-ZA", { day: "numeric", month: "short", year: "numeric", timeZone: "Africa/Johannesburg" });
+};
 const timeAgo = (iso: string): string => {
   const t = Date.parse(iso);
   if (!Number.isFinite(t)) return iso;
@@ -1072,6 +1077,17 @@ export default function MobileShell() {
   }, [isClient, lastSynced]);
   const zohoStock = stockMaster === "zoho";
   const [countVal, setCountVal] = useState("");
+  // 0097: stock on its way (Zoho POs ticked "Back order"), staff only, read online
+  const [backOrder, setBackOrder] = useState<BackOrder | null>(null);
+  const [boBusy, setBoBusy] = useState(false);
+  const detailId = detail?.id ?? null;
+  useEffect(() => {
+    setBackOrder(null);
+    if (detailId == null || isClient) return;
+    let live = true;
+    void backOrderFor(detailId).then((b) => { if (live) setBackOrder(b); });
+    return () => { live = false; };
+  }, [detailId, isClient]);
   const [receiving, setReceiving] = useState<OpenPO[] | null>(null);
   const [rcvQty, setRcvQty] = useState<Record<string, string>>({});
   const [rcvBusy, setRcvBusy] = useState(false);
@@ -1868,7 +1884,8 @@ const parseRand = (s: string): number => {
             {receiving.length === 0 && <div className="mb-row"><span className="mb-rv">No open purchase orders in Zoho (or still loading).</span></div>}
             {receiving.map((po) => (
               <div key={po.purchaseorder_id}>
-                <div className="mb-row"><span className="mb-rk mb-mono">{po.number}</span><span className="mb-rv">{po.vendor} · {po.status}</span></div>
+                <div className="mb-row"><span className="mb-rk mb-mono">{po.number}</span><span className="mb-rv">{po.vendor} · {po.status}
+                  {po.back_order && <b style={{ color: "var(--amber, #f5a524)" }}>{` · Back order${po.eta ? `, ETA ${fmtEta(po.eta)}` : ""}`}</b>}</span></div>
                 {po.lines.map((l) => (
                   <div className="mb-row" key={l.line_item_id} style={{ gap: 8 }}>
                     <span style={{ flex: 1, minWidth: 0 }}>
@@ -3289,6 +3306,23 @@ const parseRand = (s: string): number => {
               </>
             )}
           </div>
+
+          {!isClient && backOrder && backOrder.qty_incoming > 0 && (
+            <div className="mb-rows" style={{ margin: "0 16px 10px" }}>
+              <div className="mb-row">
+                <span className="mb-rk" style={{ color: "var(--amber, #f5a524)" }}>Back order</span>
+                <span className="mb-rv"><b>{backOrder.qty_incoming} incoming</b>{backOrder.next_eta ? ` · ETA ${fmtEta(backOrder.next_eta)}` : " · no ETA set"}
+                  <div className="mb-csku">Paid for, in transit · {backOrder.purchaseorders} · from Zoho {timeAgo(backOrder.synced_at)}</div>
+                </span>
+                <button className="mb-btn s" style={{ height: 36, flex: "0 0 auto" }} disabled={boBusy}
+                  onClick={() => { setBoBusy(true); void refreshBackOrders().then(async (r) => {
+                    setBoBusy(false);
+                    if (!r.ok) { showToast({ text: r.message, err: true }); return; }
+                    setBackOrder(await backOrderFor(d.id));
+                  }); }}>{boBusy ? "…" : "Refresh"}</button>
+              </div>
+            </div>
+          )}
 
           {!isClient && d.zoho_stock && (
             <div className="mb-rows" style={{ margin: "0 16px 10px" }}>

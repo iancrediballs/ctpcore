@@ -133,10 +133,20 @@ export type AdjustResult = { sku: string; counted: number; zoho_before: number; 
 export const countToZoho = (partId: number, counted: number, reason = "Stock count") =>
   inv<AdjustResult>({ action: "adjust", part_id: partId, counted, reason });
 export type OpenPO = { purchaseorder_id: string; number: string; vendor: string; date: string; status: string; reference: string | null;
+  back_order?: boolean; eta?: string | null;
   lines: { line_item_id: string; item_id: string; sku: string; name: string; ordered: number; received: number }[] };
 export const openPurchaseOrders = () => inv<{ purchaseorders: OpenPO[] }>({ action: "receive_list" });
 export const receiveInZoho = (purchaseorderId: string, lines: { line_item_id: string; quantity: number }[], notes?: string) =>
   inv<{ receive_number: string; purchaseorder: string }>({ action: "receive", purchaseorder_id: purchaseorderId, lines, notes });
+/** 0097: re-read Zoho POs ticked "Back order" now (the 10-min read-back does it anyway). */
+export const refreshBackOrders = () => inv<{ purchaseorders?: string[]; lines?: number; not_linked_to_a_part?: number; skipped?: string }>({ action: "back_order_sync", force: true });
+export type BackOrder = { qty_incoming: number; next_eta: string | null; purchaseorders: string; synced_at: string };
+/** 0097: what is on its way for one part (staff only, online). null = nothing incoming. */
+export async function backOrderFor(partId: number): Promise<BackOrder | null> {
+  const { data, error } = await supabase.from("back_order_part").select("qty_incoming,next_eta,purchaseorders,synced_at").eq("part_id", partId).maybeSingle();
+  if (error || !data) return null;
+  return { ...data, qty_incoming: Number(data.qty_incoming) } as BackOrder;
+}
 export const refreshZohoStock = () => inv<{ items_read?: number; parts_changed?: number; skipped?: string }>({ action: "stock_sync", force: true });
 
 /** 0059: admin releases an order for fulfilment before accounts have sent the

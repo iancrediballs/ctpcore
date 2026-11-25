@@ -44,7 +44,8 @@
 //   { "action": "adjust", "part_id": 1001, "counted": 5, "reason"?: "…" }   count → Inventory adjustment
 //   { "action": "receive_list" }                open Zoho POs with lines
 //   { "action": "receive", "purchaseorder_id": "…", "lines": [{ "line_item_id", "quantity" }] }
-//   { "action": "hook", "module": "item|salesorder|invoice|estimate|package|shipment|bill|purchasereceive|adjustment", "id": "…" }
+//   { "action": "back_order_sync", "force"?: true }   0097: Zoho POs ticked "Back order" → zoho_back_order_line
+//   { "action": "hook", "module": "item|salesorder|invoice|estimate|package|shipment|bill|purchasereceive|adjustment|purchaseorder", "id": "…" }
 //                          Zoho workflow-rule webhook (anon key): trusts nothing but the id; re-reads Zoho
 //   { "action": "rebate_book", "scheme": "<rebate_scheme.name>", "apply"?: true }   ADMIN (0069): recompute the
 //                          scheme's rebate prices from Zoho's LIVE sales price + cost with its rule, and (apply)
@@ -975,20 +976,78 @@ async function adjustFromCount(db: SupabaseClient, log: Logger, who: any, body: 
   }
 }
 
+/** 0097: a PO whose goods have not all arrived. Status alone misses one that is already BILLED
+ *  but not received (PO-00003, 25 Nov: status "billed", received_status "to_be_received"). */
+// deno-lint-ignore no-explicit-any
+const stillToReceive = (p: any) => {
+  const st = String(p.status ?? ""), rs = String(p.received_status ?? "");
+  if (["draft", "cancelled", "closed", "received"].includes(st)) return false;
+  return rs ? rs !== "received" : ["open", "issued", "partially_received"].includes(st);
+};
+// deno-lint-ignore no-explicit-any
+const isBackOrder = (po: any) => {
+  const h = po?.custom_field_hash?.cf_back_order_unformatted ?? po?.custom_field_hash?.cf_back_order;
+  if (h != null) return h === true || String(h).toLowerCase() === "true";
+  // deno-lint-ignore no-explicit-any
+  const f = ((po?.custom_fields ?? []) as any[]).find((c) => c.api_name === "cf_back_order" || /^back\s*order$/i.test(String(c.label ?? "")));
+  return f ? f.value === true || String(f.value).toLowerCase() === "true" : false;
+};
+// deno-lint-ignore no-explicit-any
+const lineReceived = (l: any) => Number(l.quantity_received ?? l.quantity_marked_as_received ?? 0);
+
+/** 0097: every unreceived line of a Zoho PO ticked "Back order" → zoho_back_order_line (replaced in full).
+ *  Throttled to 10 min unless forced (the hooks and the Refresh button force it). */
+async function backOrderSync(db: SupabaseClient, log: Logger, force: boolean) {
+  const { data: cfg } = await db.from("zoho_config").select("back_orders_synced_at").eq("id", 1).maybeSingle();
+  const last = cfg?.back_orders_synced_at ? new Date(cfg.back_orders_synced_at).getTime() : 0;
+  if (!force && Date.now() - last < 10 * 60_000) return { skipped: "back orders read less than 10 minutes ago" };
+  // deno-lint-ignore no-explicit-any
+  const list: any[] = [];
+  for (let page = 1; page <= 10; page++) {
+    const b = await zohoInv("GET", "/purchaseorders", { page: String(page), per_page: "200" });
+    list.push(...(b.purchaseorders ?? []));
+    if (!b.page_context?.has_more_page) break;
+  }
+  // deno-lint-ignore no-explicit-any
+  const lines: any[] = [], pos: string[] = [];
+  for (const p of list.filter(stillToReceive)) {
+    const po = (await zohoInv("GET", `/purchaseorders/${p.purchaseorder_id}`)).purchaseorder;
+    if (!isBackOrder(po)) continue;
+    pos.push(String(po.purchaseorder_number));
+    // deno-lint-ignore no-explicit-any
+    for (const l of (po.line_items ?? []) as any[]) {
+      if (!l.item_id) continue;
+      const ordered = Number(l.quantity ?? 0) - Number(l.quantity_cancelled ?? 0), received = lineReceived(l);
+      if (ordered - received <= 0) continue;
+      // deno-lint-ignore no-explicit-any
+      const model = ((l.item_custom_fields ?? []) as any[]).find((c) => c.api_name === "cf_model")?.value ?? null;
+      lines.push({ line_item_id: String(l.line_item_id), zoho_purchaseorder_id: String(po.purchaseorder_id),
+        purchaseorder_number: po.purchaseorder_number, reference_number: po.reference_number ?? null, vendor_name: po.vendor_name ?? null,
+        po_date: po.date || null, eta: po.delivery_date || po.expected_delivery_date || null, po_status: po.status ?? null,
+        billed_status: po.billed_status ?? null, zoho_item_id: String(l.item_id), sku: l.sku ?? null, name: l.name ?? null, model,
+        qty_ordered: ordered, qty_received: received });
+    }
+  }
+  const { data, error } = await db.rpc("apply_zoho_back_orders", { p_lines: lines });
+  if (error) { await log({ doc_type: "purchaseorder", action: "readback_error", ok: false, message: `back orders: ${error.message}` }); throw new Error(error.message); }
+  return { purchaseorders: pos, ...data };
+}
+
 /** Open Zoho POs with their lines, for the phone's Receive screen. */
 async function receiveList() {
   // deno-lint-ignore no-explicit-any
   const list = ((await zohoInv("GET", "/purchaseorders", { per_page: "200" })).purchaseorders ?? []) as any[];
-  const open = list.filter((p) => ["open", "issued", "partially_received"].includes(String(p.status))).slice(0, 25);
+  const open = list.filter(stillToReceive).slice(0, 25);
   // deno-lint-ignore no-explicit-any
   const out: any[] = [];
   for (const p of open) {
     const full = (await zohoInv("GET", `/purchaseorders/${p.purchaseorder_id}`)).purchaseorder;
     out.push({ purchaseorder_id: String(full.purchaseorder_id), number: full.purchaseorder_number, vendor: full.vendor_name, date: full.date,
       status: full.status, reference: full.reference_number ?? null,
+      back_order: isBackOrder(full), eta: full.delivery_date || full.expected_delivery_date || null,
       // deno-lint-ignore no-explicit-any
       lines: (full.line_items ?? []).map((l: any) => ({ line_item_id: String(l.line_item_id), item_id: String(l.item_id), sku: l.sku, name: l.name,
-        ordered: Number(l.quantity), received: Number(l.quantity_received ?? 0) })) });
+        ordered: Number(l.quantity), received: lineReceived(l) })) });
   }
   return out;
 }
@@ -1059,7 +1118,15 @@ async function hook(db: SupabaseClient, log: Logger, body: any) {
       const o = d?.salesorder_id ? await orderBy("zoho_salesorder_id", String(d.salesorder_id)) : undefined;
       return o ? await syncOne(db, log, o, true) : { stock: "refreshed" };
     }
-    case "bill": case "purchasereceive": case "adjustment": return await stockSync(db, log, true);
+    case "bill": case "purchasereceive": {
+      // 0097: a bill or receive against a back-order PO changes what is still incoming
+      const stock = await stockSync(db, log, true);
+      let back_orders: unknown;
+      try { back_orders = await backOrderSync(db, log, true); } catch (e) { back_orders = { error: e instanceof Error ? e.message : String(e) }; }
+      return { ...stock, back_orders };
+    }
+    case "adjustment": return await stockSync(db, log, true);
+    case "purchaseorder": return { back_orders: await backOrderSync(db, log, true) };
     default: return { skipped: `module ${m} not handled` };
   }
 }
@@ -1234,7 +1301,7 @@ Deno.serve(async (req: Request) => {
   // invoice issued before go-live does not report a failure that isn't one.
   // (Status read-back is allowed while sending is off: documents already in
   // Zoho still change status there.)
-  if (!["test", "status", "so_sync", "cancel", "hook", "stock_sync", "receive_list", "rebate_book", "assign_pricebook", "pricebook_sync", "catalogue_set",
+  if (!["test", "status", "so_sync", "cancel", "hook", "stock_sync", "back_order_sync", "receive_list", "rebate_book", "assign_pricebook", "pricebook_sync", "catalogue_set",
         "rebate_probe", "rebate_setup", "rebate_account", "rebate_accrue", "rebate_statement", "rebate_offset", "rebate_void", "rebate_unassign_pricebook"].includes(body.action) && (!cfg?.push_enabled || !cfg?.push_from)) {
     return json({ ok: true, skipped: "Sending to Zoho is off (Settings → Zoho). Nothing was sent." });
   }
@@ -1253,7 +1320,10 @@ Deno.serve(async (req: Request) => {
       // 0065: the Zoho stock cache rides on the same 10-min schedule (itself throttled to 15 min)
       let stock: unknown = null;
       try { stock = await stockSync(db, log, false); } catch (e) { stock = { error: e instanceof Error ? e.message : String(e) }; }
-      return json({ ok: true, ...st, stock, rebates });
+      // 0097: back-order POs on the same schedule (itself throttled to 10 min)
+      let back_orders: unknown = null;
+      try { back_orders = await backOrderSync(db, log, false); } catch (e) { back_orders = { error: e instanceof Error ? e.message : String(e) }; }
+      return json({ ok: true, ...st, stock, rebates, back_orders });
     }
     if (body.action === "hook") {
       try { return json({ ok: true, module: body.module, ...(await hook(db, log, body)) }); }
@@ -1264,6 +1334,7 @@ Deno.serve(async (req: Request) => {
       }
     }
     if (body.action === "stock_sync") return json({ ok: true, ...(await stockSync(db, log, body.force === true)) });
+    if (body.action === "back_order_sync") return json({ ok: true, ...(await backOrderSync(db, log, body.force === true)) });
     if (["ship", "adjust", "receive", "receive_list"].includes(body.action)) {
       if (body.action !== "receive_list") {
         // 24 Oct: in CTP mode, Fulfil already moved the CTP ledger; a "mirror" ship then creates the Zoho
