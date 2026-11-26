@@ -3,13 +3,13 @@
 import type { SupabaseClient } from "jsr:@supabase/supabase-js@2";
 import { zohoInv, type Logger } from "../_shared/zoho.ts";
 
-/** A PO whose goods have not all arrived. Status alone misses one that is already BILLED
- *  but not received (PO-00003, 25 Nov: status "billed", received_status "to_be_received"). */
 /** POs that exist in Zoho but must never count as stock on its way. PO-00003 (ref SA260826) was a test
  *  by Michelle and Anton; it was billed and paid, then offset with a vendor credit, so it cannot be
  *  deleted and stays "to be received" in Zoho (Ian, 26 Nov). */
 const IGNORED_PO_IDS = new Set(["1429405000001180023"]);
 
+/** A PO whose goods have not all arrived. Status alone misses one that is already BILLED
+ *  but not received (PO-00003, 25 Nov: status "billed", received_status "to_be_received"). */
 // deno-lint-ignore no-explicit-any
 export const stillToReceive = (p: any) => {
   if (IGNORED_PO_IDS.has(String(p.purchaseorder_id ?? ""))) return false;
