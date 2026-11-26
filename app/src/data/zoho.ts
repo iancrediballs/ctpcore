@@ -138,14 +138,18 @@ export type OpenPO = { purchaseorder_id: string; number: string; vendor: string;
 export const openPurchaseOrders = () => inv<{ purchaseorders: OpenPO[] }>({ action: "receive_list" });
 export const receiveInZoho = (purchaseorderId: string, lines: { line_item_id: string; quantity: number }[], notes?: string) =>
   inv<{ receive_number: string; purchaseorder: string }>({ action: "receive", purchaseorder_id: purchaseorderId, lines, notes });
-/** 0097: re-read Zoho POs ticked "Back order" now (the 10-min read-back does it anyway). */
+/** 0097: re-read the open Zoho POs now (the 10-min read-back does it anyway). */
 export const refreshBackOrders = () => inv<{ purchaseorders?: string[]; lines?: number; not_linked_to_a_part?: number; skipped?: string }>({ action: "sync", force: true }, "zoho-back-orders");
-export type BackOrder = { qty_incoming: number; next_eta: string | null; purchaseorders: string; synced_at: string };
-/** 0097: what is on its way for one part (staff only, online). null = nothing incoming. */
+/** 0097/0098: one part's open Zoho PO quantities. qty_incoming = In transit (POs ticked "Back order");
+ *  qty_on_po = On purchase order (every unreceived PO line, In transit included). */
+export type BackOrder = { qty_incoming: number; qty_on_po: number; next_eta: string | null; purchaseorders: string | null;
+  all_purchaseorders: string | null; synced_at: string };
+/** Staff only, online. null = nothing on order for this part. */
 export async function backOrderFor(partId: number): Promise<BackOrder | null> {
-  const { data, error } = await supabase.from("back_order_part").select("qty_incoming,next_eta,purchaseorders,synced_at").eq("part_id", partId).maybeSingle();
+  const { data, error } = await supabase.from("back_order_part")
+    .select("qty_incoming,qty_on_po,next_eta,purchaseorders,all_purchaseorders,synced_at").eq("part_id", partId).maybeSingle();
   if (error || !data) return null;
-  return { ...data, qty_incoming: Number(data.qty_incoming) } as BackOrder;
+  return { ...data, qty_incoming: Number(data.qty_incoming), qty_on_po: Number(data.qty_on_po) } as BackOrder;
 }
 export const refreshZohoStock = () => inv<{ items_read?: number; parts_changed?: number; skipped?: string }>({ action: "stock_sync", force: true });
 

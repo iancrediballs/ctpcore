@@ -1077,7 +1077,7 @@ export default function MobileShell() {
   }, [isClient, lastSynced]);
   const zohoStock = stockMaster === "zoho";
   const [countVal, setCountVal] = useState("");
-  // 0097: stock on its way (Zoho POs ticked "Back order"), staff only, read online
+  // 0097/0098: open Zoho POs for this part (In transit + On purchase order), staff only, read online
   const [backOrder, setBackOrder] = useState<BackOrder | null>(null);
   const [boBusy, setBoBusy] = useState(false);
   const detailId = detail?.id ?? null;
@@ -1885,7 +1885,7 @@ const parseRand = (s: string): number => {
             {receiving.map((po) => (
               <div key={po.purchaseorder_id}>
                 <div className="mb-row"><span className="mb-rk mb-mono">{po.number}</span><span className="mb-rv">{po.vendor} · {po.status}
-                  {po.back_order && <b style={{ color: "var(--amber, #f5a524)" }}>{` · Back order${po.eta ? `, ETA ${fmtEta(po.eta)}` : ""}`}</b>}</span></div>
+                  {po.back_order && <b style={{ color: "var(--amber, #f5a524)" }}>{` · In transit${po.eta ? `, ETA ${fmtEta(po.eta)}` : ""}`}</b>}</span></div>
                 {po.lines.map((l) => (
                   <div className="mb-row" key={l.line_item_id} style={{ gap: 8 }}>
                     <span style={{ flex: 1, minWidth: 0 }}>
@@ -3307,46 +3307,70 @@ const parseRand = (s: string): number => {
             )}
           </div>
 
-          {!isClient && backOrder && backOrder.qty_incoming > 0 && (
-            <div className="mb-rows" style={{ margin: "0 16px 10px" }}>
-              <div className="mb-row">
-                <span className="mb-rk" style={{ color: "var(--amber, #f5a524)" }}>Back order</span>
-                <span className="mb-rv"><b>{backOrder.qty_incoming} incoming</b>{backOrder.next_eta ? ` · ETA ${fmtEta(backOrder.next_eta)}` : " · no ETA set"}
-                  <div className="mb-csku">Paid for, in transit · {backOrder.purchaseorders} · from Zoho {timeAgo(backOrder.synced_at)}</div>
-                </span>
-                <button className="mb-btn s" style={{ height: 36, flex: "0 0 auto" }} disabled={boBusy}
-                  onClick={() => { setBoBusy(true); void refreshBackOrders().then(async (r) => {
-                    setBoBusy(false);
-                    if (!r.ok) { showToast({ text: r.message, err: true }); return; }
-                    setBackOrder(await backOrderFor(d.id));
-                  }); }}>{boBusy ? "…" : "Refresh"}</button>
+          {/* 0098: stock the way staff read it in Multicat — Available (reserved excluded), Reserved,
+              In transit (Zoho POs ticked "Back order", paid and on the way), On purchase order (every
+              open PO). Multicat's "On back order" means customer orders short of stock: not this. */}
+          {!isClient && (d.zoho_stock || backOrder) && (() => {
+            const zs = d.zoho_stock;
+            const tile = (k: string, sub: string, v: number | null | undefined, cls = "") => (
+              <div className="mb-stk-t">
+                <div className="mb-stk-k">{k}</div>
+                <div className={"mb-stk-v" + (v == null ? " z" : v > 0 ? cls : " z")}>{v == null ? "—" : v}</div>
+                <div className="mb-stk-s">{sub}</div>
               </div>
-            </div>
-          )}
-
-          {!isClient && d.zoho_stock && (
-            <div className="mb-rows" style={{ margin: "0 16px 10px" }}>
-              <div className="mb-row">
-                <span className="mb-rk">Zoho</span>
-                <span className="mb-rv">{d.zoho_stock.on_hand} on the shelf · {d.zoho_stock.available ?? "—"} available
-                  <div className="mb-csku">Zoho Inventory{zohoStock ? " (holds the stock)" : " (rehearsal — CTP holds the stock)"}{d.zoho_stock.at ? ` · ${timeAgo(d.zoho_stock.at)}` : ""}</div>
-                </span>
-              </div>
-              {zohoStock && (
-                <div className="mb-row" style={{ gap: 8 }}>
-                  <input className="mb-price-in" inputMode="numeric" placeholder="counted" value={countVal} style={{ flex: "0 0 96px" }}
-                    onChange={(e) => setCountVal(e.target.value.replace(/[^0-9]/g, ""))} />
-                  <button className="mb-btn s" style={{ height: 42 }} disabled={countVal === ""}
-                    onClick={() => { const n = Number(countVal); void countToZoho(d.id, n).then((r) => {
-                      showToast(r.ok ? { text: r.data.delta === 0 ? `${d.sku}: ${n} matches Zoho — nothing adjusted.`
-                                              : `${d.sku}: counted ${n}, Zoho had ${r.data.zoho_before} → adjusted ${r.data.delta > 0 ? "+" : ""}${r.data.delta} in Zoho.` }
-                                     : { text: r.message, err: true });
-                      if (r.ok) { setCountVal(""); void reloadDetail(d.id); }
-                    }); }}>Post count to Zoho</button>
+            );
+            return (
+              <div className="mb-rows" style={{ margin: "0 16px 10px" }}>
+                <div className="mb-stk">
+                  {tile("Available", "reserved stock excluded", zs?.available, " g")}
+                  {tile("Reserved", "on sales orders", zs?.committed)}
+                  {tile("In transit", "paid, on its way", backOrder?.qty_incoming ?? 0, " a")}
+                  {tile("On purchase order", "inbound", backOrder?.qty_on_po ?? 0)}
                 </div>
-              )}
-            </div>
-          )}
+                {backOrder && backOrder.qty_incoming > 0 && (
+                  <div className="mb-row">
+                    <span className="mb-rk" style={{ color: "var(--amber, #f5a524)" }}>In transit</span>
+                    <span className="mb-rv"><b>{backOrder.qty_incoming}</b>{backOrder.next_eta ? ` · ETA ${fmtEta(backOrder.next_eta)}` : " · no ETA set"}
+                      <div className="mb-csku">{backOrder.purchaseorders}</div>
+                    </span>
+                  </div>
+                )}
+                {backOrder && backOrder.qty_on_po > backOrder.qty_incoming && (
+                  <div className="mb-row">
+                    <span className="mb-rk">On PO</span>
+                    <span className="mb-rv">{backOrder.qty_on_po - backOrder.qty_incoming} more on order
+                      <div className="mb-csku">{backOrder.all_purchaseorders}</div>
+                    </span>
+                  </div>
+                )}
+                <div className="mb-row">
+                  <span className="mb-rv" style={{ marginLeft: 0, textAlign: "left", flex: 1 }}>
+                    <div className="mb-csku">{zs ? `Zoho: ${zs.on_hand} on the shelf${zohoStock ? " (Zoho holds the stock)" : " (rehearsal, CTP holds the stock)"}${zs.at ? ` · ${timeAgo(zs.at)}` : ""}` : "Zoho stock not read yet"}
+                      {backOrder ? ` · POs ${timeAgo(backOrder.synced_at)}` : ""}</div>
+                  </span>
+                  <button className="mb-btn s" style={{ height: 36, flex: "0 0 auto" }} disabled={boBusy}
+                    onClick={() => { setBoBusy(true); void refreshBackOrders().then(async (r) => {
+                      setBoBusy(false);
+                      if (!r.ok) { showToast({ text: r.message, err: true }); return; }
+                      setBackOrder(await backOrderFor(d.id));
+                    }); }}>{boBusy ? "…" : "Refresh POs"}</button>
+                </div>
+                {zohoStock && zs && (
+                  <div className="mb-row" style={{ gap: 8 }}>
+                    <input className="mb-price-in" inputMode="numeric" placeholder="counted" value={countVal} style={{ flex: "0 0 96px" }}
+                      onChange={(e) => setCountVal(e.target.value.replace(/[^0-9]/g, ""))} />
+                    <button className="mb-btn s" style={{ height: 42 }} disabled={countVal === ""}
+                      onClick={() => { const n = Number(countVal); void countToZoho(d.id, n).then((r) => {
+                        showToast(r.ok ? { text: r.data.delta === 0 ? `${d.sku}: ${n} matches Zoho — nothing adjusted.`
+                                                : `${d.sku}: counted ${n}, Zoho had ${r.data.zoho_before} → adjusted ${r.data.delta > 0 ? "+" : ""}${r.data.delta} in Zoho.` }
+                                       : { text: r.message, err: true });
+                        if (r.ok) { setCountVal(""); void reloadDetail(d.id); }
+                      }); }}>Post count to Zoho</button>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
           <div className="mb-actions">
             {isClient ? (
               inCart(d.id) > 0 ? (

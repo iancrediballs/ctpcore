@@ -24,7 +24,8 @@ export const isBackOrder = (po: any) => {
 // deno-lint-ignore no-explicit-any
 export const lineReceived = (l: any) => Number(l.quantity_received ?? l.quantity_marked_as_received ?? 0);
 
-/** Every unreceived line of a Zoho PO ticked "Back order" → zoho_back_order_line (replaced in full).
+/** Every unreceived line of every open Zoho PO → zoho_back_order_line (replaced in full); back_order marks
+ *  the POs ticked "Back order" (= In transit). All of them together = On purchase order (0098).
  *  Skipped when read less than `minAgeMs` ago (10 min on the schedule, 1 min for webhooks, 0 = always). */
 export async function backOrderSync(db: SupabaseClient, log: Logger, minAgeMs: number) {
   const { data: cfg } = await db.from("zoho_config").select("back_orders_synced_at").eq("id", 1).maybeSingle();
@@ -38,11 +39,11 @@ export async function backOrderSync(db: SupabaseClient, log: Logger, minAgeMs: n
     if (!b.page_context?.has_more_page) break;
   }
   // deno-lint-ignore no-explicit-any
-  const lines: any[] = [], pos: string[] = [];
+  const lines: any[] = [], pos: string[] = [], open: string[] = [];
   for (const p of list.filter(stillToReceive)) {
     const po = (await zohoInv("GET", `/purchaseorders/${p.purchaseorder_id}`)).purchaseorder;
-    if (!isBackOrder(po)) continue;
-    pos.push(String(po.purchaseorder_number));
+    const bo = isBackOrder(po);
+    (bo ? pos : open).push(String(po.purchaseorder_number));
     // deno-lint-ignore no-explicit-any
     for (const l of (po.line_items ?? []) as any[]) {
       if (!l.item_id) continue;
@@ -54,10 +55,10 @@ export async function backOrderSync(db: SupabaseClient, log: Logger, minAgeMs: n
         purchaseorder_number: po.purchaseorder_number, reference_number: po.reference_number ?? null, vendor_name: po.vendor_name ?? null,
         po_date: po.date || null, eta: po.delivery_date || po.expected_delivery_date || null, po_status: po.status ?? null,
         billed_status: po.billed_status ?? null, zoho_item_id: String(l.item_id), sku: l.sku ?? null, name: l.name ?? null, model,
-        qty_ordered: ordered, qty_received: received });
+        qty_ordered: ordered, qty_received: received, back_order: bo });
     }
   }
   const { data, error } = await db.rpc("apply_zoho_back_orders", { p_lines: lines });
   if (error) { await log({ doc_type: "purchaseorder", action: "readback_error", ok: false, message: `back orders: ${error.message}` }); throw new Error(error.message); }
-  return { purchaseorders: pos, ...data };
+  return { purchaseorders: pos, other_open_purchaseorders: open, ...data };
 }

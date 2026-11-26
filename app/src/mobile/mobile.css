@@ -152,6 +152,16 @@
 .mb-rows{background:var(--surf);border:1.5px solid var(--line);border-radius:var(--r);overflow:hidden;margin-bottom:14px}
 .mb-row{display:flex;align-items:center;gap:12px;padding:13px 15px;border-bottom:1px solid var(--line)}
 .mb-row:last-child{border-bottom:0}
+/* 0098: Multicat-style stock tiles */
+.mb-stk{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));border-bottom:1px solid var(--line)}
+.mb-stk-t{padding:12px 15px;border-right:1px solid var(--line);border-bottom:1px solid var(--line);min-width:0}
+.mb-stk-t:nth-child(2n){border-right:0}
+.mb-stk-t:nth-last-child(-n+2){border-bottom:0}
+.mb-stk-k{font-size:12px;font-weight:900;letter-spacing:.6px;text-transform:uppercase;color:var(--dim)}
+.mb-stk-v{font-size:26px;font-weight:900;line-height:1.15;margin-top:4px;color:var(--txt)}
+.mb-stk-v.g{color:var(--green)}.mb-stk-v.a{color:var(--amber)}.mb-stk-v.z{color:var(--dimmer)}
+.mb-stk-s{font-size:11.5px;font-weight:700;color:var(--dim)}
+@media (min-width:900px){.mb-stk{grid-template-columns:repeat(4,minmax(0,1fr))}.mb-stk-t{border-bottom:0}.mb-stk-t:nth-child(2n){border-right:1px solid var(--line)}.mb-stk-t:last-child{border-right:0}}
 .mb-rk{font-size:12.5px;font-weight:800;color:var(--dim);text-transform:uppercase;letter-spacing:.7px;flex:0 0 108px}
 .mb-rv{font-size:15px;font-weight:750;margin-left:auto;text-align:right;word-break:normal;overflow-wrap:break-word;color:var(--txt)}
 .mb-xrefs{display:flex;flex-direction:column;align-items:flex-end;gap:3px;font-size:13.5px}
