@@ -105,11 +105,14 @@ type Toast = { text: string; err?: boolean; undo?: () => void };
 type MyLine = {
   id: number; part_id: number; qty: number; unit_price_minor: number | null;
   sku: string; name: string; catalogue_pn: string | null;
+  on_order?: boolean; po_eta?: string | null;   // 0099: on order from the supplier, expected po_eta
 };
 type StaffLine = {
   id: number; part_id: number; qty: number; unit_price_minor: number;
   sku: string; name: string; catalogue_pn: string | null;
   net_minor?: number | null;   // FLOW-3: the line after Zoho's discount (read back), when it has one
+  // 0099: an on-order line (supplier PO + ETA, priced by hand); available = Zoho's available-for-sale
+  on_order?: boolean; po_number?: string | null; po_eta?: string | null; available?: number | null;
 };
 type StaffOrder = {
   id: number; number: string; status: string;
@@ -138,6 +141,7 @@ type StaffOrder = {
   zoho_estimate_total_minor?: number | null; zoho_estimate_expiry?: string | null;
   staff_log?: string | null;   // 0067: internal history, staff only
   po_number?: string | null; po_file_path?: string | null; po_file_name?: string | null; credit_warning?: string | null;   // 0070
+  back_order_of?: number | null; back_order_of_number?: string | null;   // 0099: split off this quote on acceptance
   timeline?: { at: string; kind: string; label: string; by: string; detail?: Record<string, unknown> }[];   // 0068
   unpriced: number; total_minor: number;
   stage: "to_price" | "with_customer" | "to_pick" | "fulfilled" | string;
@@ -199,6 +203,14 @@ const LineAmt = ({ l }: { l: { qty: number; unit_price_minor: number; net_minor?
     ? <span className="mb-rv"><s className="mb-was">{fmtR(gross)}</s>{fmtR(l.net_minor)}</span>
     : <span className="mb-rv">{fmtR(gross)}</span>;
 };
+
+/** 0099: an on-order line's marking. Staff see the supplier PO; customers only the expected date. */
+const OnOrderTag = ({ l, staff }: { l: { on_order?: boolean; po_number?: string | null; po_eta?: string | null }; staff?: boolean }) =>
+  l.on_order ? (
+    <div className="mb-csku" style={{ color: "var(--amber)" }}>
+      On order{staff && l.po_number ? ` · ${l.po_number}` : ""}{l.po_eta ? ` · ${staff ? "ETA" : "expected"} ${fmtEta(l.po_eta)}` : staff ? " · no ETA yet" : ""}
+    </div>
+  ) : null;
 
 // The brand mark ships IN the app bundle (public/brand/), not the asset
 // bucket — the logo should draw even before the first sync or with no signal,
@@ -789,7 +801,8 @@ export default function MobileShell() {
   /** What an unpriced line's price box starts at: the customer's rebate price, if they have one. */
   const defaultMinor = useCallback((o: StaffOrder, l: StaffOrder["lines"][number]) =>
     // FLOW-15: an unpriced line starts at the customer's book rate, else the list price — every customer alike
-    l.unit_price_minor > 0 ? l.unit_price_minor : (lpFor(o, l).book_minor ?? lpFor(o, l).list_minor ?? 0), [lpFor]);
+    l.unit_price_minor > 0 ? l.unit_price_minor : l.on_order ? 0   // 0099: an on-order price is typed by hand
+      : (lpFor(o, l).book_minor ?? lpFor(o, l).list_minor ?? 0), [lpFor]);
 
   // ── data loads (all local SQLite via PowerSync — cheap to re-run) ──
   const refresh = useCallback(() => {
@@ -1153,6 +1166,10 @@ const parseRand = (s: string): number => {
       return { line: l, minor: Number.isFinite(rand) ? Math.round(rand * 100) : 0 };
     });
     const missing = resolved.filter((r) => r.minor <= 0);
+    if (missing.length > 0 && missing.every((m) => m.line.on_order)) {
+      showToast({ text: `Type the on-order price for ${missing.map((m) => m.line.sku).slice(0, 3).join(", ")}${missing.length > 3 ? "…" : ""} — the landed cost of that shipment, by hand.`, err: true });
+      return;
+    }
     if (missing.length > 0) {
       showToast({
         text: `Type a price for every line first (or tap Fill from list) — missing: ${missing
@@ -1269,7 +1286,10 @@ const parseRand = (s: string): number => {
       showToast({ text: r?.already
         ? `${o.number} was already accepted — nothing changed.`
         : `${o.number} accepted for ${o.customer_name} · PO ${poNo}${r?.zoho_salesorder_number ? ` · Zoho sales order ${r.zoho_salesorder_number}` : ""} · ${r?.reserved_lines ?? 0} line${(r?.reserved_lines ?? 0) === 1 ? "" : "s"} held.`
-          + (r?.credit_warning ? ` ⚠ ${r.credit_warning}` : "") + (r?.attach_warning ? ` ⚠ ${r.attach_warning}` : ""), err: !!r?.attach_warning });
+          + (r?.back_order ? (r.back_order.ok
+              ? ` On-order parts → back order ${r.back_order.number}${r.back_order.zoho_salesorder_number ? ` · Zoho ${r.back_order.zoho_salesorder_number}` : ""}.`
+              : ` ⚠ Back order ${r.back_order.number} is still an open quote (${r.back_order.message ?? "Zoho failed"}): accept it again.`) : "")
+          + (r?.credit_warning ? ` ⚠ ${r.credit_warning}` : "") + (r?.attach_warning ? ` ⚠ ${r.attach_warning}` : ""), err: !!r?.attach_warning || (!!r?.back_order && !r.back_order.ok) });
       loadOrders();
     } catch (e) { showToast({ text: e instanceof Error ? e.message.replace(/^\[CTP web\] could not accept: /, "") : "Could not accept.", err: true }); }
     finally { setSavingOrder(false); }
@@ -1429,6 +1449,7 @@ const parseRand = (s: string): number => {
       const next: Record<number, string> = {};
       let missing = 0, total = 0, booked = 0;
       for (const l of o.lines) {
+        if (l.on_order) { if (l.unit_price_minor > 0) total += l.unit_price_minor * l.qty; else missing++; continue; }   // 0099: typed by hand
         const c = book.get(l.id) ?? lp[String(l.part_id)];
         if (book.has(l.id)) booked++;
         if (c != null && c > 0) { next[l.id] = (c / 100).toFixed(2); total += c * l.qty; }
@@ -1446,6 +1467,33 @@ const parseRand = (s: string): number => {
       setSavingOrder(false);
     }
   }, [showToast]);
+
+  /** 0099 (Ian, 26 Nov): more asked for than Zoho has available → the in-stock quantity keeps its
+   *  price; the shortfall becomes an on-order line (supplier PO + ETA) priced by hand. On accept the
+   *  on-order lines become their own back order with their own Zoho sales order. */
+  const splitLine = useCallback(async (l: StaffLine) => {
+    setSavingOrder(true);
+    try {
+      const r = await api.splitQuoteLine(l.id);
+      showToast({ text: `${l.sku}: ${r.in_stock_qty > 0 ? `${r.in_stock_qty} from stock, ` : ""}${r.on_order_qty} on order`
+        + `${r.po_number ? ` (${r.po_number}${r.po_eta ? `, ETA ${fmtEta(r.po_eta)}` : ""})` : " (no open PO for it yet)"}. Type the on-order price, then Send quote.` });
+      setDraftPrices((d) => { const n = { ...d }; delete n[l.id]; return n; });
+      loadOrders();
+    } catch (e) {
+      showToast({ text: e instanceof Error ? e.message.replace(/^\[CTP web\] could not split: /, "") : "Could not split.", err: true });
+    } finally { setSavingOrder(false); }
+  }, [showToast, loadOrders]);
+  const unsplitLine = useCallback(async (l: StaffLine) => {
+    setSavingOrder(true);
+    try {
+      await api.unsplitQuoteLine(l.id);
+      showToast({ text: `${l.sku}: back on one line. Check its price, then Send quote.` });
+      setDraftPrices((d) => { const n = { ...d }; delete n[l.id]; return n; });
+      loadOrders();
+    } catch (e) {
+      showToast({ text: e instanceof Error ? e.message.replace(/^\[CTP web\] could not undo the split: /, "") : "Could not undo.", err: true });
+    } finally { setSavingOrder(false); }
+  }, [showToast, loadOrders]);
 
   // 0047: why a quote cannot be accepted yet, by order id — read when the
   // quote is ready so the button says so before anyone taps it.
@@ -1540,6 +1588,9 @@ const parseRand = (s: string): number => {
         showToast({ text: (res.zoho_salesorder_number
           ? `${r.number} accepted with your PO ${res.po_number ?? po?.po ?? ""} — sales order ${res.zoho_salesorder_number} raised. We'll be in touch with the proforma.`
           : `${r.number} accepted with your PO ${res.po_number ?? po?.po ?? ""} — your parts are reserved. We'll be in touch.`)
+          + (res.back_order ? (res.back_order.ok
+              ? ` The parts on order are a separate order, ${res.back_order.number}${res.back_order.zoho_salesorder_number ? ` (sales order ${res.back_order.zoho_salesorder_number})` : ""}.`
+              : ` The parts on order are a separate quote, ${res.back_order.number}, that did not go through yet: please accept it again, or call us.`) : "")
           + (res.credit_warning ? ` ${res.credit_warning}` : "") });
       } else {
         await api.respondToQuote(r.id, false);
@@ -2362,16 +2413,32 @@ const parseRand = (s: string): number => {
                           </div>
                         )}
                         {prices[o.id]?.pricebook && <div className="mb-row"><span className="mb-rk">Price book</span><span className="mb-rv">{prices[o.id].pricebook}</span></div>}
+                        {o.back_order_of_number && (
+                          <div className="mb-row">
+                            <span className="mb-rk">Back order</span>
+                            <span className="mb-rv">the on-order parts of <b className="mb-mono">{o.back_order_of_number}</b>, split off when it was accepted</span>
+                          </div>
+                        )}
                         {o.lines.map((l) => (
                           <div className="mb-row" key={l.id}>
                             <span style={{ flex: 1, minWidth: 0 }}>
                               <div className="mb-cname">{l.qty} × {l.name}</div>
                               <div className="mb-csku mb-mono">{l.sku}</div>
-                              <PriceInfo lp={lpFor(o, l)} qty={l.qty} staff seesCost={seesCost} known={!!prices[o.id]}
-                                priceMinor={draftPrices[l.id] != null && draftPrices[l.id] !== "" ? Math.round(Number(draftPrices[l.id]) * 100) || 0 : defaultMinor(o, l)} />
+                              <OnOrderTag l={l} staff />
+                              {o.status === "quote" && !o.zoho_estimate_id && (l.on_order ? (
+                                <button className="mb-chip" disabled={savingOrder} onClick={() => { void unsplitLine(l); }}>Undo split</button>
+                              ) : l.available != null && l.qty > Math.max(0, Math.floor(l.available)) ? (
+                                <button className="mb-chip" disabled={savingOrder} onClick={() => { void splitLine(l); }}>
+                                  {Math.max(0, Math.floor(l.available)) > 0
+                                    ? `Only ${Math.floor(l.available)} in stock: split off ${l.qty - Math.floor(l.available)} on order`
+                                    : "None in stock: put on order"}
+                                </button>
+                              ) : null)}
+                              {!(l.on_order && (l.unit_price_minor ?? 0) <= 0) && <PriceInfo lp={lpFor(o, l)} qty={l.qty} staff seesCost={seesCost} known={!!prices[o.id]}
+                                priceMinor={draftPrices[l.id] != null && draftPrices[l.id] !== "" ? Math.round(Number(draftPrices[l.id]) * 100) || 0 : defaultMinor(o, l)} />}
                             </span>
                             {stageOf(o) === "to_price" ? (
-                              <input className="mb-price-in" inputMode="decimal" placeholder="0.00"
+                              <input className="mb-price-in" inputMode="decimal" placeholder={l.on_order ? "on-order price" : "0.00"}
                                 value={draftPrices[l.id] ?? (defaultMinor(o, l) > 0 ? (defaultMinor(o, l) / 100).toFixed(2) : "")}
                                 onChange={(e) => setDraftPrices((d) => ({ ...d, [l.id]: e.target.value }))} />
                             ) : (
@@ -2732,6 +2799,7 @@ const parseRand = (s: string): number => {
                             <span style={{ flex: 1, minWidth: 0 }}>
                               <div className="mb-cname">{l.qty} × {l.name}</div>
                               <div className="mb-csku mb-mono">{l.sku}</div>
+                              <OnOrderTag l={l} staff />
                               <PriceInfo lp={lpFor(o, l)} qty={l.qty} staff seesCost={seesCost} known={!!prices[o.id]} priceMinor={l.unit_price_minor} />
                             </span>
                             <LineAmt l={l} />
@@ -2886,7 +2954,8 @@ const parseRand = (s: string): number => {
                       <span style={{ flex: 1, minWidth: 0 }}>
                         <div className="mb-cname">{l.qty} × {l.name}</div>
                         <div className="mb-csku mb-mono">{l.sku}</div>
-                        {(l.unit_price_minor ?? 0) <= 0 && <RebateTag r={rebateFor(l.part_id)} />}
+                        <OnOrderTag l={l} />
+                        {(l.unit_price_minor ?? 0) <= 0 && !l.on_order && <RebateTag r={rebateFor(l.part_id)} />}
                       </span>
                       {/* Only ever their OWN quoted price — never the price list.
                           0063: a Zoho estimate's line shows Zoho's discount and net. */}

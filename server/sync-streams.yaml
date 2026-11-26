@@ -162,7 +162,8 @@ bucket_definitions:
           FROM sales_order
          WHERE customer_id = bucket.customer_id
       # 26 Oct: line_net_minor = the line after Zoho's discount, so the customer's total matches their invoice
-      - SELECT id, order_id, part_id, qty, unit_price_minor, line_net_minor, customer_id,
+      # 0099: on_order + po_eta mark an on-order line ("expected 19 Dec"); the supplier PO number stays staff-only
+      - SELECT id, order_id, part_id, qty, unit_price_minor, line_net_minor, on_order, po_eta, customer_id,
                rev, updated_at, deleted_at
           FROM sales_line
          WHERE customer_id = bucket.customer_id

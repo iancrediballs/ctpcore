@@ -355,12 +355,20 @@ export const rebateDiscount = (pct: unknown) => {
  *  reported, not hidden. Lines by SKU through zoho_item; any unlinked SKU
  *  blocks the whole order. VAT is the Standard Rate tax. */
 // deno-lint-ignore no-explicit-any
+/** 0099: skipOnOrder leaves a mixed quote's on-order lines off (they become the back order);
+ *  note is added to the SO notes; an on-order line's description carries its ETA. */
+export type SalesOrderOpts = { skipOnOrder?: boolean; note?: string };
+const etaText = (ymd: string | null | undefined) => {
+  if (!ymd) return "";
+  const t = new Date(`${ymd}T12:00:00Z`);
+  return Number.isNaN(t.getTime()) ? ymd : t.toLocaleDateString("en-ZA", { day: "numeric", month: "short", year: "numeric", timeZone: "Africa/Johannesburg" });
+};
 export async function salesOrderFor(db: SupabaseClient, cfg: any, orderId: number, log: Logger, po: string | null = null,
-                                    salesperson: string | null = null): Promise<SalesOrderRef> {
+                                    salesperson: string | null = null, opts: SalesOrderOpts = {}): Promise<SalesOrderRef> {
   const { data: o, error } = await db.from("sales_order")
     .select("id, number, tax_rate_bps, zoho_salesorder_id, zoho_salesorder_number, " +
             "customer:customer_id(id, code, name, email, vat_no, zoho_contact_id), " +
-            "lines:sales_line(qty, unit_price_minor, rebate_pct, deleted_at, part:part_id(id, sku, name))")
+            "lines:sales_line(qty, unit_price_minor, rebate_pct, deleted_at, on_order, po_eta, part:part_id(id, sku, name))")
     .eq("id", orderId).single();
   if (error || !o) throw new Blocked(`Order ${orderId} not found`);
   if (o.zoho_salesorder_id) {
@@ -378,7 +386,7 @@ export async function salesOrderFor(db: SupabaseClient, cfg: any, orderId: numbe
              status: st, created: false };
   }
   // deno-lint-ignore no-explicit-any
-  const lines = ((o.lines ?? []) as any[]).filter((l) => !l.deleted_at);
+  const lines = ((o.lines ?? []) as any[]).filter((l) => !l.deleted_at && !(opts.skipOnOrder && l.on_order));
   if (!lines.length) throw new Blocked(`${o.number} has no lines`);
   const ids = await itemIds(db, lines.map((l) => l.part.id));
   const missing = lines.filter((l) => !ids.get(l.part.id)).map((l) => l.part.sku);
@@ -399,10 +407,11 @@ export async function salesOrderFor(db: SupabaseClient, cfg: any, orderId: numbe
     ...(salesperson ? { salesperson_name: salesperson } : {}),
     line_items: lines.map((l) => ({
       item_id: ids.get(l.part.id), quantity: l.qty, rate: rands(l.unit_price_minor),
-      description: l.part.sku, ...(taxId ? { tax_id: taxId } : {}), ...rebateDiscount(l.rebate_pct),
+      description: l.on_order ? `${l.part.sku} · on order${l.po_eta ? `, expected ${etaText(l.po_eta)}` : ""}` : l.part.sku,
+      ...(taxId ? { tax_id: taxId } : {}), ...rebateDiscount(l.rebate_pct),
       ...(mt.tags.get(ids.get(l.part.id)!) ? { tags: mt.tags.get(ids.get(l.part.id)!) } : {}),
     })),
-    notes: `Accepted in CTP Core · order ${o.number}${po ? ` · customer PO ${po}` : ""}`,
+    notes: `Accepted in CTP Core · order ${o.number}${po ? ` · customer PO ${po}` : ""}${opts.note ? ` · ${opts.note}` : ""}`,
   });
   const so = b.salesorder;
   // Ian, 21 Oct: sales orders are CONFIRMED (open) so they commit stock in Zoho.

@@ -128,12 +128,16 @@ const sales_order = new Table({
   // 0063: Zoho leads the quote — its total, expiry, emailed flag
   zoho_estimate_total_minor: column.integer, zoho_estimate_expiry: column.text, zoho_estimate_emailed: column.integer,
   zoho_estimate_synced_at: column.text,
+  // 0099: the quote a back order was split from (on-order lines, accepted with it)
+  back_order_of: column.text,
 }, { indexes: { customer: ["customer_id"], status: ["status"] } });
 
 const sales_line = new Table({
   order_id: column.text, part_id: column.text, qty: column.integer,
   unit_price_minor: column.integer, tier_at_add: column.text,
   line_net_minor: column.integer,   // FLOW-3: after Zoho's line discount (0059); staff stream only
+  // 0099: an on-order line (the shortfall over Zoho's stock, priced by hand); po_number staff only
+  on_order: column.integer, po_number: column.text, po_eta: column.text,
   // Denormalised from the order by a database trigger (0021). Sync rules
   // cannot join, so without this a client's own lines are unreachable —
   // sales_line knows its order, and the customer is one hop past that.
