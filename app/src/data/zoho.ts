@@ -113,9 +113,9 @@ export async function recreateEstimate(orderId: number): Promise<{ ok: boolean; 
 
 // ── 0065: Zoho Inventory holds the stock (rehearsal switch) ────────────────
 type InvResult<T> = { ok: true; data: T } | { ok: false; message: string };
-async function inv<T>(body: Record<string, unknown>): Promise<InvResult<T>> {
+async function inv<T>(body: Record<string, unknown>, fn = "zoho-push"): Promise<InvResult<T>> {
   try {
-    const { data, error } = await supabase.functions.invoke("zoho-push", { body });
+    const { data, error } = await supabase.functions.invoke(fn, { body });
     let d = data as (T & { ok?: boolean; error?: string }) | null;
     if (error) {
       try { d = await (error as { context?: Response }).context?.json(); } catch { /* keep */ }
@@ -133,10 +133,24 @@ export type AdjustResult = { sku: string; counted: number; zoho_before: number; 
 export const countToZoho = (partId: number, counted: number, reason = "Stock count") =>
   inv<AdjustResult>({ action: "adjust", part_id: partId, counted, reason });
 export type OpenPO = { purchaseorder_id: string; number: string; vendor: string; date: string; status: string; reference: string | null;
+  back_order?: boolean; eta?: string | null;
   lines: { line_item_id: string; item_id: string; sku: string; name: string; ordered: number; received: number }[] };
 export const openPurchaseOrders = () => inv<{ purchaseorders: OpenPO[] }>({ action: "receive_list" });
 export const receiveInZoho = (purchaseorderId: string, lines: { line_item_id: string; quantity: number }[], notes?: string) =>
   inv<{ receive_number: string; purchaseorder: string }>({ action: "receive", purchaseorder_id: purchaseorderId, lines, notes });
+/** 0097: re-read the open Zoho POs now (the 10-min read-back does it anyway). */
+export const refreshBackOrders = () => inv<{ purchaseorders?: string[]; lines?: number; not_linked_to_a_part?: number; skipped?: string }>({ action: "sync", force: true }, "zoho-back-orders");
+/** 0097/0098: one part's open Zoho PO quantities. qty_incoming = In transit (POs ticked "Back order");
+ *  qty_on_po = On purchase order (every unreceived PO line, In transit included). */
+export type BackOrder = { qty_incoming: number; qty_on_po: number; next_eta: string | null; purchaseorders: string | null;
+  all_purchaseorders: string | null; synced_at: string };
+/** Staff only, online. null = nothing on order for this part. */
+export async function backOrderFor(partId: number): Promise<BackOrder | null> {
+  const { data, error } = await supabase.from("back_order_part")
+    .select("qty_incoming,qty_on_po,next_eta,purchaseorders,all_purchaseorders,synced_at").eq("part_id", partId).maybeSingle();
+  if (error || !data) return null;
+  return { ...data, qty_incoming: Number(data.qty_incoming), qty_on_po: Number(data.qty_on_po) } as BackOrder;
+}
 export const refreshZohoStock = () => inv<{ items_read?: number; parts_changed?: number; skipped?: string }>({ action: "stock_sync", force: true });
 
 /** 0059: admin releases an order for fulfilment before accounts have sent the

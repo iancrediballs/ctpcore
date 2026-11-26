@@ -285,6 +285,61 @@ export async function inAccrualMode(db: SupabaseClient, zohoContactId: string): 
   return cr?.mode === "accrual";
 }
 
+// ── 26 Nov (Ian): reporting tag "Sold for model" on every sales line ─────────
+// The tag (Books id below, options JH6 / JH7) records which truck a sale was for, so Zoho's
+// sales reports can be split by model. The option comes from the item's Model field (cf_model).
+// An item whose Model is not exactly one tag option (blank, or "JH6/JH7" for a dual-fit part)
+// gets no tag and is listed in `untagged`. A failure here never blocks a sale: it is reported.
+export const MODEL_TAG_ID = "1429405000000000333";
+export type LineTag = { tag_id: string; tag_option_id: string };
+let modelOptCache: Map<string, string> | null = null;
+/** The tag's active options by name (upper case) → tag_option_id, read once per instance (Books API). */
+export async function modelTagOptions(): Promise<Map<string, string>> {
+  if (modelOptCache) return modelOptCache;
+  const host = DC === "ca" ? "https://www.zohoapis.ca" : `https://www.zohoapis.${DC}`;
+  // Verified 26 Nov: GET /reportingtags/{id} carries no options; this call lists them (option_id, option_name).
+  const r = await fetch(`${host}/books/v3/reportingtags/options?tag_id=${MODEL_TAG_ID}&organization_id=${ORG}`,
+    { headers: { Authorization: `Zoho-oauthtoken ${await zohoToken()}` } });
+  const b = await r.json().catch(() => ({}));
+  if (!r.ok || (b.code !== undefined && b.code !== 0)) throw new Error(`Zoho reporting tag ${MODEL_TAG_ID} options: ${r.status} ${b.message ?? ""}`);
+  const m = new Map<string, string>();
+  // deno-lint-ignore no-explicit-any
+  for (const o of (b.options ?? []) as any[]) {
+    const name = String(o.option_name ?? "").trim().toUpperCase();
+    if (name && o.option_id && o.is_active !== false) m.set(name, String(o.option_id));
+  }
+  modelOptCache = m;
+  return m;
+}
+/** Item id → its line tags, from each item's Model field (one Inventory read per distinct item). */
+export async function modelTagsFor(zohoItemIds: string[]):
+    Promise<{ tags: Map<string, LineTag[]>; untagged: string[]; error?: string }> {
+  const tags = new Map<string, LineTag[]>(), untagged: string[] = [];
+  try {
+    const opts = await modelTagOptions();
+    for (const id of [...new Set(zohoItemIds.map(String))]) {
+      const it = (await zohoInv("GET", `/items/${id}`)).item ?? {};
+      const model = String(it.custom_field_hash?.cf_model ??
+        // deno-lint-ignore no-explicit-any
+        ((it.custom_fields ?? []) as any[]).find((c) => c.api_name === "cf_model")?.value ?? "").trim().toUpperCase();
+      const opt = opts.get(model);
+      if (opt) tags.set(id, [{ tag_id: MODEL_TAG_ID, tag_option_id: opt }]);
+      else untagged.push(`${it.sku || id} (Model "${model || "blank"}")`);
+    }
+    return { tags, untagged };
+  } catch (e) {
+    return { tags, untagged, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+/** Line tags as Zoho returns them → as Zoho takes them back (for a PUT that resends lines). */
+// deno-lint-ignore no-explicit-any
+export const lineTagsBack = (l: any) => {
+  // deno-lint-ignore no-explicit-any
+  const t = ((l?.tags ?? []) as any[]).filter((x) => x?.tag_id && x?.tag_option_id)
+    .map((x) => ({ tag_id: String(x.tag_id), tag_option_id: String(x.tag_option_id) }));
+  return t.length ? { tags: t } : {};
+};
+
 // ── sales orders (accept-quote) ──────────────────────────────────────────────
 export type SalesOrderRef = { salesorder_id: string; salesorder_number: string; status: string; created: boolean; warning?: string };
 
@@ -334,6 +389,7 @@ export async function salesOrderFor(db: SupabaseClient, cfg: any, orderId: numbe
   const { data: pbc } = await db.from("customer").select("zoho_pricebook_id").eq("zoho_contact_id", customerId).limit(1).maybeSingle();
   // 0092: an accrual-rebate customer is invoiced at full list — no price book on the SO, even if the contact has one
   const pricebookId = (await inAccrualMode(db, customerId)) ? null : pbc?.zoho_pricebook_id ?? null;
+  const mt = await modelTagsFor(lines.map((l) => ids.get(l.part.id)!));
   const b = await zoho("POST", "/salesorders", {}, {
     customer_id: customerId, reference_number: po ?? o.number, date: jhbDate(new Date().toISOString()),
     is_inclusive_tax: false,
@@ -344,6 +400,7 @@ export async function salesOrderFor(db: SupabaseClient, cfg: any, orderId: numbe
     line_items: lines.map((l) => ({
       item_id: ids.get(l.part.id), quantity: l.qty, rate: rands(l.unit_price_minor),
       description: l.part.sku, ...(taxId ? { tax_id: taxId } : {}), ...rebateDiscount(l.rebate_pct),
+      ...(mt.tags.get(ids.get(l.part.id)!) ? { tags: mt.tags.get(ids.get(l.part.id)!) } : {}),
     })),
     notes: `Accepted in CTP Core · order ${o.number}${po ? ` · customer PO ${po}` : ""}`,
   });
@@ -363,6 +420,10 @@ export async function salesOrderFor(db: SupabaseClient, cfg: any, orderId: numbe
     }
   }
   if (!warning && st !== "open") warning = `Zoho shows sales order ${so.salesorder_number} as "${st}", not confirmed.`;
+  if (mt.error || mt.untagged.length) {
+    await log({ doc_type: "salesorder", ctp_id: orderId, ctp_ref: o.number, action: "model_tag", ok: false, zoho_id: String(so.salesorder_id),
+                message: `${so.salesorder_number}: "Sold for model" not set on ${mt.error ? "any line (" + mt.error + ")" : mt.untagged.join(", ")} — set it in Zoho` });
+  }
   await log({ doc_type: "salesorder", ctp_id: orderId, ctp_ref: o.number, action: "create", ok: !warning,
               zoho_id: String(so.salesorder_id), message: `${o.number} → Zoho sales order ${so.salesorder_number} (${st})${warning ? " — " + warning : ""}` });
   return { salesorder_id: String(so.salesorder_id), salesorder_number: String(so.salesorder_number), status: st, created: true, warning };
