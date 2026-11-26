@@ -3308,8 +3308,8 @@ const parseRand = (s: string): number => {
           </div>
 
           {/* 0098: stock the way staff read it in Multicat — Available (reserved excluded), Reserved,
-              In transit (Zoho POs ticked "Back order", paid and on the way), On purchase order (every
-              open PO). Multicat's "On back order" means customer orders short of stock: not this. */}
+              On purchase order (every unreceived line of every open Zoho PO). Ian, 26 Nov: no separate
+              "In transit" tile. Multicat's "On back order" means customer orders short of stock: not this. */}
           {!isClient && (d.zoho_stock || backOrder) && (() => {
             const zs = d.zoho_stock;
             const tile = (k: string, sub: string, v: number | null | undefined, cls = "") => (
@@ -3321,24 +3321,15 @@ const parseRand = (s: string): number => {
             );
             return (
               <div className="mb-rows" style={{ margin: "0 16px 10px" }}>
-                <div className="mb-stk">
+                <div className="mb-stk c3">
                   {tile("Available", "reserved stock excluded", zs?.available, " g")}
                   {tile("Reserved", "on sales orders", zs?.committed)}
-                  {tile("In transit", "paid, on its way", backOrder?.qty_incoming ?? 0, " a")}
-                  {tile("On purchase order", "inbound", backOrder?.qty_on_po ?? 0)}
+                  {tile("On purchase order", "on its way", backOrder?.qty_on_po ?? 0, " a")}
                 </div>
-                {backOrder && backOrder.qty_incoming > 0 && (
-                  <div className="mb-row">
-                    <span className="mb-rk" style={{ color: "var(--amber, #f5a524)" }}>In transit</span>
-                    <span className="mb-rv"><b>{backOrder.qty_incoming}</b>{backOrder.next_eta ? ` · ETA ${fmtEta(backOrder.next_eta)}` : " · no ETA set"}
-                      <div className="mb-csku">{backOrder.purchaseorders}</div>
-                    </span>
-                  </div>
-                )}
-                {backOrder && backOrder.qty_on_po > backOrder.qty_incoming && (
+                {backOrder && backOrder.qty_on_po > 0 && (
                   <div className="mb-row">
                     <span className="mb-rk">On PO</span>
-                    <span className="mb-rv">{backOrder.qty_on_po - backOrder.qty_incoming} more on order
+                    <span className="mb-rv"><b>{backOrder.qty_on_po}</b> on order{backOrder.next_eta ? ` · ETA ${fmtEta(backOrder.next_eta)}` : ""}
                       <div className="mb-csku">{backOrder.all_purchaseorders}</div>
                     </span>
                   </div>
