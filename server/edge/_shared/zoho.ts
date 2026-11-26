@@ -297,17 +297,16 @@ let modelOptCache: Map<string, string> | null = null;
 export async function modelTagOptions(): Promise<Map<string, string>> {
   if (modelOptCache) return modelOptCache;
   const host = DC === "ca" ? "https://www.zohoapis.ca" : `https://www.zohoapis.${DC}`;
-  const r = await fetch(`${host}/books/v3/reportingtags/${MODEL_TAG_ID}?organization_id=${ORG}`,
+  // Verified 26 Nov: GET /reportingtags/{id} carries no options; this call lists them (option_id, option_name).
+  const r = await fetch(`${host}/books/v3/reportingtags/options?tag_id=${MODEL_TAG_ID}&organization_id=${ORG}`,
     { headers: { Authorization: `Zoho-oauthtoken ${await zohoToken()}` } });
   const b = await r.json().catch(() => ({}));
-  if (!r.ok || (b.code !== undefined && b.code !== 0)) throw new Error(`Zoho reporting tag ${MODEL_TAG_ID}: ${r.status} ${b.message ?? ""}`);
-  const tag = b.reporting_tag ?? b.tag ?? {};
+  if (!r.ok || (b.code !== undefined && b.code !== 0)) throw new Error(`Zoho reporting tag ${MODEL_TAG_ID} options: ${r.status} ${b.message ?? ""}`);
   const m = new Map<string, string>();
   // deno-lint-ignore no-explicit-any
-  for (const o of (tag.tag_options ?? tag.options ?? []) as any[]) {
-    const name = String(o.tag_option_name ?? o.option_name ?? "").trim().toUpperCase();
-    const id = String(o.tag_option_id ?? o.option_id ?? "");
-    if (name && id && o.is_active !== false && String(o.status ?? "active") === "active") m.set(name, id);
+  for (const o of (b.options ?? []) as any[]) {
+    const name = String(o.option_name ?? "").trim().toUpperCase();
+    if (name && o.option_id && o.is_active !== false) m.set(name, String(o.option_id));
   }
   modelOptCache = m;
   return m;
@@ -320,7 +319,9 @@ export async function modelTagsFor(zohoItemIds: string[]):
     const opts = await modelTagOptions();
     for (const id of [...new Set(zohoItemIds.map(String))]) {
       const it = (await zohoInv("GET", `/items/${id}`)).item ?? {};
-      const model = String(it.custom_field_hash?.cf_model ?? "").trim().toUpperCase();
+      const model = String(it.custom_field_hash?.cf_model ??
+        // deno-lint-ignore no-explicit-any
+        ((it.custom_fields ?? []) as any[]).find((c) => c.api_name === "cf_model")?.value ?? "").trim().toUpperCase();
       const opt = opts.get(model);
       if (opt) tags.set(id, [{ tag_id: MODEL_TAG_ID, tag_option_id: opt }]);
       else untagged.push(`${it.sku || id} (Model "${model || "blank"}")`);
