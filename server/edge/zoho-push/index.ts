@@ -50,6 +50,8 @@
 //   { "action": "rebate_book", "scheme": "<rebate_scheme.name>", "apply"?: true }   ADMIN (0069): recompute the
 //                          scheme's rebate prices from Zoho's LIVE sales price + cost with its rule, and (apply)
 //                          create / update that one per-item price book. Never changes item rates or customers.
+//   { "action": "model_tag_test", "sku"?: "CAB002" }   ADMIN / server: TEST sales order with the item's
+//                          "Sold for model" tag, read back, deleted (26 Nov)
 //   { "action": "test" }   manager/admin: create a clearly marked TEST draft
 //                          invoice + bill against TEST contacts, read them back,
 //                          then delete all four; returns what was created.
@@ -62,7 +64,7 @@ import { createClient, type SupabaseClient } from "jsr:@supabase/supabase-js@2";
 
 import { env, zohoInit, zohoMissing, Blocked, zoho, rands, jhbDate, findByReference, resolveContact, itemIds, taxIdFor,
          rebateDiscount, linkToSalesOrder, salesOrderFor, deleteSalesOrder, estimateFor, estimatePayload, findLiveEstimate,
-         zohoInv, salesOrderFromEstimate, type Logger } from "../_shared/zoho.ts";
+         zohoInv, salesOrderFromEstimate, modelTagsFor, modelTagOptions, lineTagsBack, MODEL_TAG_ID, type Logger } from "../_shared/zoho.ts";
 import { stillToReceive, isBackOrder, lineReceived } from "../zoho-back-orders/sync.ts";
 import { rebateProbe, rebateSetup, rebateAccount, rebateAccrue, rebateStatement, rebateOffset, rebateVoid, unassignPricebook } from "./rebate.ts";
 
@@ -111,9 +113,16 @@ async function pushInvoice(db: SupabaseClient, cfg: any, id: number, log: Logger
       const missing = lines.filter((l: { part: { id: number } }) => !ids.get(l.part.id)).map((l: { part: { sku: string } }) => l.part.sku);
       if (missing.length) throw new Blocked(`Not linked to a Zoho item: ${missing.join(", ")} — run Settings → Zoho → Check Zoho`);
       const taxId = await taxIdFor(o.tax_rate_bps ?? 0, cfg.tax_id);
+      // 26 Nov: "Sold for model" on each line (an invoice made from a sales order takes the SO's own tags)
+      const mt = o.zoho_salesorder_id ? null : await modelTagsFor(lines.map((l: { part: { id: number } }) => ids.get(l.part.id)!));
+      if (mt && (mt.error || mt.untagged.length)) {
+        await log({ doc_type: "invoice", ctp_id: id, ctp_ref: o.invoice_no, action: "model_tag", ok: false,
+                    message: `${o.number}: "Sold for model" not set on ${mt.error ? "any line (" + mt.error + ")" : mt.untagged.join(", ")} — set it in Zoho` });
+      }
       let lineItems = lines.map((l: { qty: number; unit_price_minor: number; rebate_pct: number | null; part: { id: number; sku: string; name: string } }) => ({
         item_id: ids.get(l.part.id), quantity: l.qty, rate: rands(l.unit_price_minor),
         description: l.part.sku, ...(taxId ? { tax_id: taxId } : {}), ...rebateDiscount(l.rebate_pct),
+        ...(mt?.tags.get(ids.get(l.part.id)!) ? { tags: mt.tags.get(ids.get(l.part.id)!) } : {}),
       }));
       // Accepted with a Zoho sales order: the invoice is converted FROM it
       // (lines carry salesorder_item_id), for the sales order's own contact.
@@ -490,6 +499,7 @@ export async function carryPo(inv: any, po: string | null, orderId: number | nul
     quantity: l.quantity, rate: l.rate, unit: l.unit, discount: l.discount, tax_id: l.tax_id,
     account_id: l.account_id, location_id: l.location_id, item_order: l.item_order,
     ...(l.salesorder_item_id ? { salesorder_item_id: l.salesorder_item_id } : {}),
+    ...lineTagsBack(l),   // 26 Nov: keep each line's "Sold for model" tag
   }));
   try {
     await zoho("PUT", `/invoices/${inv.invoice_id}`, {}, { customer_id: inv.customer_id, reference_number: want, line_items: lines });
@@ -1237,7 +1247,7 @@ Deno.serve(async (req: Request) => {
   // invoice issued before go-live does not report a failure that isn't one.
   // (Status read-back is allowed while sending is off: documents already in
   // Zoho still change status there.)
-  if (!["test", "status", "so_sync", "cancel", "hook", "stock_sync", "receive_list", "rebate_book", "assign_pricebook", "pricebook_sync", "catalogue_set",
+  if (!["test", "model_tag_test", "status", "so_sync", "cancel", "hook", "stock_sync", "receive_list", "rebate_book", "assign_pricebook", "pricebook_sync", "catalogue_set",
         "rebate_probe", "rebate_setup", "rebate_account", "rebate_accrue", "rebate_statement", "rebate_offset", "rebate_void", "rebate_unassign_pricebook"].includes(body.action) && (!cfg?.push_enabled || !cfg?.push_from)) {
     return json({ ok: true, skipped: "Sending to Zoho is off (Settings → Zoho). Nothing was sent." });
   }
@@ -1413,6 +1423,37 @@ Deno.serve(async (req: Request) => {
         await db.from("sales_order").update({ zoho_estimate_error: msg }).eq("id", id);
         return json({ ok: false, error: msg }, e instanceof Blocked ? 409 : 502);
       }
+    }
+    // 26 Nov: proves "Sold for model" lands on a sales order line. Creates a TEST sales order for the
+    // TESTACC contact with one item tagged from its Model, reads the line's tags back, then deletes it.
+    if (body.action === "model_tag_test") {
+      if (who.actor && !who.admin) return json({ error: "Only an admin can run the model tag test" }, 403);
+      const opts = await modelTagOptions();
+      const { data: link } = await db.from("zoho_item").select("zoho_item_id, sku").eq("sku", String(body.sku ?? "CAB002")).eq("status", "active").maybeSingle();
+      const { data: tc } = await db.from("customer").select("zoho_contact_id").eq("code", "TESTACC").maybeSingle();
+      if (!link || !tc?.zoho_contact_id) return json({ ok: false, error: "no test item/contact", options: Object.fromEntries(opts) }, 412);
+      const mt = await modelTagsFor([link.zoho_item_id]);
+      const out: Record<string, unknown> = { options: Object.fromEntries(opts), sku: link.sku, sent_tags: mt.tags.get(link.zoho_item_id) ?? null,
+                                             untagged: mt.untagged, error: mt.error ?? null };
+      if (!mt.tags.get(link.zoho_item_id)) return json({ ok: false, ...out });
+      const stamp = new Date().toISOString().replace(/[-:T]/g, "").slice(0, 12);
+      const so = (await zoho("POST", "/salesorders", {}, { customer_id: tc.zoho_contact_id, reference_number: `CTP-TEST-SO-${stamp}`,
+        line_items: [{ item_id: link.zoho_item_id, quantity: 1, rate: 1, description: `TEST ${link.sku}`, tags: mt.tags.get(link.zoho_item_id) }],
+        notes: "CTP CORE TEST - DELETE ME" })).salesorder;
+      out.created = so.salesorder_number;
+      try {
+        const back = (await zoho("GET", `/salesorders/${so.salesorder_id}`)).salesorder;
+        // deno-lint-ignore no-explicit-any
+        out.read_back_tags = ((back.line_items ?? []) as any[]).map((l) => l.tags ?? null);
+      } finally {
+        try { await zoho("DELETE", `/salesorders/${so.salesorder_id}`); out.removed = "deleted"; }
+        catch (e) { out.removed = "FAILED: " + (e instanceof Error ? e.message : String(e)); }
+      }
+      // deno-lint-ignore no-explicit-any
+      const got = ((out.read_back_tags as any[])?.[0] ?? []) as any[];
+      const want = mt.tags.get(link.zoho_item_id)![0];
+      out.tag_on_line = got.some((t) => String(t.tag_id) === MODEL_TAG_ID && String(t.tag_option_id) === want.tag_option_id);
+      return json({ ok: out.tag_on_line === true && out.removed === "deleted", ...out });
     }
     if (body.action === "test") {
       if (!who.manager && who.actor) return json({ error: "Only a manager or admin can run the Zoho test" }, 403);
