@@ -1233,3 +1233,8 @@ Full write-up: `docs/READINESS_REPORT.md`; the demo walkthrough is `docs/DEMO_SC
 - 0097 was run by Ian in the SQL editor (not in schema_migrations).
 - zoho-push (repo) now imports the helpers for the Receive list's back-order badge and billed-not-received POs.
   **Not deployed yet**: live zoho-push is v42 = main without PR #1's carryPo, so deploy it deliberately with both.
+
+### 26 Nov (later): 0098 + Multicat-style stock tiles
+- 0098 run by Ian in the SQL editor (not in schema_migrations): zoho_back_order_line.back_order; back_order_part gains qty_on_po and all_purchaseorders.
+- zoho-back-orders v2 deployed: stores every unreceived PO line, flagged back_order. Forced sync 26 Nov 07:05 UTC: CAB002 In transit 4 (PO-00005), On purchase order 8 (PO-00003 + PO-00005).
+- App (PR #4, v56): staff part sheet tiles Available / Reserved / In transit / On purchase order; "Back order" renamed "In transit".
