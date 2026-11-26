@@ -1222,3 +1222,14 @@ Full write-up: `docs/READINESS_REPORT.md`; the demo walkthrough is `docs/DEMO_SC
 - Plan + CTP reset SQL draft (not run): `docs/cutover/2026-10-26/`.
 - 70 Zoho docs to delete (39 real, 31 test). Journals/expenses unreadable on the token.
 - Blocked here: edge deploys and live DDL need Ian's permission (0091 not applied; no cutover_delete action).
+
+## 26 Nov — Back orders from Zoho POs (0097, PWA v55)
+- Michelle ticks **Back order** (PO custom field `cf_back_order`) on a Zoho PO; its Expected Delivery Date is the ETA.
+  Item field Model (`cf_model`) options: JH6, JH7, JH6/JH7 (C7 kept, ask Michelle what it is).
+- New edge function **zoho-back-orders** (`sync` for staff / server token, `hook` from zoho-hook): every unreceived
+  line of a ticked PO → `zoho_back_order_line` (replaced in full); `back_order_part` = per part qty incoming + next ETA.
+  Cron job `zoho-back-orders` every 10 min (minutes 5, 15, …). zoho-hook forwards purchaseorder / bill /
+  purchasereceive to it (deployed v2). Deployed 26 Nov via the Supabase MCP; tested on PO-00005: CAB002, 4 incoming, ETA 19 Dec.
+- 0097 was run by Ian in the SQL editor (not in schema_migrations).
+- zoho-push (repo) now imports the helpers for the Receive list's back-order badge and billed-not-received POs.
+  **Not deployed yet**: live zoho-push is v42 = main without PR #1's carryPo, so deploy it deliberately with both.

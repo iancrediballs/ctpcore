@@ -113,9 +113,9 @@ export async function recreateEstimate(orderId: number): Promise<{ ok: boolean; 
 
 // ── 0065: Zoho Inventory holds the stock (rehearsal switch) ────────────────
 type InvResult<T> = { ok: true; data: T } | { ok: false; message: string };
-async function inv<T>(body: Record<string, unknown>): Promise<InvResult<T>> {
+async function inv<T>(body: Record<string, unknown>, fn = "zoho-push"): Promise<InvResult<T>> {
   try {
-    const { data, error } = await supabase.functions.invoke("zoho-push", { body });
+    const { data, error } = await supabase.functions.invoke(fn, { body });
     let d = data as (T & { ok?: boolean; error?: string }) | null;
     if (error) {
       try { d = await (error as { context?: Response }).context?.json(); } catch { /* keep */ }
@@ -139,7 +139,7 @@ export const openPurchaseOrders = () => inv<{ purchaseorders: OpenPO[] }>({ acti
 export const receiveInZoho = (purchaseorderId: string, lines: { line_item_id: string; quantity: number }[], notes?: string) =>
   inv<{ receive_number: string; purchaseorder: string }>({ action: "receive", purchaseorder_id: purchaseorderId, lines, notes });
 /** 0097: re-read Zoho POs ticked "Back order" now (the 10-min read-back does it anyway). */
-export const refreshBackOrders = () => inv<{ purchaseorders?: string[]; lines?: number; not_linked_to_a_part?: number; skipped?: string }>({ action: "back_order_sync", force: true });
+export const refreshBackOrders = () => inv<{ purchaseorders?: string[]; lines?: number; not_linked_to_a_part?: number; skipped?: string }>({ action: "sync", force: true }, "zoho-back-orders");
 export type BackOrder = { qty_incoming: number; next_eta: string | null; purchaseorders: string; synced_at: string };
 /** 0097: what is on its way for one part (staff only, online). null = nothing incoming. */
 export async function backOrderFor(partId: number): Promise<BackOrder | null> {
