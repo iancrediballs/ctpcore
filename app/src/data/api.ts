@@ -131,6 +131,10 @@ export const quotePriceCheck = <T>(
   lines: { line_id: number; unit_price_minor: number }[],
 ) => call<T>("quote_price_check", { orderId, lines });
 /** Fill every line from the current list price. */
+/** 0099: staff split a short line (in stock + on order), or undo it. */
+export type SplitResult = { number: string; sku: string; in_stock_qty: number; on_order_qty: number; po_number: string | null; po_eta: string | null };
+export const splitQuoteLine = (lineId: number) => call<SplitResult>("split_quote_line", { lineId });
+export const unsplitQuoteLine = (lineId: number) => call<{ number: string; sku: string }>("unsplit_quote_line", { lineId });
 export const fillQuoteFromList = <T>(orderId: number) =>
   call<T>("fill_quote_from_list", { orderId });
 
@@ -170,7 +174,9 @@ export const quoteAcceptCheck = (orderId: number) =>
 /** Accept a quote: raises the sales order in Zoho Books AND reserves the stock,
  *  both or neither (the accept-quote edge function, 0047). */
 export type AcceptResult = { ok: true; already: boolean; number: string; zoho_salesorder_number: string; reserved_lines: number;
-  po_number?: string; credit_warning?: string | null; attach_warning?: string | null };
+  po_number?: string; credit_warning?: string | null; attach_warning?: string | null;
+  // 0099: the on-order lines, accepted as their own back order with their own Zoho sales order
+  back_order?: { order_id: number; number: string; zoho_salesorder_number: string | null; ok: boolean; message?: string } | null };
 /** 0070: the customer's PO goes with the acceptance (number required; file per setting). */
 export type AcceptPo = { po_number: string; po_file?: string | null; po_file_name?: string | null };
 export const acceptQuote = (orderId: number, po: AcceptPo) => call<AcceptResult>("accept_quote", { orderId, po });

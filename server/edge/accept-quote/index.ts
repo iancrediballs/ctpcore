@@ -1,5 +1,11 @@
 // CTP Core — a customer accepts a quote.
 //
+// 2026-11-26 (0099, Ian): a quote may carry ON-ORDER lines (the shortfall over Zoho's available
+// stock, priced by hand). Accepting a MIXED quote raises the Zoho SO from the in-stock lines only;
+// accept_quote() moves the on-order lines to a back order (BO-<no.>) in the same transaction; then
+// the back order gets its own confirmed Zoho SO (finishBackOrder). If that last step fails the
+// back order stays an open quote, ready to accept again, and the in-stock order stands.
+//
 // 2026-10-24 (0070, docs/12 §5): the customer's PO. Accepting needs a PO number, and a PO file
 // unless zoho_config says otherwise (customers: required by default; on behalf: optional). The
 // app uploads the file to po-docs/<customer id>/<order id>/… first; this function checks it is
@@ -134,9 +140,59 @@ Deno.serve(async (req: Request) => {
                   credit: c?.over ? { ...c, ...creditText(c) } : null });
   }
 
-  // already done (a retry after the response was lost)
+  const log: Logger = async (r) => { await db.from("zoho_push_log").insert({ ...r, actor: uid }); };
+
+  // 0099: the back order split off this quote gets its own confirmed Zoho sales order (and the PO file)
+  type BackOrderResult = { order_id: number; number: string; zoho_salesorder_number: string | null; ok: boolean; message?: string };
+  const finishBackOrder = async (childId: number, poNo: string | null, blob: Blob | null, blobName: string | null): Promise<BackOrderResult> => {
+    const { data: c } = await db.from("sales_order").select("id, number, status, zoho_salesorder_number").eq("id", childId).maybeSingle();
+    if (!c) return { order_id: childId, number: "", zoho_salesorder_number: null, ok: false, message: "back order not found" };
+    if (c.status !== "quote") return { order_id: c.id, number: c.number, zoho_salesorder_number: c.zoho_salesorder_number, ok: true };
+    const { data: ls } = await db.from("sales_line").select("po_eta").eq("order_id", childId).is("deleted_at", null);
+    const etas = (ls ?? []).map((l) => String(l.po_eta ?? "")).filter(Boolean).sort();
+    let bso: { salesorder_id: string; salesorder_number: string; status: string; created: boolean; warning?: string } | null = null;
+    try {
+      if (live) {
+        bso = await salesOrderFor(db, cfg, childId, log, poNo, await salespersonFor(db, orderId, onBehalf ? uid : null),
+          { note: `back order (from quote ${o.number}): parts on order${etas.length ? `, expected from ${etas[0]}` : ""}` });
+      }
+      const { error: bErr } = await db.rpc("accept_back_order", { p_order_id: childId,
+        p_zoho_salesorder_id: bso?.salesorder_id ?? null, p_zoho_salesorder_number: bso?.salesorder_number ?? null });
+      if (bErr) {
+        if (bso?.created) { try { await deleteSalesOrder(bso.salesorder_id); } catch { /* logged below as an orphan */ } }
+        throw new Error(bErr.message + (bso?.created ? ` (Zoho ${bso.salesorder_number} deleted again; if it is still there, delete it by hand)` : ""));
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      await log({ doc_type: "salesorder", ctp_id: childId, ctp_ref: c.number, action: e instanceof Blocked ? "blocked" : "error", ok: false,
+                  message: `Back order ${c.number} (from ${o.number}) is still an open quote: ${msg}` });
+      await db.from("sales_order").update({ zoho_so_error: msg }).eq("id", childId);
+      return { order_id: c.id, number: c.number, zoho_salesorder_number: null, ok: false, message: msg };
+    }
+    if (bso) {
+      await db.from("sales_order").update({ zoho_so_status: bso.status === "existing" ? undefined : bso.status,
+        zoho_so_status_at: new Date().toISOString(), zoho_so_error: bso.warning ?? null }).eq("id", childId);
+      if (blob) {
+        try { await attachToSalesOrder(bso.salesorder_id, blob, blobName ?? "PO.pdf"); }
+        catch (e) {
+          await log({ doc_type: "salesorder", ctp_id: childId, ctp_ref: c.number, action: "error", ok: false, zoho_id: bso.salesorder_id,
+                      message: `PO file not attached to back order ${bso.salesorder_number}: ${e instanceof Error ? e.message : String(e)}` });
+        }
+      }
+    }
+    return { order_id: c.id, number: c.number, zoho_salesorder_number: bso?.salesorder_number ?? null, ok: true };
+  };
+
+  // already done (a retry after the response was lost) — 0099: finish a back order left open
   if (o.status === "confirmed") {
-    return json({ ok: true, already: true, order_id: o.id, number: o.number, zoho_salesorder_number: o.zoho_salesorder_number });
+    const { data: open } = await db.from("sales_order").select("id").eq("back_order_of", orderId).eq("status", "quote").is("deleted_at", null).limit(1).maybeSingle();
+    let back_order: BackOrderResult | null = null;
+    if (open) {
+      const { data: full } = await db.from("sales_order").select("po_number").eq("id", orderId).maybeSingle();
+      if (live) await zohoInit(db);
+      back_order = await finishBackOrder(Number(open.id), full?.po_number ?? null, null, null);
+    }
+    return json({ ok: true, already: true, order_id: o.id, number: o.number, zoho_salesorder_number: o.zoho_salesorder_number, back_order });
   }
 
   // ── 2. every blocker, by name — before any API call ──────────────────────
@@ -170,7 +226,9 @@ Deno.serve(async (req: Request) => {
     credit_warning: creditMsg?.staff ?? null }).eq("id", orderId);
 
   // ── 3. Zoho, only from go-live on ─────────────────────────────────────────
-  const log: Logger = async (r) => { await db.from("zoho_push_log").insert({ ...r, actor: uid }); };
+  // 0099: a mixed quote (in-stock + on-order lines) raises its SO from the in-stock lines only
+  const { data: kinds } = await db.from("sales_line").select("on_order").eq("order_id", orderId).is("deleted_at", null);
+  const mixed = (kinds ?? []).some((l) => l.on_order) && (kinds ?? []).some((l) => !l.on_order);
 
   let so: { salesorder_id: string; salesorder_number: string; status: string; created: boolean; warning?: string } | null = null;
   // 0062: accept through the quote's Zoho estimate when there is one. 0070: estimates are off for new
@@ -194,7 +252,7 @@ Deno.serve(async (req: Request) => {
       if (viaEstimate) {
         const r = await salesOrderFromEstimate(db, orderId, o.zoho_estimate_id!, log, po, await salespersonFor(db, orderId, onBehalf ? uid : null));
         so = r; est = { status: r.estimate_status, number: r.estimate_number };
-      } else so = await salesOrderFor(db, cfg, orderId, log, po, await salespersonFor(db, orderId, onBehalf ? uid : null));
+      } else so = await salesOrderFor(db, cfg, orderId, log, po, await salespersonFor(db, orderId, onBehalf ? uid : null), { skipOnOrder: mixed });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       await log({ doc_type: "salesorder", ctp_id: orderId, ctp_ref: o.number, action: e instanceof Blocked ? "blocked" : "error", ok: false, message: msg });
@@ -260,7 +318,11 @@ Deno.serve(async (req: Request) => {
     }
   }
 
-  return json({ ok: true, already: acc?.already ?? false, order_id: orderId, number: o.number, po_number: po,
+  // 0099: the on-order lines, now their own back order, get their own Zoho sales order
+  const boRef = acc?.back_order as { order_id?: number } | null | undefined;
+  const back_order = boRef?.order_id ? await finishBackOrder(Number(boRef.order_id), po, poBlob, poName) : null;
+
+  return json({ ok: true, already: acc?.already ?? false, order_id: orderId, number: o.number, po_number: po, back_order,
                 credit_warning: creditMsg ? (onBehalf ? creditMsg.staff : creditMsg.customer) : null, attach_warning: attachWarning,
                 zoho_salesorder_id: so?.salesorder_id ?? null, zoho_salesorder_number: so?.salesorder_number ?? null,
                 zoho: live ? `sales order raised (${so?.status === "open" ? "confirmed" : so?.status ?? "draft"})` : "not sent: Zoho sending is off or before the go-live date",

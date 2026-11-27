@@ -865,7 +865,7 @@ async function myRequests(): Promise<unknown[]> {
   const byOrder = new Map<string, Row[]>();
   if (orders.length) {
     const allLines = await all(
-      `SELECT sl.id, sl.order_id, sl.part_id, sl.qty, sl.unit_price_minor, p.sku, p.name, p.catalogue_pn
+      `SELECT sl.id, sl.order_id, sl.part_id, sl.qty, sl.unit_price_minor, sl.on_order, sl.po_eta, p.sku, p.name, p.catalogue_pn
          FROM sales_line sl LEFT JOIN part p ON p.id = sl.part_id
         WHERE sl.order_id IN (SELECT value FROM json_each(?)) AND sl.deleted_at IS NULL
         ORDER BY CAST(sl.id AS INTEGER)`,
@@ -890,6 +890,7 @@ async function myRequests(): Promise<unknown[]> {
       // order either way, and a blank row reads as data loss.
       name: nstr(l["name"]) ?? "(part unavailable)",
       catalogue_pn: nstr(l["catalogue_pn"]),
+      on_order: nbool(l["on_order"]) === true, po_eta: nstr(l["po_eta"]),   // 0099
     }));
     const priced = mapped.length > 0 && mapped.every((l) => (l.unit_price_minor ?? 0) > 0);
     out.push({
@@ -935,7 +936,8 @@ async function staffOrders(): Promise<unknown[]> {
             so.zoho_invoice_payments, so.zoho_invoice_count,
             so.zoho_estimate_id, so.zoho_estimate_number, so.zoho_estimate_status, so.zoho_estimate_error,
             so.zoho_estimate_total_minor, so.zoho_estimate_expiry, so.staff_log, so.timeline,
-            so.po_number, so.po_file_path, so.po_file_name, so.credit_warning, so.accepted_via,
+            so.po_number, so.po_file_path, so.po_file_name, so.credit_warning, so.accepted_via, so.back_order_of,
+            (SELECT b.number FROM sales_order b WHERE b.id = so.back_order_of) AS back_order_of_number,
             c.name AS customer_name, c.contact AS customer_contact,
             c.phone AS customer_phone, c.email AS customer_email,
             (SELECT l.code FROM location l WHERE l.id = so.location_id) AS location_code
@@ -952,6 +954,7 @@ async function staffOrders(): Promise<unknown[]> {
     const ids = orders.map((o) => String(o["id"]));
     const allLines = await all(
       `SELECT sl.id, sl.order_id, sl.qty, sl.unit_price_minor, sl.part_id, sl.line_net_minor,
+              sl.on_order, sl.po_number, sl.po_eta, p.zoho_available_for_sale,
               p.sku, p.name, p.catalogue_pn
          FROM sales_line sl LEFT JOIN part p ON p.id = sl.part_id
         WHERE sl.order_id IN (SELECT value FROM json_each(?)) AND sl.deleted_at IS NULL
@@ -977,6 +980,9 @@ async function staffOrders(): Promise<unknown[]> {
       catalogue_pn: nstr(l["catalogue_pn"]),
       // FLOW-3: Zoho's line discount, read back (0059) — the amount the invoice charges
       net_minor: l["line_net_minor"] == null ? null : Number(l["line_net_minor"]),
+      // 0099: on-order line (PO + ETA), and Zoho's available-for-sale for the split button
+      on_order: nbool(l["on_order"]) === true, po_number: nstr(l["po_number"]), po_eta: nstr(l["po_eta"]),
+      available: nnum(l["zoho_available_for_sale"]),
     }));
     const status = str(o["status"]);
     const unpriced = mapped.filter((l) => l.unit_price_minor <= 0).length;
@@ -1037,6 +1043,8 @@ async function staffOrders(): Promise<unknown[]> {
       staff_log: nstr(o["staff_log"]),
       po_number: nstr(o["po_number"]), po_file_path: nstr(o["po_file_path"]), po_file_name: nstr(o["po_file_name"]),
       credit_warning: nstr(o["credit_warning"]),
+      back_order_of: o["back_order_of"] == null ? null : Number(o["back_order_of"]),   // 0099
+      back_order_of_number: nstr(o["back_order_of_number"]),
       timeline: (() => { try { const t = JSON.parse(String(o["timeline"] ?? "[]")); return Array.isArray(t) ? t : []; } catch { return []; } })(),
       zoho_estimate_total_minor: o["zoho_estimate_total_minor"] == null ? null : Number(o["zoho_estimate_total_minor"]),
       zoho_estimate_expiry: nstr(o["zoho_estimate_expiry"]),
@@ -1067,6 +1075,19 @@ async function priceQuote(a: Record<string, unknown>): Promise<unknown> {
     p_allow_below_floor: a["allowBelowFloor"] === true,
   });
   if (error) throw new Error(`[CTP web] could not save prices: ${error.message}`);
+  return data;
+}
+
+/** 0099: split a short quote line into in-stock + on-order (shortfall over Zoho's available). */
+async function splitQuoteLine(a: Record<string, unknown>): Promise<unknown> {
+  const { data, error } = await supabase.rpc("split_quote_line", { p_line_id: numId(a["lineId"], "lineId") });
+  if (error) throw new Error(`[CTP web] could not split: ${error.message}`);
+  return data;
+}
+/** 0099: put an on-order line back onto its in-stock line. */
+async function unsplitQuoteLine(a: Record<string, unknown>): Promise<unknown> {
+  const { data, error } = await supabase.rpc("unsplit_quote_line", { p_line_id: numId(a["lineId"], "lineId") });
+  if (error) throw new Error(`[CTP web] could not undo the split: ${error.message}`);
   return data;
 }
 
@@ -1634,6 +1655,8 @@ const PORTED: Record<string, Handler> = {
   cancel_order: (a) => cancelOrder(a),
   staff_orders: () => staffOrders(),
   price_quote: (a) => priceQuote(a),
+  split_quote_line: (a) => splitQuoteLine(a),
+  unsplit_quote_line: (a) => unsplitQuoteLine(a),
   quote_price_check: (a) => quotePriceCheck(a),
   list_hotspots: (a) => listHotspots(a),
   diagram_parts: (a) => diagramParts(a),
