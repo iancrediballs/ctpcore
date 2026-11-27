@@ -131,7 +131,7 @@ export default function SettingsView({ role, onClose }: { role: Role; onClose: (
 function Header({ onClose }: { onClose: () => void }) {
   return (
     <div className="st-head">
-      <button className="st-back" onClick={onClose} aria-label="Close settings">‹</button>
+      <button className="mb-back" onClick={onClose} aria-label="Close settings"><span className="mb-back-i" aria-hidden="true">‹</span>Back</button>
       <span className="st-title">Settings</span>
     </div>
   );

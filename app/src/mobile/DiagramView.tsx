@@ -321,7 +321,7 @@ export function DiagramView({ drawings, start, onClose, canEdit, staff, onOpenPa
   return (
     <div className="mb-lb dv">
       <div className="mb-lb-head dv-head">
-        <button className="mb-back" onClick={onClose} aria-label="Close">✕</button>
+        <button className="mb-back" onClick={onClose} aria-label="Close"><span className="mb-back-i" aria-hidden="true">✕</span>Close</button>
         <nav className="dv-crumb" aria-label="Breadcrumb">
           <span>Diagrams</span><span className="dv-sep">›</span>
           <b>{d.label}</b>
@@ -358,7 +358,7 @@ export function DiagramView({ drawings, start, onClose, canEdit, staff, onOpenPa
 function writeHash(key: string | null, partId: number | null) {
   if (!key) return;
   const h = `#dg=${key}${partId != null ? `&part=${partId}` : ""}`;
-  if (location.hash !== h) history.replaceState(null, "", h);
+  if (location.hash !== h) history.replaceState(history.state, "", h);   // keep the Back guard (backStack)
 }
 /** Read a deep link. Returns null when the hash is not ours. */
 export function readDiagramHash(): { key: string; part: number | null } | null {
