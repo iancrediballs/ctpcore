@@ -1086,13 +1086,25 @@ export default function MobileShell() {
   // 0063: are quotes Zoho estimates? (staff can read zoho_config; customers cannot)
   const [estimatesOn, setEstimatesOn] = useState(false);
   // 0065: who holds the stock — 'ctp' (rehearsal default) or 'zoho' (Inventory: ship / count / receive in Zoho)
-  const [stockMaster, setStockMaster] = useState<"ctp" | "zoho">("ctp");
+  // 27 Nov (Ian): remembered on the device so the Zoho-mode hiding below also holds offline.
+  const [stockMaster, setStockMaster] = useState<"ctp" | "zoho">(() => {
+    try { return localStorage.getItem("ctp-stock-master") === "zoho" ? "zoho" : "ctp"; } catch { return "ctp"; }
+  });
   useEffect(() => {
     if (isClient) return;
     void supabase.from("zoho_config").select("estimates_enabled, stock_master").eq("id", 1).maybeSingle()
-      .then(({ data }) => { setEstimatesOn(!!data?.estimates_enabled); setStockMaster(data?.stock_master === "zoho" ? "zoho" : "ctp"); });
+      .then(({ data }) => {
+        if (!data) return;
+        const m = data.stock_master === "zoho" ? "zoho" : "ctp";
+        setEstimatesOn(!!data.estimates_enabled); setStockMaster(m);
+        try { localStorage.setItem("ctp-stock-master", m); } catch { /* private mode */ }
+      });
   }, [isClient, lastSynced]);
   const zohoStock = stockMaster === "zoho";
+  // 27 Nov (Ian): while Zoho holds the stock the CTP ledger is frozen and the database refuses
+  // every Issue / Receive / Move, so the Shelf tab and the Issue 1 / Count buttons are hidden
+  // for every role. Stock is booked in Zoho.
+  useEffect(() => { if (zohoStock) setTab((t) => (t === "shelf" ? "home" : t)); }, [zohoStock]);
   const [countVal, setCountVal] = useState("");
   // 0097/0098: open Zoho POs for this part (In transit + On purchase order), staff only, read online
   const [backOrder, setBackOrder] = useState<BackOrder | null>(null);
@@ -3466,16 +3478,20 @@ const parseRand = (s: string): number => {
                 ) : (
                   <button className="mb-btn s" onClick={() => addToCart(d, 1)}>Add to order</button>
                 )}
-                <button className="mb-btn p" onClick={() => issueOne(d)}
-                  disabled={d.stock.length === 0}>Issue 1</button>
-                <button className="mb-btn s" onClick={() => setCounterOpen(true)}
-                  disabled={d.stock.length === 0}>Count</button>
+                {!zohoStock && (
+                  <>
+                    <button className="mb-btn p" onClick={() => issueOne(d)}
+                      disabled={d.stock.length === 0}>Issue 1</button>
+                    <button className="mb-btn s" onClick={() => setCounterOpen(true)}
+                      disabled={d.stock.length === 0}>Count</button>
+                  </>
+                )}
               </>
             )}
           </div>
         </>
       )}
-      {d && counterOpen && (
+      {d && counterOpen && !zohoStock && (
         <Counter d={d} onPost={post} onMove={move} onClose={() => setCounterOpen(false)} />
       )}
     </div>
@@ -3700,10 +3716,12 @@ const parseRand = (s: string): number => {
           </button>
         ) : (
           <>
-            <button className={"mb-tab" + (tab === "shelf" ? " on" : "")}
-              onClick={() => { setTab("shelf"); setQ(""); setSheetOpen(false); }}>
-              <TabShelf />Shelf
-            </button>
+            {!zohoStock && (
+              <button className={"mb-tab" + (tab === "shelf" ? " on" : "")}
+                onClick={() => { setTab("shelf"); setQ(""); setSheetOpen(false); }}>
+                <TabShelf />Shelf
+              </button>
+            )}
             <button className={"mb-tab" + (tab === "cart" ? " on" : "")}
               onClick={() => { setTab("cart"); setSheetOpen(false); }}>
               <span className="mb-tabwrap">
