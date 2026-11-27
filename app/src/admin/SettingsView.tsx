@@ -711,7 +711,8 @@ function ZohoPanel({ flash, fail, isAdmin }: PanelProps & { isAdmin: boolean }) 
           {result.ok && <p className="st-note">
             {result.items_seen} Zoho items · {result.linked} linked · {result.zoho_stock_units ?? 0} units on hand in Zoho
           </p>}
-          {(result.changes ?? []).slice(0, 200).map((c, i) => (
+          {/* 27 Nov: cost prices are confidential — never list landed-cost changes here. */}
+          {(result.changes ?? []).filter((c) => !/cost/i.test(c.field)).slice(0, 200).map((c, i) => (
             <p className="st-note" key={i}><span className="st-code">{c.sku}</span> {c.field}: {String(c.from ?? "—")} → {String(c.to)}</p>
           ))}
           {(result.unmatched ?? []).length > 0 && <>

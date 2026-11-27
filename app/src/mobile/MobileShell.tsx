@@ -703,7 +703,11 @@ export default function MobileShell() {
   const isClient = role == null || role === "customer";
   // QA 26 Oct: who may see cost, margin and the floor. Same list as 0086's can_see_cost(), and an
   // allow-list so an unknown role sees none. Warehouse is staff but not this.
-  const seesCost = role === "sales" || role === "manager" || role === "admin";
+  // 27 Nov (Ian, Michelle): cost prices are confidential and shown to NO ONE in the app, so cost,
+  // margin and floor figures are hidden for every role. Sales, managers and admins may still
+  // price below the floor on purpose (the database records it), without seeing the figure.
+  const seesCost = false;
+  const mayOverrideFloor = role === "sales" || role === "manager" || role === "admin";
 
   // ── 0076: price books (Zoho's rebate rates) on the device ──
   // Staff hold every book (ctp_staff); a customer holds only their own (ctp_client_book). Until
@@ -1167,7 +1171,7 @@ const parseRand = (s: string): number => {
     });
     const missing = resolved.filter((r) => r.minor <= 0);
     if (missing.length > 0 && missing.every((m) => m.line.on_order)) {
-      showToast({ text: `Type the on-order price for ${missing.map((m) => m.line.sku).slice(0, 3).join(", ")}${missing.length > 3 ? "…" : ""} — the landed cost of that shipment, by hand.`, err: true });
+      showToast({ text: `Type the on-order price for ${missing.map((m) => m.line.sku).slice(0, 3).join(", ")}${missing.length > 3 ? "…" : ""} — the selling price for that shipment, by hand.`, err: true });
       return;
     }
     if (missing.length > 0) {
@@ -1196,7 +1200,7 @@ const parseRand = (s: string): number => {
         // QA 26 Oct: near_cost / far_above_cost messages name the supplier cost. Without
         // seesCost, say which line to check, not why. above_list names only the list price.
         showToast({ text: warns.map((w) => seesCost || w.code === "above_list" ? w.message
-          : `${w.sku}: check this price with sales before it goes out.`).join(" "), err: true });
+          : `${w.sku}: check this price before it goes out.`).join(" "), err: true });
       } else {
         showToast({ text: left > 0
           ? `Saved — ${left} line${left === 1 ? "" : "s"} still without a price, so ${o.number} can't be accepted yet.`
@@ -1220,16 +1224,17 @@ const parseRand = (s: string): number => {
       // A margin-floor refusal is not a failure to be dismissed — it is a
       // decision to be made, so it gets a strip with two named choices rather
       // than a toast that vanishes.
-      // QA 26 Oct: the refusal names each line's floor and supplier cost. Without seesCost it is
-      // reworded with neither, and the strip offers no override (see floorBlock below).
+      // QA 26 Oct: the refusal names each line's floor and supplier cost. Without seesCost (27 Nov:
+      // nobody) it is reworded with neither; the strip offers the override only to mayOverrideFloor.
       if (/below the minimum margin/i.test(msg)) setFloorBlock({ order: o, message: seesCost ? msg
         : `${/^(\d+) line/.exec(msg)?.[1] ?? "Some"} line(s) are below the minimum price for this customer. `
-          + "Raise the price, or ask sales or a manager to price this quote." });
+          + (mayOverrideFloor ? "Raise the price, or price it below the minimum on purpose."
+                              : "Raise the price, or ask sales or a manager to price this quote.") });
       else showToast({ text: msg, err: true });
     } finally {
       setSavingOrder(false);
     }
-  }, [draftPrices, showToast, loadOrders, defaultMinor, seesCost]);
+  }, [draftPrices, showToast, loadOrders, defaultMinor, seesCost, mayOverrideFloor]);
 
   /** Stock out. One server transaction (0042): refuses if any line is short,
    *  names the shortfall, writes nothing in that case. Idempotent on retry. */
@@ -2025,8 +2030,10 @@ const parseRand = (s: string): number => {
                 "part_cost", "price", "price_tier", "stock_policy", "stock_movement",
                 "location", "customer", "part_alias",
               ].includes(a.table)
-                // QA 26 Oct: 0086 + sync rules: a warehouse device holds no cost or tiers either.
-                || (!isClient && !seesCost && ["part_cost", "price_tier"].includes(a.table));
+                // 27 Nov: no device holds cost (part_cost left the staff sync stream).
+                || (!isClient && a.table === "part_cost")
+                // QA 26 Oct: 0086 + sync rules: a warehouse device holds no tiers either.
+                || (!isClient && !mayOverrideFloor && a.table === "price_tier");
               // QA 26 Oct: their own orders and lines are expected (ctp_client_orders); only
               // someone else's is a leak — see `foreign` in deviceAudit.
               const ownOnly = isClient && a.foreign != null;
@@ -3534,8 +3541,8 @@ const parseRand = (s: string): number => {
               onClick={() => setFloorBlock(null)}>
               Change the price
             </button>
-            {/* QA 26 Oct: going under a floor you cannot see is not a decision — no override without seesCost. */}
-            {seesCost && <button className="mb-chip" style={{ flex: 1 }}
+            {/* 27 Nov: no one sees the floor figure; only sales, managers and admins may override it. */}
+            {mayOverrideFloor && <button className="mb-chip" style={{ flex: 1 }}
               onClick={() => {
                 const o = floorBlock.order;
                 setFloorBlock(null);
