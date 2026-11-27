@@ -10,3 +10,11 @@ verify_jwt = false
 
 [functions.zoho-onboard]
 verify_jwt = true
+
+# Public website (chinatruckparts.co.za): called with no login. See each
+# function's header for why that is safe.
+[functions.public-catalogue]
+verify_jwt = false
+
+[functions.contact-signup]
+verify_jwt = false

@@ -1,0 +1,13 @@
+{
+  "legal_name": "China Truck Parts (Pty) Ltd",
+  "trading_name": "China Truck Parts",
+  "address_lines": ["Unit 11, 8 Hawk Rd", "Shakas Head", "Ballito", "4381"],
+  "country": "South Africa",
+  "email": "admin@chinatruckparts.co.za",
+  "phone": null,
+  "whatsapp": null,
+  "hours": null,
+  "site_url": "https://chinatruckparts.co.za",
+  "app_url": "https://ctpcore.vercel.app",
+  "maps_query": "Unit 11, 8 Hawk Rd, Shakas Head, Ballito, 4381, South Africa"
+}
