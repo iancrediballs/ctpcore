@@ -1632,6 +1632,26 @@ async function setDiagramDims(a: Record<string, unknown>): Promise<unknown> {
   return data; // null when the frame was already recorded — that is not an error
 }
 
+async function partPrimaryImages(ids: unknown): Promise<unknown[]> {
+  // The printed quote shows each line's photo beside it, as Zoho's template
+  // does. Primary photo first, then sort order: the same pick as list_parts.
+  const list = (Array.isArray(ids) ? ids : []).map((v) => String(v)).filter((v) => /^\d+$/.test(v));
+  if (list.length === 0) return [];
+  const rows = await all(
+    `SELECT part_id, path FROM part_image
+      WHERE deleted_at IS NULL AND part_id IN (${list.map(() => "?").join(",")})
+      ORDER BY is_primary DESC, sort_order`, list);
+  const seen = new Set<string>();
+  const out: { part_id: number; path: string }[] = [];
+  for (const r of rows) {
+    const id = str(r["part_id"]);
+    if (seen.has(id) || !r["path"]) continue;
+    seen.add(id);
+    out.push({ part_id: numId(r["part_id"], "part_image.part_id"), path: str(r["path"]) });
+  }
+  return out;
+}
+
 const PORTED: Record<string, Handler> = {
   search_parts: (a) => searchParts(String(a["query"] ?? "")),
   part_detail: (a) => partDetail(Number(a["partId"])),
@@ -1641,6 +1661,7 @@ const PORTED: Record<string, Handler> = {
   list_locations: () => listLocations(),
   jefrey_catalogue: () => jefreyCatalogue(),
   get_company: () => getCompany(),
+  part_primary_images: (a) => partPrimaryImages(a["partIds"]),
   post_movement: (a) => postMovement(a),
   transfer_stock: (a) => transferStock(a),
   request_parts: (a) => requestParts(a),

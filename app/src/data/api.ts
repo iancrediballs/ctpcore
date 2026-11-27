@@ -204,6 +204,8 @@ export const setTaxRate = <T>(orderId: number, bps: number) =>
 
 // ─── company & accounting ────────────────────────────────────────────────
 export const getCompany = <T>() => call<T>("get_company");
+/** Web-only: each part's primary photo path, for the printed quote. */
+export const partPrimaryImages = <T>(partIds: number[]) => call<T>("part_primary_images", { partIds });
 export const setCompany = (company: unknown) => call<void>("set_company", { company });
 
 /** This install's order-numbering namespace. Desktop-only and deliberately NOT
