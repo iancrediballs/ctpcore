@@ -156,7 +156,7 @@ function home({ parts }) {
   for (const p of parts) if (n[p.availability] != null) n[p.availability]++;
   const cats = new Map();
   for (const p of parts) if (p.category) cats.set(p.category, (cats.get(p.category) ?? 0) + 1);
-  const catList = [...cats.entries()].filter(([c]) => c !== "New from Zoho").sort((a, b) => b[1] - a[1]);
+  const catList = [...cats.entries()].sort((a, b) => b[1] - a[1]);
 
   const body = `
 <section class="hero">

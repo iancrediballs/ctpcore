@@ -18,6 +18,9 @@ const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
 const ASSET_BASE = `${SUPABASE_URL}/storage/v1/object/public/ctp-assets/`;
 
+// Internal category names that mean nothing to the public.
+const PUBLIC_CATEGORY: Record<string, string> = { "New from Zoho": "Other parts" };
+
 const CORS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, OPTIONS",
@@ -115,7 +118,10 @@ Deno.serve(async (req) => {
       make: p.make,
       model: p.model,
       side: p.side,
-      category: p.category_id != null ? catName.get(p.category_id) ?? null : null,
+      category: (() => {
+        const c = p.category_id != null ? catName.get(p.category_id) ?? null : null;
+        return c ? PUBLIC_CATEGORY[c] ?? c : null;
+      })(),
       availability,
       eta: availability === "back_order" ? onPo.get(p.id) ?? null : null,
       image: img ? photoWebUrl(img.path) ?? assetUrl(img.path) : null,
