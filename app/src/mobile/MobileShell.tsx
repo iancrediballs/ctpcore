@@ -22,7 +22,7 @@ import { refreshZohoStatus, zohoStatusLabel, syncSalesOrder, cancelInZoho, syncE
          rebateCustomer, myRebate, type RebatePosition,
          remoteBookPrices, staffAccrualRates, type AccrualRates, type BookPrice, type BookCustomer } from "../data/zoho";
 import AddCustomer from "../admin/AddCustomer";
-import { assetUrl } from "../assets";
+import { assetUrl, photoWebUrl } from "../assets";
 import { PhotoImg } from "./PhotoImg";
 import { DiagramCanvas, Marker, loadMarkerScale, saveMarkerScale, markerRadius, MARKER_SCALE_MIN, MARKER_SCALE_MAX, type CanvasApi, type Frame, type Pt } from "./DiagramCanvas";
 import { DiagramView, readDiagramHash, type Drawing } from "./DiagramView";
@@ -2098,13 +2098,27 @@ const parseRand = (s: string): number => {
   const printOrder = async (o: StaffOrder) => {
     try {
       const company = await api.getCompany<DocCompany>();
-      const lines = o.lines.map((l) => ({
-        // The part no. (= the Zoho SKU; Zoho Inventory is the item master).
-        // Not catalogue_pn: that is the base supplier number, without the
-        // variant suffix, and would not match the Zoho invoice line.
-        sku: l.sku, name: l.name, qty: l.qty,
-        unit_price_minor: l.unit_price_minor, line_total_minor: l.unit_price_minor * l.qty,
-      }));
+      // Zoho's template prints each item's photo; ours come from part_image.
+      // A missing photo just prints the line without one.
+      let photos = new Map<number, string>();
+      try {
+        const rows = await api.partPrimaryImages<{ part_id: number; path: string }[]>([...new Set(o.lines.map((l) => l.part_id))]);
+        photos = new Map(rows.map((r) => [r.part_id, r.path]));
+      } catch { /* no photos: the document still prints */ }
+      const lines = o.lines.map((l) => {
+        const p = photos.get(l.part_id);
+        return {
+          // The part no. (= the Zoho SKU; Zoho Inventory is the item master).
+          // Not catalogue_pn: that is the base supplier number, without the
+          // variant suffix, and would not match the Zoho invoice line.
+          sku: l.sku, name: l.name, qty: l.qty,
+          unit_price_minor: l.unit_price_minor, line_total_minor: l.unit_price_minor * l.qty,
+          image: p ? (photoWebUrl(p) || assetUrl(p)) : null,
+          image_fallback: p && photoWebUrl(p) ? assetUrl(p) : null,
+          // Customer-facing: never the supplier PO number.
+          note: l.on_order ? `On order${l.po_eta ? ` · expected ${fmtEta(l.po_eta)}` : ""}` : null,
+        };
+      });
       const subtotal_minor = lines.reduce((t, l) => t + l.line_total_minor, 0);
       const tax_minor = Math.floor((subtotal_minor * o.tax_rate_bps + 5000) / 10000);
       const doc: DocOrder = {
@@ -2115,6 +2129,7 @@ const parseRand = (s: string): number => {
         customer_name: o.customer_name, customer_contact: o.customer_contact,
         customer_phone: o.customer_phone, customer_email: o.customer_email,
         location_code: o.location_code ?? "",
+        reference: o.po_number ?? null,
         lines, subtotal_minor, tax_rate_bps: o.tax_rate_bps, tax_minor, total_minor: subtotal_minor + tax_minor,
       };
       openPrintWindow(buildDocHTML(doc, company));
