@@ -138,7 +138,7 @@ Deno.serve(async (req) => {
   if (!name || name.length < 2) errors.push("Please enter your name.");
   if (email === "") errors.push("That email address doesn't look right.");
   if (phone === "") errors.push("That phone number doesn't look right.");
-  if (!email && !phone) errors.push("Please give an email address or a mobile number.");
+  if (email === null && phone === null) errors.push("Please give an email address or a mobile number.");
   if (wantEmail && !email) errors.push("Add an email address to get email updates.");
   if (wantWhatsapp && !phone) errors.push("Add a mobile number to get WhatsApp updates.");
   if (body.privacy_ack !== true) errors.push("Please confirm you have read the privacy notice.");
@@ -168,10 +168,13 @@ Deno.serve(async (req) => {
           consent_at: now, opted_out_at: null,
         }).eq("id", existing.id);
       }
-      await db.from("contact_consent_log").insert({
-        contact_id: existing.id, action: grows ? "opt_in" : "signup_no_marketing",
-        email: nextEmail, whatsapp: nextWa, consent_text_version: version!, via: "website", ip_hash: hash,
-      });
+      // Log only a real change: a repeat sign-up that adds nothing is not a consent event.
+      if (grows) {
+        await db.from("contact_consent_log").insert({
+          contact_id: existing.id, action: "opt_in",
+          email: nextEmail, whatsapp: nextWa, consent_text_version: version!, via: "website", ip_hash: hash,
+        });
+      }
       return reply(origin, { ok: true });
     }
   }
