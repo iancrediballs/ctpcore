@@ -67,7 +67,11 @@ export class SupabaseConnector implements PowerSyncBackendConnector {
           // dropped (both legs of a transfer go together) and the person is
           // told why. The local row disappears at the next checkpoint because
           // the server never had it.
-          if (res.error.code === "CT001") {
+          // 27 Nov: the same goes for the Zoho guard (0065, SQLSTATE 22023:
+          // "the CTP stock ledger is frozen" / "Zoho Inventory holds the
+          // stock"). It refused a stock movement for good, and retrying it
+          // forever stalled every later upload from the device.
+          if (res.error.code === "CT001" || (op.table === "stock_movement" && res.error.code === "22023")) {
             console.warn("PowerSync upload refused by the shelf guard; dropping:", res.error.message);
             window.dispatchEvent(new CustomEvent("ctp-sync-refused", { detail: { message: res.error.message } }));
             await tx.complete();
