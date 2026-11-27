@@ -42,6 +42,7 @@ import {
   type OrderFilter, type Range, type StageKey,
 } from "./orderFilter";
 import "./mobile.css";
+import { useBackClose, replaceUrl } from "./backStack";
 
 // ─── shapes (mirror backend.web.ts returns) ──────────────────────────────────
 
@@ -1595,6 +1596,28 @@ const parseRand = (s: string): number => {
   // FLOW-6: declining cancels the quote for good, so it asks first
   const [declineStep, setDeclineStep] = useState<MyRequest | null>(null);
 
+  // Browser / phone Back closes the newest of these instead of leaving the
+  // app (Ian, 27 Nov). Registered in the order they are opened; see backStack.
+  // Not on Home, Back goes Home first, so it only leaves from the front page.
+  useBackClose(tab !== "home", () => { setTab("home"); setQ(""); setChip(null); });
+  useBackClose(settingsOpen, () => setSettingsOpen(false));
+  useBackClose(sheetOpen, () => { setSheetOpen(false); setCounterOpen(false); });
+  useBackClose(counterOpen && !!detail && !zohoStock, () => setCounterOpen(false));
+  useBackClose(!!diagram, () => {
+    setDiagram(null);
+    if (/^#dg=/.test(location.hash)) replaceUrl(location.pathname + location.search);
+  });
+  useBackClose(!!viewer, () => setViewer(null));
+  // the marker editor registers itself: it saves a typed item number first
+  useBackClose(filtersOpen, () => setFiltersOpen(false));
+  useBackClose(!!receiving, () => setReceiving(null));
+  useBackClose(addingCustomer, () => setAddingCustomer(false));
+  useBackClose(!!floorBlock, () => setFloorBlock(null));
+  useBackClose(!!poStep, () => setPoStep(null));
+  useBackClose(!!declineStep, () => setDeclineStep(null));
+  useBackClose(!!behalf, () => setBehalf(null));
+  useBackClose(!!pendingAct, () => setPendingAct(null));
+
   const answerQuote = useCallback(async (r: MyRequest, accept: boolean, po?: { po: string; file: File | null; customerId: number | null }) => {
     setAnswering(r.id);
     try {
@@ -1715,7 +1738,7 @@ const parseRand = (s: string): number => {
     setSheetOpen(false); setCounterOpen(false); setViewer(null);
     if (diagram) {
       setDiagram(null);
-      if (/^#dg=/.test(location.hash)) history.replaceState(null, "", location.pathname + location.search);
+      if (/^#dg=/.test(location.hash)) replaceUrl(location.pathname + location.search);
     }
     setTab("cart");
     window.setTimeout(() => document.querySelector(".mb-body")?.scrollTo({ top: 0 }), 0);
@@ -3170,7 +3193,7 @@ const parseRand = (s: string): number => {
       {d && (
         <>
           <div className="mb-shead">
-            <button className="mb-back" onClick={() => { setSheetOpen(false); setCounterOpen(false); }}>‹</button>
+            <button className="mb-back" aria-label="Back" onClick={() => { setSheetOpen(false); setCounterOpen(false); }}><span className="mb-back-i" aria-hidden="true">‹</span>Back</button>
             <span className="mb-shead-t">{d.category_name ?? "Part"}</span>
             <span style={{ marginLeft: "auto" }}>{cartBtn}</span>
           </div>
@@ -3532,7 +3555,7 @@ const parseRand = (s: string): number => {
       {sheet}
       {diagram && !hotspotEditor && (
         <DiagramView drawings={drawings} start={diagram.idx} deepPart={diagram.part} canEdit={!isClient} staff={!isClient}
-          onClose={() => { setDiagram(null); if (/^#dg=/.test(location.hash)) history.replaceState(null, "", location.pathname + location.search); }}
+          onClose={() => { setDiagram(null); if (/^#dg=/.test(location.hash)) replaceUrl(location.pathname + location.search); }}
           onOpenPart={(pid) => { void openPart(pid); }}
           onEditMarkers={(path, label) => setHotspotEditor({ path, label })}
           /* 0053: staff get this too now — building an order off the drawing is
@@ -3817,7 +3840,7 @@ function Lightbox({ items, start, onClose, canEdit, onOpenPart, onEditMarkers }:
     // above it (sheet 80, this 90). Without it the photo lands behind the sheet.
     <div className="mb-lb mb-lb-top">
       <div className="mb-lb-head">
-        <button className="mb-back" onClick={onClose}>✕</button>
+        <button className="mb-back" aria-label="Close" onClick={onClose}><span className="mb-back-i" aria-hidden="true">✕</span>Close</button>
         <span className="mb-lb-cap">{item.label}</span>
         {item.diagram && canEdit && onEditMarkers && (
           <button className="mb-chip on" onClick={() => onEditMarkers(item.path, item.label)}>
@@ -3887,7 +3910,7 @@ function Counter({ d, onPost, onMove, onClose }: {
   return (
     <div className="mb-sheet open" style={{ zIndex: 55 }}>
       <div className="mb-shead">
-        <button className="mb-back" onClick={onClose}>‹</button>
+        <button className="mb-back" aria-label="Back" onClick={onClose}><span className="mb-back-i" aria-hidden="true">‹</span>Back</button>
         <span className="mb-shead-t">{moving ? "Move" : "Count"} — {d.sku}</span>
       </div>
       <div className="mb-sbody">
@@ -4120,6 +4143,8 @@ function HotspotEditor({ path, label, canEdit, onClose, onOpenPart }: {
   };
   /** Anything that leaves the current marker goes through here first. */
   const flushPending = async (): Promise<boolean> => (pendingItem == null ? true : saveItemNo(pendingItem));
+  // Back closes the editor the same way its ✕ does: save a typed item number first.
+  useBackClose(true, () => { void flushPending().then((ok) => { if (ok) onClose(); }); });
 
   const relink = async (h: EditorHotspot, part: Hit) => {
     if (diagramId == null) return;
@@ -4327,7 +4352,7 @@ function HotspotEditor({ path, label, canEdit, onClose, onOpenPart }: {
     <div className="mb-lb mb-hs-ed">
       <div className="mb-lb-head">
         <button className="mb-back" title={pendingItem != null ? "saves the item number, then closes" : "close"}
-          onClick={async () => { if (await flushPending()) onClose(); }}>✕</button>
+          aria-label="Close" onClick={async () => { if (await flushPending()) onClose(); }}><span className="mb-back-i" aria-hidden="true">✕</span>Close</button>
         <span className="mb-lb-cap">{label} · {canEdit ? "editing markers" : "markers"}</span>
         {canEdit && <span className="mb-dim" style={{ fontSize: 12 }}>tap the drawing to place · tap a ring to pick · drag to move · wheel or pinch to zoom{frame && frameFrom === "image" ? " · frame recorded from the image" : ""}</span>}
         {canEdit && (
