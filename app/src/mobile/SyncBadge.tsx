@@ -66,6 +66,8 @@ export function useSyncBadge(): { label: string; cls: string } {
 
 export function SyncBadge() {
   const { label, cls } = useSyncBadge();
+  // The public website has no sync to report on (vite.public.config.ts).
+  if (typeof __PUBLIC__ !== "undefined" && __PUBLIC__) return null;
   return (
     <span className={"mb-sync" + cls} aria-live="polite">
       <span className="mb-dot" />{label}

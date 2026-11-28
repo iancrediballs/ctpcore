@@ -54,9 +54,10 @@ export type PublicPart = {
   updated_at: string;
 };
 
-export type PublicHotspot = { x: number; y: number; r: number; item: string | null; sku: string };
+export type PublicHotspot = { x: number; y: number; r: number; item: string | null; sku: string; pid: number };
 
 export type PublicSection = {
+  key: string;                  // app deep link: /trucks/<slug>/#dg=<key>&part=<pid>
   code: string;
   name: string;
   make: string | null;          // from the section drawing (FAW, ...)
@@ -164,7 +165,7 @@ Deno.serve(async (req) => {
     const x = Number(h.x), y = Number(h.y);
     if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
     const list = hotsByDiag.get(h.diagram_id as number) ?? [];
-    list.push({ x, y, r: Number(h.radius) > 0 ? Number(h.radius) : 58, item: (h.item_no as string | null) ?? null, sku });
+    list.push({ x, y, r: Number(h.radius) > 0 ? Number(h.radius) : 58, item: (h.item_no as string | null) ?? null, sku, pid: h.part_id as number });
     hotsByDiag.set(h.diagram_id as number, list);
   }
   const sections: PublicSection[] = [];
@@ -173,6 +174,7 @@ Deno.serve(async (req) => {
     if (!n) continue;
     const d = diagByKey.get("SEC" + c.id);
     sections.push({
+      key: "SEC" + c.id,
       code: c.code as string,
       name: PUBLIC_CATEGORY[c.name as string] ?? (c.name as string),
       make: (d?.make as string | null) ?? null,
