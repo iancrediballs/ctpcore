@@ -217,7 +217,8 @@ ${visitBlock()}
     legalName: BIZ.legal_name,
     url: BIZ.site_url,
     email: BIZ.email,
-    ...(BIZ.phone ? { telephone: BIZ.phone } : {}),
+    ...(BIZ.phone ? { telephone: BIZ.phone.replace(/\s/g, "") } : {}),
+    ...(BIZ.hours ? { openingHoursSpecification: [{ "@type": "OpeningHoursSpecification", dayOfWeek: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"], opens: "08:00", closes: "17:00" }] } : {}),
     address: {
       "@type": "PostalAddress",
       streetAddress: BIZ.address_lines[0],
