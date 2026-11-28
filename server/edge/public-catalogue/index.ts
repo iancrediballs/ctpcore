@@ -11,6 +11,11 @@
 //   in_stock  -> "in_stock"
 //   not in stock but on an open purchase order -> "back_order" (+ ETA date if Zoho has one)
 //   otherwise -> "ask"
+//
+// Sections (28 Nov 2026, Ian): each catalogue section with its truck locator
+// tile and its exploded drawing, plus the drawing's hotspots. A hotspot is
+// returned only when it points at a part that is itself in this public list,
+// and carries nothing but its position, item number and that part's SKU.
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 
@@ -49,6 +54,18 @@ export type PublicPart = {
   updated_at: string;
 };
 
+export type PublicHotspot = { x: number; y: number; r: number; item: string | null; sku: string };
+
+export type PublicSection = {
+  code: string;
+  name: string;
+  make: string | null;          // from the section drawing (FAW, ...)
+  model: string | null;         // JH6, JH7, C7 ...
+  locator: string;              // "where on the truck" tile (assets/sections/<code>_v3.webp)
+  diagram: { image: string; w: number | null; h: number | null; hotspots: PublicHotspot[] } | null;
+  parts: number;
+};
+
 // Same rules as app/src/assets.ts (assetUrl / photoWebUrl).
 function assetUrl(path: string): string {
   if (/^(https?:|data:|blob:)/i.test(path)) return path;
@@ -76,17 +93,20 @@ Deno.serve(async (req) => {
 
   const db = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } });
 
-  const [parts, cats, imgs, bo] = await Promise.all([
+  const [parts, cats, imgs, bo, diags, hots] = await Promise.all([
     db.from("part")
       .select("id, sku, catalogue_pn, name, description, make, model, side, part_type, in_stock, category_id, updated_at")
       .is("deleted_at", null)
       .eq("status", "active")
       .order("name"),
-    db.from("category").select("id, name").is("deleted_at", null),
+    db.from("category").select("id, code, name").is("deleted_at", null).order("code"),
     db.from("part_image").select("part_id, path, is_primary, sort_order").is("deleted_at", null),
     db.from("back_order_part").select("part_id, qty_on_po, next_eta"),
+    db.from("diagram").select("id, drawing_key, make, model, image_path, img_w, img_h")
+      .is("deleted_at", null).like("drawing_key", "SEC%"),
+    db.from("hotspot").select("diagram_id, part_id, item_no, x, y, radius").is("deleted_at", null),
   ]);
-  const err = parts.error ?? cats.error ?? imgs.error ?? bo.error;
+  const err = parts.error ?? cats.error ?? imgs.error ?? bo.error ?? diags.error ?? hots.error;
   if (err) {
     console.error("public-catalogue query failed:", err.message);
     return json({ error: "catalogue unavailable" }, 502);
@@ -130,8 +150,46 @@ Deno.serve(async (req) => {
     };
   });
 
+  // Sections: only parts that are public above can be pointed at.
+  const skuOf = new Map<number, string>((parts.data as PartRow[]).map((p) => [p.id, p.sku]));
+  const perCat = new Map<number, number>();
+  for (const p of parts.data as PartRow[]) {
+    if (p.category_id != null) perCat.set(p.category_id, (perCat.get(p.category_id) ?? 0) + 1);
+  }
+  const diagByKey = new Map<string, Record<string, unknown>>((diags.data ?? []).map((d) => [d.drawing_key as string, d]));
+  const hotsByDiag = new Map<number, PublicHotspot[]>();
+  for (const h of hots.data ?? []) {
+    const sku = h.part_id != null ? skuOf.get(h.part_id as number) : undefined;
+    if (!sku) continue;
+    const x = Number(h.x), y = Number(h.y);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+    const list = hotsByDiag.get(h.diagram_id as number) ?? [];
+    list.push({ x, y, r: Number(h.radius) > 0 ? Number(h.radius) : 58, item: (h.item_no as string | null) ?? null, sku });
+    hotsByDiag.set(h.diagram_id as number, list);
+  }
+  const sections: PublicSection[] = [];
+  for (const c of cats.data ?? []) {
+    const n = perCat.get(c.id as number) ?? 0;
+    if (!n) continue;
+    const d = diagByKey.get("SEC" + c.id);
+    sections.push({
+      code: c.code as string,
+      name: PUBLIC_CATEGORY[c.name as string] ?? (c.name as string),
+      make: (d?.make as string | null) ?? null,
+      model: (d?.model as string | null) ?? null,
+      locator: assetUrl(`assets/sections/${c.code}_v3.webp`),
+      diagram: d && d.image_path ? {
+        image: assetUrl(d.image_path as string),
+        w: (d.img_w as number | null) ?? null,
+        h: (d.img_h as number | null) ?? null,
+        hotspots: hotsByDiag.get(d.id as number) ?? [],
+      } : null,
+      parts: n,
+    });
+  }
+
   return json(
-    { generated_at: new Date().toISOString(), count: out.length, parts: out },
+    { generated_at: new Date().toISOString(), count: out.length, parts: out, sections },
     200,
     { "Cache-Control": "public, max-age=300, s-maxage=300" },
   );
