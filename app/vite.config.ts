@@ -25,7 +25,7 @@ const precacheManifest = (): Plugin => ({
 
 // Tauri expects a fixed port and serves the built assets from dist/
 export default defineConfig({
-  define: { __APP_VERSION__: JSON.stringify(SW_VERSION), __APP_BUILT__: JSON.stringify(new Date().toISOString().slice(0, 16).replace("T", " ")) },
+  define: { __APP_VERSION__: JSON.stringify(SW_VERSION), __APP_BUILT__: JSON.stringify(new Date().toISOString().slice(0, 16).replace("T", " ")), __PUBLIC__: "false" },
   plugins: [react(), precacheManifest()],
   clearScreen: false,
   server: {

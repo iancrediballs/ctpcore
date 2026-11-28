@@ -18,4 +18,4 @@ const swap: Plugin = {
   },
 };
 export default defineConfig({ plugins: [swap, react()], server: { port: 4175, strictPort: true },
-  define: { __APP_VERSION__: JSON.stringify("livedata"), __APP_BUILT__: JSON.stringify("dev") } });
+  define: { __APP_VERSION__: JSON.stringify("livedata"), __APP_BUILT__: JSON.stringify("dev"), __PUBLIC__: "false" } });

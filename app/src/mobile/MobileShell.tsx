@@ -227,11 +227,17 @@ const OnOrderTag = ({ l, staff }: { l: { on_order?: boolean; po_number?: string 
 // stay in public/brand/. The box is 100x30 CSS px, so 300x90 covers DPR 3;
 // the masters were ~125 KB for two 100 px images on every first load.
 const LOGO_BODY = "/brand/ctp_logo_body_v3.webp";
+/** The public website's copy of this shell (vite.public.config.ts, Ian 28 Nov
+ *  2026): Home, Find and the drawings only. No request list, no account, no
+ *  prices; "Ask for a price" goes to the website's sign-up form or WhatsApp. */
+const PUBLIC = typeof __PUBLIC__ !== "undefined" && __PUBLIC__;
+const PUBLIC_WA = "27793642696";
+const PUBLIC_LINK = { display: "flex", alignItems: "center", justifyContent: "center", textDecoration: "none" } as const;
 const LOGO_TRUCK = "/brand/ctp_truck_v3.webp";
 
 /** The logo, with a truck that occasionally goes for a drive. */
 function Brand() {
-  return (
+  const logo = (
     <span className="mb-brand" role="img" aria-label="China Truck Parts">
       <img className="mb-brand-body" src={LOGO_BODY} alt=""
         onError={(e) => { e.currentTarget.style.display = "none"; }} />
@@ -239,6 +245,8 @@ function Brand() {
         onError={(e) => { e.currentTarget.style.display = "none"; }} />
     </span>
   );
+  // On the public website the logo leads back to its home page.
+  return PUBLIC ? <a href="/" aria-label="China Truck Parts home" style={{ display: "block" }}>{logo}</a> : logo;
 }
 
 /** ≥1024 CSS px: the one shell switch (DESKTOP_AUDIT.md §2.2), the same
@@ -1743,7 +1751,7 @@ const parseRand = (s: string): number => {
     setTab("cart");
     window.setTimeout(() => document.querySelector(".mb-body")?.scrollTo({ top: 0 }), 0);
   };
-  const cartBtn = (
+  const cartBtn = PUBLIC ? null : (
     <CartButton count={cartCount} bump={cartBump} onOpen={openCart}
       label={isClient ? "Your request" : "Counter order"} />
   );
@@ -3252,7 +3260,7 @@ const parseRand = (s: string): number => {
                 <div className="mb-box">
                   <div className="mb-k">Part number</div>
                   <div className="mb-v mono-pn">{d.catalogue_pn ?? d.sku}</div>
-                  <div className="mb-sub">Add it to your request and we'll quote you</div>
+                  <div className="mb-sub">{PUBLIC ? "Ask us for a price and we'll quote you" : "Add it to your request and we'll quote you"}</div>
                 </div>
                 {(() => {
                   // 0076: on-device book first; the 0072 online read covers a device mid-sync
@@ -3489,7 +3497,13 @@ const parseRand = (s: string): number => {
             );
           })()}
           <div className="mb-actions">
-            {isClient ? (
+            {PUBLIC ? (
+              <>
+                <a className="mb-btn p" style={PUBLIC_LINK} href={`/join/?part=${encodeURIComponent(d.sku)}`}>Ask for a price</a>
+                <a className="mb-btn s" style={PUBLIC_LINK} target="_blank" rel="noopener"
+                  href={`https://wa.me/${PUBLIC_WA}?text=${encodeURIComponent(`I'm asking about ${d.name} (${d.catalogue_pn || d.sku}).`)}`}>WhatsApp us</a>
+              </>
+            ) : isClient ? (
               inCart(d.id) > 0 ? (
                 <>
                   <button className="mb-btn s" onClick={() => addToCart(d, -1)}>−</button>
@@ -3561,7 +3575,7 @@ const parseRand = (s: string): number => {
           /* 0053: staff get this too now — building an order off the drawing is
              exactly how a counter conversation goes ("the hinge, and the lock").
              Wording differs because for staff it is somebody else's order. */
-          onAddToRequest={(p: DiagramPart, n: number) => {
+          onAddToRequest={PUBLIC ? undefined : (p: DiagramPart, n: number) => {
             addToCart({ id: p.id, sku: p.sku, name: p.name } as Detail, n);
             showToast({ text: isClient
               ? `${p.sku} × ${n} added to your request`
@@ -3743,7 +3757,7 @@ const parseRand = (s: string): number => {
           onClick={() => { setTab("find"); setSheetOpen(false); }}>
           <TabFind />Find
         </button>
-        {isClient ? (
+        {PUBLIC ? null : isClient ? (
           <button className={"mb-tab" + (tab === "cart" ? " on" : "")}
             onClick={() => { setTab("cart"); setSheetOpen(false); }}>
             <span className="mb-tabwrap">
@@ -3775,10 +3789,10 @@ const parseRand = (s: string): number => {
             </button>
           </>
         )}
-        <button className={"mb-tab" + (tab === "info" ? " on" : "")}
+        {!PUBLIC && <button className={"mb-tab" + (tab === "info" ? " on" : "")}
           onClick={() => { setTab("info"); setSheetOpen(false); }}>
           <TabInfo />Info
-        </button>
+        </button>}
       </nav>
     </div>
   );
