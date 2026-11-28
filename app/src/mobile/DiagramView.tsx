@@ -321,7 +321,7 @@ export function DiagramView({ drawings, start, onClose, canEdit, staff, onOpenPa
   return (
     <div className="mb-lb dv">
       <div className="mb-lb-head dv-head">
-        <button className="mb-back" onClick={onClose} aria-label="Close"><span className="mb-back-i" aria-hidden="true">✕</span>Close</button>
+        <button className="mb-back" onClick={onClose} aria-label="Back"><span className="mb-back-i" aria-hidden="true">‹</span>Back</button>
         <nav className="dv-crumb" aria-label="Breadcrumb">
           <span>Diagrams</span><span className="dv-sep">›</span>
           <b>{d.label}</b>
